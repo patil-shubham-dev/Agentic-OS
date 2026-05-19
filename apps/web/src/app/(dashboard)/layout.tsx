@@ -141,7 +141,7 @@ export default function DashboardLayout({
               {navItems.map((item) => {
                 const isActive = pathname === item.href || pathname?.startsWith(item.href + "/");
                 return collapsed ? (
-                  <Tooltip key={item.href}>
+                  <Tooltip key={item.label}>
                     <TooltipTrigger asChild>
                       <Link href={item.href}>
                         <Button
@@ -156,7 +156,7 @@ export default function DashboardLayout({
                     <TooltipContent side="right">{item.label}</TooltipContent>
                   </Tooltip>
                 ) : (
-                  <Link key={item.href} href={item.href}>
+                  <Link key={item.label} href={item.href}>
                     <Button
                       variant={isActive ? "secondary" : "ghost"}
                       className={cn(

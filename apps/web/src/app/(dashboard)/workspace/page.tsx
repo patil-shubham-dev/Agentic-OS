@@ -58,6 +58,12 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import {
+  topBarModelRoles,
+  workspaceContextFiles,
+  workspaceToolActivity,
+} from "@/lib/product-blueprint";
+import { getJson, sendJson } from "@/lib/client-api";
 
 // Types
 interface Message {
@@ -457,7 +463,7 @@ function MessageBubble({ message }: { message: Message }) {
 }
 
 export default function WorkspacePage() {
-  const [messages, setMessages] = useState<Message[]>(mockMessages);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -473,7 +479,31 @@ export default function WorkspacePage() {
     scrollToBottom();
   }, [messages]);
 
-  const handleSend = () => {
+  useEffect(() => {
+    getJson<{ chats: Array<{ messages?: Array<Record<string, unknown>> }> }>("/api/chat")
+      .then((data) => {
+        const latestChat = data.chats[0];
+        if (!latestChat?.messages?.length) {
+          setMessages([]);
+          return;
+        }
+        setMessages(
+          latestChat.messages.map((message, index) => ({
+            id: String(message.id ?? `msg-${index}`),
+            role: (message.role as Message["role"]) ?? "assistant",
+            content: String(message.content ?? ""),
+            model: message.model ? String(message.model) : undefined,
+            tokens: message.tokens ? Number(message.tokens) : undefined,
+            timestamp: message.timestamp ? new Date(String(message.timestamp)) : new Date(),
+            status: "complete",
+            toolCalls: Array.isArray(message.toolCalls) ? (message.toolCalls as ToolCall[]) : undefined,
+          }))
+        );
+      })
+      .catch(() => setMessages(mockMessages));
+  }, []);
+
+  const handleSend = async () => {
     if (!input.trim() || isStreaming) return;
 
     const userMessage: Message = {
@@ -487,53 +517,36 @@ export default function WorkspacePage() {
     setInput("");
     setIsStreaming(true);
 
-    setTimeout(() => {
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content: "I'll help you with that! Let me analyze your request and generate the appropriate code.",
-        model: "Claude Opus",
-        tokens: 156,
-        timestamp: new Date(),
-        status: "streaming",
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
+    try {
+      const response = await sendJson<{ chat: { messages: Array<Record<string, unknown>> } }>("/api/chat", "POST", {
+        messages: [
+          ...messages.map((message) => ({
+            role: message.role,
+            content: message.content,
+            model: message.model,
+          })),
+          { role: "user", content: userMessage.content },
+        ],
+        model: topBarModelRoles[0]?.name ?? "Claude Opus",
+        agent: "coding",
+      });
 
-      const chunks = [
-        "\n\n## Analysis\n",
-        "Based on your requirements, I'll create a comprehensive solution that includes:",
-        "\n- **Component architecture** with proper separation of concerns",
-        "\n- **TypeScript types** for full type safety",
-        "\n- **Tailwind styling** with custom design tokens",
-        "\n- **Animation** using Framer Motion for smooth interactions",
-        "\n\nLet me start implementing...",
-      ];
-
-      let chunkIndex = 0;
-      const streamInterval = setInterval(() => {
-        if (chunkIndex >= chunks.length) {
-          clearInterval(streamInterval);
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantMessage.id
-                ? { ...m, status: "complete" as const, tokens: 1247 }
-                : m
-            )
-          );
-          setIsStreaming(false);
-          return;
-        }
-
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMessage.id
-              ? { ...m, content: m.content + chunks[chunkIndex] }
-              : m
-          )
-        );
-        chunkIndex++;
-      }, 800);
-    }, 500);
+      const latestMessages = response.chat.messages;
+      setMessages(
+        latestMessages.map((message, index) => ({
+          id: String(message.id ?? `msg-${index}`),
+          role: (message.role as Message["role"]) ?? "assistant",
+          content: String(message.content ?? ""),
+          model: message.model ? String(message.model) : undefined,
+          tokens: message.tokens ? Number(message.tokens) : undefined,
+          timestamp: message.timestamp ? new Date(String(message.timestamp)) : new Date(),
+          status: "complete",
+          toolCalls: Array.isArray(message.toolCalls) ? (message.toolCalls as ToolCall[]) : undefined,
+        }))
+      );
+    } finally {
+      setIsStreaming(false);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -562,13 +575,13 @@ export default function WorkspacePage() {
                     <div>
                       <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Files</p>
                       <div className="space-y-1">
-                        {["src/app/page.tsx", "src/components/ui/button.tsx", "tailwind.config.ts", "package.json"].map((file) => (
+                        {workspaceContextFiles.map((file) => (
                           <div
-                            key={file}
+                            key={file.path}
                             className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted cursor-pointer text-sm"
                           >
                             <FileText className="w-3.5 h-3.5 text-muted-foreground" />
-                            <span className="truncate">{file}</span>
+                            <span className="truncate">{file.path}</span>
                           </div>
                         ))}
                       </div>
@@ -577,13 +590,9 @@ export default function WorkspacePage() {
                     <div>
                       <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Active Agents</p>
                       <div className="space-y-2">
-                        {[
-                          { name: "Claude Opus", role: "Manager", status: "active" },
-                          { name: "GPT-4o", role: "Coding", status: "idle" },
-                          { name: "Gemini Pro", role: "Design", status: "idle" },
-                        ].map((agent) => (
+                        {topBarModelRoles.slice(0, 3).map((agent, index) => (
                           <div key={agent.name} className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted cursor-pointer">
-                            <div className="w-2 h-2 rounded-full bg-green-500" />
+                            <div className={cn("w-2 h-2 rounded-full", index === 0 ? "bg-green-500" : "bg-muted-foreground")} />
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium truncate">{agent.name}</p>
                               <p className="text-xs text-muted-foreground">{agent.role}</p>
@@ -749,17 +758,14 @@ export default function WorkspacePage() {
                     <div>
                       <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Tool Activity</p>
                       <div className="space-y-2">
-                        {[
-                          { tool: "generate_design", time: "2 min ago", duration: "1.2s" },
-                          { tool: "write_file", time: "1 min ago", duration: "0.3s" },
-                          { tool: "read_file", time: "1 min ago", duration: "0.1s" },
-                        ].map((activity) => (
+                        {workspaceToolActivity.map((activity) => (
                           <div key={activity.tool} className="flex items-center justify-between p-2 rounded-md bg-muted/50 text-xs">
                             <div className="flex items-center gap-2">
                               <Wrench className="w-3 h-3 text-muted-foreground" />
                               <span>{activity.tool}</span>
                             </div>
                             <div className="flex items-center gap-2 text-muted-foreground">
+                              <span>{activity.source}</span>
                               <Clock className="w-3 h-3" />
                               <span>{activity.duration}</span>
                             </div>
@@ -771,17 +777,12 @@ export default function WorkspacePage() {
                     <div>
                       <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Model Configuration</p>
                       <div className="space-y-2">
-                        {[
-                          { name: "Claude Opus", role: "Manager", active: true },
-                          { name: "GPT-4o", role: "Coding", active: false },
-                          { name: "Gemini Pro", role: "Design", active: false },
-                          { name: "Llama 3.3", role: "Fast", active: false },
-                        ].map((model) => (
+                        {topBarModelRoles.map((model, index) => (
                           <div
                             key={model.name}
                             className={cn(
                               "flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors",
-                              model.active ? "bg-primary/10 border border-primary/20" : "hover:bg-muted"
+                              index === 0 ? "bg-primary/10 border border-primary/20" : "hover:bg-muted"
                             )}
                           >
                             <Cpu className="w-4 h-4 text-muted-foreground" />
@@ -789,7 +790,7 @@ export default function WorkspacePage() {
                               <p className="text-sm font-medium truncate">{model.name}</p>
                               <p className="text-xs text-muted-foreground">{model.role}</p>
                             </div>
-                            {model.active && <Badge className="text-[10px]">Active</Badge>}
+                            {index === 0 && <Badge className="text-[10px]">Active</Badge>}
                           </div>
                         ))}
                       </div>

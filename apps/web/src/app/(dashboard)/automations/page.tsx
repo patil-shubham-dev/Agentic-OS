@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -66,29 +66,8 @@ import {
   Slack,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-interface Automation {
-  id: string;
-  name: string;
-  description: string;
-  status: "active" | "paused" | "error" | "draft";
-  trigger: {
-    type: "schedule" | "webhook" | "manual" | "file_change" | "git_commit";
-    config: Record<string, any>;
-  };
-  steps: AutomationStep[];
-  lastRun: string;
-  nextRun: string;
-  runs: number;
-  successRate: number;
-}
-
-interface AutomationStep {
-  id: string;
-  type: "agent" | "tool" | "approval" | "notification";
-  name: string;
-  config: Record<string, any>;
-}
+import { getJson } from "@/lib/client-api";
+import type { ProductAutomation } from "@/lib/product-blueprint";
 
 const initialNodes: Node[] = [
   { id: "trigger", type: "input", position: { x: 250, y: 0 }, data: { label: "Trigger: Schedule" } },
@@ -105,72 +84,6 @@ const initialEdges: Edge[] = [
   { id: "e4", source: "approval", target: "notify" },
 ];
 
-const automations: Automation[] = [
-  {
-    id: "1",
-    name: "Weekly Competitor Research",
-    description: "Automatically research competitors and generate a summary report every Monday.",
-    status: "active",
-    trigger: { type: "schedule", config: { cron: "0 9 * * 1" } },
-    steps: [
-      { id: "s1", type: "agent", name: "Research Agent", config: { model: "Claude Opus", prompt: "Research top 5 competitors" } },
-      { id: "s2", type: "tool", name: "Write Report", config: { path: "/reports/competitors.md" } },
-      { id: "s3", type: "notification", name: "Email Team", config: { channel: "email" } },
-    ],
-    lastRun: "Yesterday",
-    nextRun: "In 6 days",
-    runs: 12,
-    successRate: 100,
-  },
-  {
-    id: "2",
-    name: "PR Review Bot",
-    description: "Automatically review pull requests and suggest improvements.",
-    status: "active",
-    trigger: { type: "webhook", config: { event: "pull_request" } },
-    steps: [
-      { id: "s1", type: "agent", name: "Code Review Agent", config: { model: "GPT-4o" } },
-      { id: "s2", type: "approval", name: "Human Review", config: {} },
-      { id: "s3", type: "notification", name: "Post Comment", config: { channel: "github" } },
-    ],
-    lastRun: "2 hrs ago",
-    nextRun: "On trigger",
-    runs: 45,
-    successRate: 97.8,
-  },
-  {
-    id: "3",
-    name: "Design-to-Code Pipeline",
-    description: "Convert design files to React components and push to repo.",
-    status: "paused",
-    trigger: { type: "file_change", config: { path: "/designs/*.fig" } },
-    steps: [
-      { id: "s1", type: "tool", name: "Export Figma", config: {} },
-      { id: "s2", type: "agent", name: "Design Agent", config: { model: "Gemini Pro" } },
-      { id: "s3", type: "tool", name: "Write Files", config: {} },
-      { id: "s4", type: "tool", name: "Git Commit", config: { message: "Auto: Design update" } },
-    ],
-    lastRun: "3 days ago",
-    nextRun: "Paused",
-    runs: 8,
-    successRate: 87.5,
-  },
-  {
-    id: "4",
-    name: "Documentation Sync",
-    description: "Sync API documentation with code changes.",
-    status: "error",
-    trigger: { type: "git_commit", config: { branch: "main" } },
-    steps: [
-      { id: "s1", type: "agent", name: "Doc Agent", config: { model: "Llama 3.3" } },
-      { id: "s2", type: "tool", name: "Update Docs", config: {} },
-    ],
-    lastRun: "Failed",
-    nextRun: "Retrying",
-    runs: 23,
-    successRate: 78.3,
-  },
-];
 
 const container = {
   hidden: { opacity: 0 },
@@ -185,10 +98,45 @@ const item = {
 export default function AutomationsPage() {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-  const [selectedAutomation, setSelectedAutomation] = useState<Automation | null>(null);
+  const [selectedAutomation, setSelectedAutomation] = useState<ProductAutomation | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "builder">("list");
+  const [automations, setAutomations] = useState<ProductAutomation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const onConnect = (params: Connection) => setEdges((eds) => addEdge(params, eds));
+
+  useEffect(() => {
+    let active = true;
+    getJson<{ automations: Array<Record<string, unknown>> }>("/api/automations")
+      .then((data) => {
+        if (!active) return;
+        const mapped = data.automations.map((automation) => ({
+          id: String(automation.id),
+          name: String(automation.name),
+          description: String(automation.description ?? ""),
+          status: (automation.status as ProductAutomation["status"]) ?? "draft",
+          trigger: (automation.trigger as ProductAutomation["trigger"]) ?? { type: "manual", config: {} },
+          steps: Array.isArray(automation.steps) ? (automation.steps as ProductAutomation["steps"]) : [],
+          lastRun: automation.last_run_at ? new Date(String(automation.last_run_at)).toLocaleString() : "Never",
+          nextRun: automation.next_run_at ? new Date(String(automation.next_run_at)).toLocaleString() : "Not scheduled",
+          runs: Number(automation.runs ?? 0),
+          successRate: Number(automation.success_rate ?? 0),
+        }));
+        setAutomations(mapped);
+      })
+      .catch((fetchError) => {
+        if (!active) return;
+        setError(fetchError instanceof Error ? fetchError.message : "Failed to load automations");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <div className="p-6 space-y-6">
@@ -282,13 +230,15 @@ export default function AutomationsPage() {
 
       {viewMode === "list" ? (
         <>
+          {loading && <p className="text-sm text-muted-foreground">Loading automations...</p>}
+          {error && <p className="text-sm text-destructive">{error}</p>}
           {/* Stats */}
           <div className="grid grid-cols-4 gap-4">
             {[
-              { label: "Active", value: "2", icon: CheckCircle2, color: "text-green-500" },
-              { label: "Paused", value: "1", icon: Pause, color: "text-yellow-500" },
-              { label: "Error", value: "1", icon: XCircle, color: "text-destructive" },
-              { label: "Total Runs", value: "88", icon: Zap, color: "text-primary" },
+              { label: "Active", value: String(automations.filter((item) => item.status === "active").length), icon: CheckCircle2, color: "text-green-500" },
+              { label: "Paused", value: String(automations.filter((item) => item.status === "paused").length), icon: Pause, color: "text-yellow-500" },
+              { label: "Error", value: String(automations.filter((item) => item.status === "error").length), icon: XCircle, color: "text-destructive" },
+              { label: "Total Runs", value: String(automations.reduce((sum, item) => sum + item.runs, 0)), icon: Zap, color: "text-primary" },
             ].map((stat) => (
               <Card key={stat.label}>
                 <CardContent className="p-4 flex items-center gap-3">

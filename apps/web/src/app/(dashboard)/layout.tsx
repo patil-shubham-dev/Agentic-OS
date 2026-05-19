@@ -15,36 +15,41 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  LayoutDashboard,
-  MessageSquare,
-  Bot,
-  Workflow,
+  Activity,
+  Bell,
   BookOpen,
-  Settings,
+  Bot,
+  BrainCircuit,
   ChevronLeft,
   ChevronRight,
+  Cpu,
+  CreditCard,
+  FolderKanban,
+  LayoutDashboard,
+  LogOut,
+  MessageSquare,
   Plus,
   Search,
-  Bell,
-  Cpu,
-  Zap,
-  CreditCard,
-  LogOut,
+  Settings,
   Sparkles,
+  Workflow,
+  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { productName, topBarModelRoles } from "@/lib/product-blueprint";
+import { Badge } from "@/components/ui/badge";
 
 const navItems = [
-  { icon: LayoutDashboard, label: "Dashboard", href: "/dashboard" },
+  { icon: LayoutDashboard, label: "Home", href: "/dashboard" },
   { icon: MessageSquare, label: "Workspace", href: "/workspace" },
   { icon: Bot, label: "Agents", href: "/agents" },
   { icon: Workflow, label: "Automations", href: "/automations" },
-  { icon: BookOpen, label: "Knowledge Base", href: "/knowledge" },
+  { icon: BookOpen, label: "Knowledge", href: "/knowledge" },
+  { icon: BrainCircuit, label: "Memory", href: "/knowledge" },
+  { icon: Activity, label: "Activity", href: "/dashboard" },
 ];
 
-const bottomNavItems = [
-  { icon: Settings, label: "Settings", href: "/settings" },
-];
+const bottomNavItems = [{ icon: Settings, label: "Settings", href: "/settings" }];
 
 export default function DashboardLayout({
   children,
@@ -56,19 +61,17 @@ export default function DashboardLayout({
 
   return (
     <TooltipProvider delayDuration={0}>
-      <div className="flex h-screen bg-background">
-        {/* Sidebar */}
+      <div className="flex h-screen agentos-shell text-foreground">
         <motion.aside
           initial={false}
-          animate={{ width: collapsed ? 72 : 260 }}
+          animate={{ width: collapsed ? 76 : 288 }}
           transition={{ duration: 0.2, ease: "easeInOut" }}
-          className="flex flex-col border-r bg-card shrink-0"
+          className="flex shrink-0 flex-col border-r border-white/10 bg-black/20 backdrop-blur-2xl"
         >
-          {/* Logo */}
-          <div className="flex items-center h-16 px-4 border-b">
+          <div className="flex h-16 items-center border-b border-white/10 px-4">
             <Link href="/dashboard" className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-agentos-500 to-agentos-700 flex items-center justify-center shrink-0">
-                <Sparkles className="w-5 h-5 text-white" />
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-gradient-to-br from-violet-500/30 via-slate-900 to-emerald-500/20 shadow-lg">
+                <Sparkles className="h-5 w-5 text-white" />
               </div>
               <AnimatePresence>
                 {!collapsed && (
@@ -76,62 +79,55 @@ export default function DashboardLayout({
                     initial={{ opacity: 0, width: 0 }}
                     animate={{ opacity: 1, width: "auto" }}
                     exit={{ opacity: 0, width: 0 }}
-                    className="font-bold text-lg whitespace-nowrap overflow-hidden"
+                    className="overflow-hidden whitespace-nowrap text-lg font-semibold uppercase tracking-[0.22em]"
                   >
-                    AgentOS
+                    {productName}
                   </motion.span>
                 )}
               </AnimatePresence>
             </Link>
           </div>
 
-          {/* Search */}
+          {!collapsed && (
+            <div className="px-3 pt-3">
+              <div className="agentos-card agentos-border-glow p-3">
+                <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Project</p>
+                    <p className="text-sm font-medium">Dream Project</p>
+                  </div>
+                  <Badge className="bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/15">Live</Badge>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="p-3">
             <Button
               variant="outline"
               className={cn(
-                "w-full justify-start gap-2 text-muted-foreground",
+                "w-full justify-start gap-2 border-white/10 bg-white/[0.03] text-muted-foreground hover:bg-white/[0.06]",
                 collapsed && "justify-center px-0"
               )}
             >
-              <Search className="w-4 h-4 shrink-0" />
+              <Search className="h-4 w-4 shrink-0" />
               <AnimatePresence>
                 {!collapsed && (
-                  <motion.span
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="text-sm"
-                  >
+                  <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-sm">
                     Search...
                   </motion.span>
                 )}
               </AnimatePresence>
-              {!collapsed && (
-                <kbd className="ml-auto pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium opacity-100">
-                  <span className="text-xs">⌘</span>K
-                </kbd>
-              )}
             </Button>
           </div>
 
-          {/* New Chat Button */}
           <div className="px-3 pb-2">
             <Link href="/workspace">
-              <Button
-                className={cn(
-                  "w-full gap-2",
-                  collapsed && "justify-center px-0"
-                )}
-              >
-                <Plus className="w-4 h-4 shrink-0" />
+              <Button className={cn("w-full gap-2", collapsed && "justify-center px-0")}>
+                <Plus className="h-4 w-4 shrink-0" />
                 <AnimatePresence>
                   {!collapsed && (
-                    <motion.span
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                    >
+                    <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                       New Chat
                     </motion.span>
                   )}
@@ -151,12 +147,9 @@ export default function DashboardLayout({
                         <Button
                           variant={isActive ? "secondary" : "ghost"}
                           size="icon"
-                          className={cn(
-                            "w-full h-10 justify-center",
-                            isActive && "bg-secondary"
-                          )}
+                          className={cn("h-10 w-full justify-center border-white/5", isActive && "bg-white/[0.08]")}
                         >
-                          <item.icon className="w-5 h-5" />
+                          <item.icon className="h-5 w-5" />
                         </Button>
                       </Link>
                     </TooltipTrigger>
@@ -167,18 +160,13 @@ export default function DashboardLayout({
                     <Button
                       variant={isActive ? "secondary" : "ghost"}
                       className={cn(
-                        "w-full justify-start gap-3 h-10",
-                        isActive && "bg-secondary font-medium"
+                        "h-10 w-full justify-start gap-3 rounded-xl text-slate-200 hover:bg-white/[0.05]",
+                        isActive && "bg-white/[0.08] font-medium"
                       )}
                     >
-                      <item.icon className="w-5 h-5 shrink-0" />
+                      <item.icon className="h-5 w-5 shrink-0" />
                       <span className="truncate">{item.label}</span>
-                      {isActive && (
-                        <motion.div
-                          layoutId="activeNav"
-                          className="absolute left-0 w-1 h-6 bg-primary rounded-r-full"
-                        />
-                      )}
+                      {isActive && <motion.div layoutId="activeNav" className="absolute left-0 h-6 w-1 rounded-r-full bg-emerald-400" />}
                     </Button>
                   </Link>
                 );
@@ -187,45 +175,41 @@ export default function DashboardLayout({
 
             <Separator className="my-4" />
 
-            {/* Recent Chats */}
             {!collapsed && (
               <div className="space-y-1">
-                <p className="px-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                  Recent
-                </p>
+                <p className="px-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">Assets</p>
                 {[
-                  "Landing Page Design",
-                  "API Integration",
-                  "Database Schema",
-                  "Auth Flow Review",
-                ].map((chat) => (
+                  { name: "GitHub", status: "Connected" },
+                  { name: "Supabase", status: "Connected" },
+                  { name: "Vercel", status: "Connected" },
+                  { name: "Stripe", status: "Connected" },
+                  { name: "OpenAI", status: "Connected" },
+                ].map((asset) => (
                   <Button
-                    key={chat}
+                    key={asset.name}
                     variant="ghost"
-                    className="w-full justify-start gap-3 h-9 text-sm text-muted-foreground hover:text-foreground"
+                    className="h-9 w-full justify-between rounded-xl px-3 text-sm text-muted-foreground hover:bg-white/[0.04] hover:text-foreground"
                   >
-                    <MessageSquare className="w-4 h-4 shrink-0" />
-                    <span className="truncate">{chat}</span>
+                    <div className="flex items-center gap-3">
+                      <FolderKanban className="h-4 w-4 shrink-0" />
+                      <span className="truncate">{asset.name}</span>
+                    </div>
+                    <span className="text-[10px] text-emerald-300">{asset.status}</span>
                   </Button>
                 ))}
               </div>
             )}
           </ScrollArea>
 
-          {/* Bottom */}
-          <div className="p-3 border-t space-y-1">
+          <div className="space-y-1 border-t border-white/10 p-3">
             {bottomNavItems.map((item) => {
               const isActive = pathname === item.href;
               return collapsed ? (
                 <Tooltip key={item.href}>
                   <TooltipTrigger asChild>
                     <Link href={item.href}>
-                      <Button
-                        variant={isActive ? "secondary" : "ghost"}
-                        size="icon"
-                        className="w-full h-10 justify-center"
-                      >
-                        <item.icon className="w-5 h-5" />
+                      <Button variant={isActive ? "secondary" : "ghost"} size="icon" className="h-10 w-full justify-center">
+                        <item.icon className="h-5 w-5" />
                       </Button>
                     </Link>
                   </TooltipTrigger>
@@ -233,48 +217,46 @@ export default function DashboardLayout({
                 </Tooltip>
               ) : (
                 <Link key={item.href} href={item.href}>
-                  <Button
-                    variant={isActive ? "secondary" : "ghost"}
-                    className="w-full justify-start gap-3 h-10"
-                  >
-                    <item.icon className="w-5 h-5 shrink-0" />
+                  <Button variant={isActive ? "secondary" : "ghost"} className="h-10 w-full justify-start gap-3">
+                    <item.icon className="h-5 w-5 shrink-0" />
                     <span>{item.label}</span>
                   </Button>
                 </Link>
               );
             })}
 
-            {/* User */}
-            <div className="flex items-center gap-3 px-2 py-2">
-              <Avatar className="w-8 h-8 shrink-0">
-                <AvatarImage src="" />
-                <AvatarFallback className="bg-primary/10 text-primary text-xs">
-                  JD
-                </AvatarFallback>
-              </Avatar>
+            <div className="agentos-card agentos-border-glow mt-3 px-3 py-3">
+              <div className="flex items-center gap-3">
+                <Avatar className="h-8 w-8 shrink-0">
+                  <AvatarImage src="" />
+                  <AvatarFallback className="bg-primary/10 text-xs text-primary">OP</AvatarFallback>
+                </Avatar>
+                {!collapsed && (
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">Operator</p>
+                    <p className="truncate text-xs text-muted-foreground">Admin</p>
+                  </div>
+                )}
+              </div>
               {!collapsed && (
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">John Doe</p>
-                  <p className="text-xs text-muted-foreground truncate">Pro Plan</p>
+                <div className="mt-3 rounded-xl border border-emerald-500/20 bg-emerald-500/8 p-3">
+                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">System</p>
+                  <p className="mt-1 text-sm font-medium">All systems operational</p>
                 </div>
               )}
             </div>
 
-            {/* Collapse toggle */}
             <Button
               variant="ghost"
               size="sm"
-              className={cn(
-                "w-full gap-2 text-muted-foreground",
-                collapsed && "justify-center px-0"
-              )}
+              className={cn("w-full gap-2 text-muted-foreground", collapsed && "justify-center px-0")}
               onClick={() => setCollapsed(!collapsed)}
             >
               {collapsed ? (
-                <ChevronRight className="w-4 h-4" />
+                <ChevronRight className="h-4 w-4" />
               ) : (
                 <>
-                  <ChevronLeft className="w-4 h-4" />
+                  <ChevronLeft className="h-4 w-4" />
                   <span className="text-xs">Collapse</span>
                 </>
               )}
@@ -282,39 +264,59 @@ export default function DashboardLayout({
           </div>
         </motion.aside>
 
-        {/* Main Content */}
-        <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          {/* Top Bar */}
-          <header className="h-14 border-b bg-card/50 backdrop-blur flex items-center justify-between px-4 shrink-0">
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2">
-                <Cpu className="w-4 h-4 text-muted-foreground" />
-                <span className="text-sm font-medium">Claude Opus</span>
-                <span className="text-xs text-muted-foreground">Manager</span>
-              </div>
-              <Separator orientation="vertical" className="h-4" />
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Zap className="w-3 h-3" />
-                <span>2,847 tokens</span>
-                <CreditCard className="w-3 h-3 ml-2" />
-                <span>$0.42</span>
-              </div>
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <header className="flex h-16 shrink-0 items-center justify-between border-b border-white/10 bg-black/10 px-4 backdrop-blur-xl">
+            <div className="flex items-center gap-3">
+              {[
+                { label: "Environment", value: "Local", accent: "text-emerald-300" },
+                { label: "Manager Model", value: topBarModelRoles[0]?.name ?? "Claude Opus" },
+                { label: "Active Agent", value: "Hermes Operator" },
+              ].map((item) => (
+                <div key={item.label} className="hidden min-w-[170px] items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2 lg:flex">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/[0.04]">
+                    <Cpu className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{item.label}</p>
+                    <p className={cn("text-sm font-medium", item.accent)}>{item.value}</p>
+                  </div>
+                </div>
+              ))}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
+              <div className="hidden items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2 md:flex">
+                <Cpu className="h-4 w-4 text-muted-foreground" />
+                <div className="text-xs">
+                  <p className="uppercase tracking-[0.18em] text-muted-foreground">Usage</p>
+                  <div className="flex items-center gap-3">
+                    <span>12.4M tokens</span>
+                    <span>$24.41</span>
+                  </div>
+                </div>
+              </div>
+              <div className="hidden items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2 text-xs text-muted-foreground xl:flex">
+                <Zap className="h-3 w-3" />
+                <span>+8.2%</span>
+                <CreditCard className="ml-2 h-3 w-3" />
+                <span>+11.3%</span>
+              </div>
+              <Button className="hidden border border-emerald-500/20 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/20 md:inline-flex">
+                Run
+              </Button>
+              <Button variant="outline" className="hidden border-red-500/20 bg-red-500/10 text-red-300 hover:bg-red-500/15 md:inline-flex">
+                Stop
+              </Button>
               <Button variant="ghost" size="icon" className="relative">
-                <Bell className="w-4 h-4" />
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-destructive rounded-full" />
+                <Bell className="h-4 w-4" />
+                <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-destructive" />
               </Button>
               <Button variant="ghost" size="icon">
-                <LogOut className="w-4 h-4" />
+                <LogOut className="h-4 w-4" />
               </Button>
             </div>
           </header>
 
-          {/* Page Content */}
-          <div className="flex-1 overflow-auto">
-            {children}
-          </div>
+          <div className="flex-1 overflow-auto px-2 pb-2">{children}</div>
         </main>
       </div>
     </TooltipProvider>

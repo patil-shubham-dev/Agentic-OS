@@ -195,7 +195,7 @@ class OpenClaudeBridge:
         result = subprocess.run(cmd, capture_output=True, text=True)
         return [{"match": line} for line in result.stdout.split("\n") if line]
 
-    async def list_files(self, pattern: str = "**/*", path: str = ".") -> List[str]:
+    async def list_files(self, path: str = ".", pattern: str = "**/*") -> List[str]:
         """List files using OpenClaude's glob tool."""
         from pathlib import Path
         return [str(p) for p in Path(path).glob(pattern)]

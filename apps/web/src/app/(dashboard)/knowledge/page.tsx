@@ -1,19 +1,16 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -21,16 +18,11 @@ import {
 import {
   Upload,
   FileText,
-  Link,
-  Code,
   Image,
   Search,
   Trash2,
-  Download,
   Eye,
   Database,
-  Brain,
-  Zap,
   Plus,
   FolderOpen,
   FileCode,
@@ -43,6 +35,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDropzone } from "react-dropzone";
+import { Label } from "@/components/ui/label";
+import { getJson, sendJson } from "@/lib/client-api";
 
 interface KnowledgeItem {
   id: string;
@@ -60,83 +54,87 @@ interface SearchResult {
   content: string;
   source: string;
   score: number;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
 }
 
-const knowledgeItems: KnowledgeItem[] = [
-  { id: "1", name: "API Documentation.pdf", type: "pdf", size: "2.4 MB", chunks: 156, status: "indexed", uploadedAt: "2 days ago", source: "Upload" },
-  { id: "2", name: "React Best Practices.md", type: "code", size: "45 KB", chunks: 23, status: "indexed", uploadedAt: "1 week ago", source: "Upload" },
-  { id: "3", name: "Design System v2.fig", type: "image", size: "12.8 MB", chunks: 0, status: "processing", uploadedAt: "3 hrs ago", source: "Upload" },
-  { id: "4", name: "https://docs.agentos.dev", type: "url", size: "—", chunks: 89, status: "indexed", uploadedAt: "5 days ago", source: "URL" },
-  { id: "5", name: "Database Schema.sql", type: "code", size: "128 KB", chunks: 34, status: "indexed", uploadedAt: "2 weeks ago", source: "Upload" },
-  { id: "6", name: "Product Requirements.pdf", type: "pdf", size: "5.1 MB", chunks: 312, status: "indexed", uploadedAt: "1 day ago", source: "Upload" },
-  { id: "7", name: "https://github.com/nexu-io/open-design", type: "url", size: "—", chunks: 245, status: "indexed", uploadedAt: "1 week ago", source: "GitHub" },
-];
-
-const mockSearchResults: SearchResult[] = [
-  {
-    id: "1",
-    content: "The AgentOS API uses RESTful conventions with JSON payloads. Authentication is handled via Bearer tokens...",
-    source: "API Documentation.pdf",
-    score: 0.94,
-    metadata: { page: 12, section: "Authentication" },
-  },
-  {
-    id: "2",
-    content: "All endpoints return standard HTTP status codes. 200 for success, 400 for bad requests, 401 for unauthorized...",
-    source: "API Documentation.pdf",
-    score: 0.87,
-    metadata: { page: 15, section: "Error Handling" },
-  },
-  {
-    id: "3",
-    content: "Rate limiting is applied at 1000 requests per minute for Pro plans and 100 requests per minute for Free plans...",
-    source: "API Documentation.pdf",
-    score: 0.82,
-    metadata: { page: 18, section: "Rate Limits" },
-  },
-];
+function mapKnowledgeItem(item: Record<string, unknown>): KnowledgeItem {
+  return {
+    id: String(item.id),
+    name: String(item.name),
+    type: (item.type as KnowledgeItem["type"]) ?? "text",
+    size: Number(item.size ?? 0) > 0 ? `${item.size} bytes` : "—",
+    chunks: Number(item.chunks ?? 0),
+    status: (item.status as KnowledgeItem["status"]) ?? "indexed",
+    uploadedAt: new Date(String(item.created_at)).toLocaleString(),
+    source: String(item.source ?? "Upload"),
+  };
+}
 
 const container = {
   hidden: { opacity: 0 },
   show: { opacity: 1, transition: { staggerChildren: 0.03 } },
 };
 
-const item = {
+const itemVariant = {
   hidden: { opacity: 0, y: 10 },
   show: { opacity: 1, y: 0 },
 };
 
 export default function KnowledgePage() {
+  const [items, setItems] = useState<KnowledgeItem[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [selectedItem, setSelectedItem] = useState<KnowledgeItem | null>(null);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
-    console.log("Uploading files:", acceptedFiles);
-    setUploadDialogOpen(false);
+  const refresh = useCallback(async () => {
+    const response = await getJson<{ items: Array<Record<string, unknown>> }>("/api/knowledge");
+    setItems(response.items.map(mapKnowledgeItem));
   }, []);
+
+  useEffect(() => {
+    refresh().finally(() => setLoading(false));
+  }, [refresh]);
+
+  const onDrop = useCallback(async (acceptedFiles: File[]) => {
+    const file = acceptedFiles[0];
+    if (!file) return;
+
+    await sendJson("/api/knowledge", "POST", {
+      name: file.name,
+      type: "doc",
+      source: "Upload",
+      size: file.size,
+      content: file.name,
+      metadata: { summary: file.name },
+    });
+
+    await refresh();
+    setUploadDialogOpen(false);
+  }, [refresh]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: {
-      'application/pdf': ['.pdf'],
-      'text/markdown': ['.md'],
-      'text/plain': ['.txt'],
-      'application/json': ['.json'],
-      'text/*': ['.ts', '.tsx', '.js', '.jsx', '.py', '.sql'],
+      "application/pdf": [".pdf"],
+      "text/markdown": [".md"],
+      "text/plain": [".txt"],
+      "application/json": [".json"],
+      "text/*": [".ts", ".tsx", ".js", ".jsx", ".py", ".sql"],
     },
   });
 
-  const handleSearch = () => {
+  const handleSearch = async () => {
     if (!searchQuery.trim()) return;
     setIsSearching(true);
-    setTimeout(() => {
-      setSearchResults(mockSearchResults);
+    try {
+      const response = await getJson<{ results?: SearchResult[] }>(`/api/knowledge?q=${encodeURIComponent(searchQuery)}`);
+      setSearchResults(response.results ?? []);
+    } finally {
       setIsSearching(false);
-    }, 800);
+    }
   };
 
   const getIcon = (type: string) => {
@@ -152,7 +150,6 @@ export default function KnowledgePage() {
 
   return (
     <div className="p-6 space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Knowledge Base</h1>
@@ -179,18 +176,14 @@ export default function KnowledgePage() {
                 <div
                   {...getRootProps()}
                   className={cn(
-                    "border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors",
+                    "cursor-pointer rounded-xl border-2 border-dashed p-12 text-center transition-colors",
                     isDragActive ? "border-primary bg-primary/5" : "border-muted"
                   )}
                 >
                   <input {...getInputProps()} />
-                  <Upload className="w-10 h-10 mx-auto mb-4 text-muted-foreground" />
-                  <p className="font-medium">
-                    {isDragActive ? "Drop files here" : "Drag & drop files here"}
-                  </p>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    or click to browse. Supports PDF, MD, TXT, JSON, code files
-                  </p>
+                  <Upload className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
+                  <p className="font-medium">{isDragActive ? "Drop files here" : "Drag & drop files here"}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Supports PDF, MD, TXT, JSON, and code files</p>
                 </div>
               </TabsContent>
               <TabsContent value="url" className="mt-4 space-y-4">
@@ -198,34 +191,25 @@ export default function KnowledgePage() {
                   <Label>URL</Label>
                   <Input placeholder="https://docs.example.com" />
                 </div>
-                <div className="space-y-2">
-                  <Label>Crawl Depth</Label>
-                  <Input type="number" defaultValue={1} min={0} max={3} />
-                </div>
-                <Button className="w-full">Add URL</Button>
+                <Button className="w-full" disabled>Add URL</Button>
               </TabsContent>
               <TabsContent value="code" className="mt-4 space-y-4">
                 <div className="space-y-2">
                   <Label>Title</Label>
                   <Input placeholder="e.g., Authentication Logic" />
                 </div>
-                <div className="space-y-2">
-                  <Label>Code</Label>
-                  <textarea className="w-full h-40 p-3 rounded-md border bg-background text-sm font-mono resize-none" placeholder="Paste your code here..." />
-                </div>
-                <Button className="w-full">Add Code</Button>
+                <Button className="w-full" disabled>Paste Code</Button>
               </TabsContent>
             </Tabs>
           </DialogContent>
         </Dialog>
       </div>
 
-      {/* Search */}
       <Card>
         <CardContent className="p-4">
           <div className="flex gap-2">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Search your knowledge base..."
                 className="pl-9"
@@ -235,38 +219,28 @@ export default function KnowledgePage() {
               />
             </div>
             <Button onClick={handleSearch} disabled={isSearching}>
-              {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : "Search"}
+              {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : "Search"}
             </Button>
           </div>
         </CardContent>
       </Card>
 
-      {/* Search Results */}
       {searchResults.length > 0 && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold">Search Results</h3>
-            <Button variant="ghost" size="sm" onClick={() => setSearchResults([])}>
-              Clear
-            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setSearchResults([])}>Clear</Button>
           </div>
           {searchResults.map((result) => (
             <Card key={result.id} className="hover:shadow-sm transition-shadow">
               <CardContent className="p-4">
                 <div className="flex items-start gap-3">
-                  <Quote className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+                  <Quote className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
                   <div className="flex-1">
                     <p className="text-sm leading-relaxed">{result.content}</p>
-                    <div className="flex items-center gap-3 mt-2">
-                      <Badge variant="outline" className="text-[10px]">
-                        <FileText className="w-3 h-3 mr-1" /> {result.source}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        Score: {(result.score * 100).toFixed(1)}%
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        Page {result.metadata.page}
-                      </span>
+                    <div className="mt-2 flex items-center gap-3">
+                      <Badge variant="outline" className="text-[10px]">{result.source}</Badge>
+                      <span className="text-xs text-muted-foreground">Score: {(result.score * 100).toFixed(1)}%</span>
                     </div>
                   </div>
                 </div>
@@ -276,17 +250,16 @@ export default function KnowledgePage() {
         </motion.div>
       )}
 
-      {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
         {[
-          { label: "Documents", value: "24", icon: FileText },
-          { label: "Total Chunks", value: "12.4K", icon: Database },
-          { label: "Indexed URLs", value: "8", icon: Globe },
-          { label: "Storage Used", value: "156 MB", icon: FolderOpen },
+          { label: "Documents", value: String(items.length), icon: FileText },
+          { label: "Total Chunks", value: String(items.reduce((sum, current) => sum + current.chunks, 0)), icon: Database },
+          { label: "Indexed URLs", value: String(items.filter((current) => current.type === "url").length), icon: Globe },
+          { label: "Storage Used", value: `${items.length} items`, icon: FolderOpen },
         ].map((stat) => (
           <Card key={stat.label}>
-            <CardContent className="p-4 flex items-center gap-3">
-              <stat.icon className="w-5 h-5 text-primary" />
+            <CardContent className="flex items-center gap-3 p-4">
+              <stat.icon className="h-5 w-5 text-primary" />
               <div>
                 <p className="text-2xl font-bold">{stat.value}</p>
                 <p className="text-xs text-muted-foreground">{stat.label}</p>
@@ -296,50 +269,47 @@ export default function KnowledgePage() {
         ))}
       </div>
 
-      {/* Knowledge Items */}
       <div>
-        <h3 className="font-semibold mb-3">Knowledge Items</h3>
+        <h3 className="mb-3 font-semibold">Knowledge Items</h3>
+        {loading && <p className="mb-3 text-sm text-muted-foreground">Loading knowledge base...</p>}
         <motion.div variants={container} initial="hidden" animate="show" className="space-y-2">
-          {knowledgeItems.map((item) => (
-            <motion.div key={item.id} variants={item}>
-              <Card
-                className="cursor-pointer hover:shadow-sm transition-all"
-                onClick={() => setSelectedItem(item)}
-              >
+          {items.map((knowledgeItem) => (
+            <motion.div key={knowledgeItem.id} variants={itemVariant}>
+              <Card className="cursor-pointer transition-all hover:shadow-sm" onClick={() => setSelectedItem(knowledgeItem)}>
                 <CardContent className="p-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center">
-                        {getIcon(item.type)}
+                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
+                        {getIcon(knowledgeItem.type)}
                       </div>
                       <div>
-                        <p className="text-sm font-medium">{item.name}</p>
+                        <p className="text-sm font-medium">{knowledgeItem.name}</p>
                         <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                          <span>{item.size}</span>
-                          {item.chunks > 0 && <span>{item.chunks} chunks</span>}
-                          <span>{item.uploadedAt}</span>
-                          <Badge variant="outline" className="text-[10px]">{item.source}</Badge>
+                          <span>{knowledgeItem.size}</span>
+                          {knowledgeItem.chunks > 0 && <span>{knowledgeItem.chunks} chunks</span>}
+                          <span>{knowledgeItem.uploadedAt}</span>
+                          <Badge variant="outline" className="text-[10px]">{knowledgeItem.source}</Badge>
                         </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      {item.status === "indexed" && (
-                        <Badge className="bg-green-500/10 text-green-500 hover:bg-green-500/20 gap-1">
-                          <CheckCircle2 className="w-3 h-3" /> Indexed
+                      {knowledgeItem.status === "indexed" && (
+                        <Badge className="gap-1 bg-green-500/10 text-green-500 hover:bg-green-500/20">
+                          <CheckCircle2 className="h-3 w-3" /> Indexed
                         </Badge>
                       )}
-                      {item.status === "processing" && (
-                        <Badge className="bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 gap-1">
-                          <Loader2 className="w-3 h-3 animate-spin" /> Processing
+                      {knowledgeItem.status === "processing" && (
+                        <Badge className="gap-1 bg-blue-500/10 text-blue-500 hover:bg-blue-500/20">
+                          <Loader2 className="h-3 w-3 animate-spin" /> Processing
                         </Badge>
                       )}
-                      {item.status === "error" && (
-                        <Badge className="bg-destructive/10 text-destructive hover:bg-destructive/20 gap-1">
-                          <XCircle className="w-3 h-3" /> Error
+                      {knowledgeItem.status === "error" && (
+                        <Badge className="gap-1 bg-destructive/10 text-destructive hover:bg-destructive/20">
+                          <XCircle className="h-3 w-3" /> Error
                         </Badge>
                       )}
                       <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <Trash2 className="w-4 h-4 text-muted-foreground" />
+                        <Trash2 className="h-4 w-4 text-muted-foreground" />
                       </Button>
                     </div>
                   </div>
@@ -350,14 +320,13 @@ export default function KnowledgePage() {
         </motion.div>
       </div>
 
-      {/* Item Detail Dialog */}
       <Dialog open={!!selectedItem} onOpenChange={() => setSelectedItem(null)}>
         <DialogContent className="max-w-2xl">
           {selectedItem && (
             <>
               <DialogHeader>
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
                     {getIcon(selectedItem.type)}
                   </div>
                   <div>
@@ -370,42 +339,32 @@ export default function KnowledgePage() {
               </DialogHeader>
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="p-3 rounded-lg bg-muted/50">
+                  <div className="rounded-lg bg-muted/50 p-3">
                     <p className="text-xs text-muted-foreground">Type</p>
                     <p className="font-medium capitalize">{selectedItem.type}</p>
                   </div>
-                  <div className="p-3 rounded-lg bg-muted/50">
+                  <div className="rounded-lg bg-muted/50 p-3">
                     <p className="text-xs text-muted-foreground">Source</p>
                     <p className="font-medium">{selectedItem.source}</p>
                   </div>
-                  <div className="p-3 rounded-lg bg-muted/50">
+                  <div className="rounded-lg bg-muted/50 p-3">
                     <p className="text-xs text-muted-foreground">Status</p>
                     <p className="font-medium capitalize">{selectedItem.status}</p>
                   </div>
-                  <div className="p-3 rounded-lg bg-muted/50">
+                  <div className="rounded-lg bg-muted/50 p-3">
                     <p className="text-xs text-muted-foreground">Chunks</p>
                     <p className="font-medium">{selectedItem.chunks}</p>
                   </div>
                 </div>
-                <div>
-                  <h4 className="text-sm font-medium mb-2">Preview</h4>
-                  <div className="p-4 rounded-lg bg-muted/30 text-sm text-muted-foreground max-h-60 overflow-auto">
-                    <p>Document content preview would appear here...</p>
-                    <p className="mt-2">This is a placeholder for the actual document content viewer with syntax highlighting for code, PDF rendering, or web page preview depending on the document type.</p>
-                  </div>
+                <div className="rounded-lg bg-muted/30 p-4 text-sm text-muted-foreground">
+                  <p>This item is stored in Supabase and can now be surfaced to RAG, search, and workspace context flows.</p>
                 </div>
               </div>
-              <DialogFooter className="gap-2">
+              <div className="flex justify-end gap-2">
                 <Button variant="outline" className="gap-2">
-                  <Eye className="w-4 h-4" /> View Full
+                  <Eye className="h-4 w-4" /> View Full
                 </Button>
-                <Button variant="outline" className="gap-2">
-                  <Download className="w-4 h-4" /> Download
-                </Button>
-                <Button variant="outline" className="gap-2 text-destructive">
-                  <Trash2 className="w-4 h-4" /> Remove
-                </Button>
-              </DialogFooter>
+              </div>
             </>
           )}
         </DialogContent>

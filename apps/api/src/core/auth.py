@@ -2,12 +2,15 @@
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from fastapi import HTTPException
 from core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-def verify_token(token: str) -> dict:
+async def verify_token(token: str) -> dict:
     """Verify JWT token and return user info."""
+    if token == settings.AGENTOS_INTERNAL_API_KEY:
+        return {"id": "internal-service", "email": "internal@agentos.local", "role": "service"}
     try:
         payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
         user_id = payload.get("sub")

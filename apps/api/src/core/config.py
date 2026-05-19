@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     JWT_SECRET: str = "your-secret-key-change-in-production"
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRATION: int = 86400  # 24 hours
+    AGENTOS_INTERNAL_API_KEY: str = "change-this-in-production"
+    SUPABASE_URL: str = ""
+    SUPABASE_ANON_KEY: str = ""
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
 
     # OpenClaude
     OPENCLAUDE_GRPC_HOST: str = "localhost"

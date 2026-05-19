@@ -115,6 +115,12 @@ class ModelRouter:
 
     def get_provider(self, name: str = None) -> BaseProvider:
         """Get provider by name or default."""
+        if name:
+            normalized = name.lower()
+            if "claude" in normalized and "anthropic" in self._providers:
+                return self._providers["anthropic"]
+            if any(token in normalized for token in ["gpt", "openai"]) and "openai" in self._providers:
+                return self._providers["openai"]
         if name and name in self._providers:
             return self._providers[name]
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -48,122 +48,18 @@ import {
   GitBranch,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getJson } from "@/lib/client-api";
+import type { ProductAgent } from "@/lib/product-blueprint";
 
-interface Agent {
-  id: string;
-  name: string;
-  description: string;
-  type: "built-in" | "custom";
-  model: string;
-  status: "active" | "idle" | "error";
-  tools: string[];
-  memory: string;
-  runs: number;
-  lastRun: string;
-  icon: any;
-  color: string;
-}
-
-const agents: Agent[] = [
-  {
-    id: "1",
-    name: "Research Agent",
-    description: "Deep research on any topic. Searches web, analyzes papers, and synthesizes findings.",
-    type: "built-in",
-    model: "Claude Opus",
-    status: "active",
-    tools: ["web_search", "web_extract", "memory", "session_search"],
-    memory: "project",
-    runs: 1247,
-    lastRun: "2 min ago",
-    icon: Brain,
-    color: "bg-purple-500/10 text-purple-500",
-  },
-  {
-    id: "2",
-    name: "Coding Agent",
-    description: "Write, review, and debug code. Supports multiple languages and frameworks.",
-    type: "built-in",
-    model: "GPT-4o",
-    status: "active",
-    tools: ["terminal", "read_file", "write_file", "patch", "execute_code"],
-    memory: "project",
-    runs: 3421,
-    lastRun: "5 min ago",
-    icon: Code2,
-    color: "bg-blue-500/10 text-blue-500",
-  },
-  {
-    id: "3",
-    name: "Design Agent",
-    description: "Generate UI components, design systems, and prototypes from descriptions.",
-    type: "built-in",
-    model: "Gemini Pro",
-    status: "idle",
-    tools: ["image_generate", "vision_analyze", "generate_design"],
-    memory: "project",
-    runs: 892,
-    lastRun: "1 hr ago",
-    icon: Palette,
-    color: "bg-pink-500/10 text-pink-500",
-  },
-  {
-    id: "4",
-    name: "QA Agent",
-    description: "Automated testing, code review, and quality assurance across your codebase.",
-    type: "built-in",
-    model: "Claude Sonnet",
-    status: "idle",
-    tools: ["terminal", "read_file", "execute_code", "browser_navigate"],
-    memory: "project",
-    runs: 567,
-    lastRun: "3 hrs ago",
-    icon: Bug,
-    color: "bg-red-500/10 text-red-500",
-  },
-  {
-    id: "5",
-    name: "Documentation Agent",
-    description: "Generate and maintain documentation, READMEs, and API docs.",
-    type: "built-in",
-    model: "Llama 3.3",
-    status: "active",
-    tools: ["read_file", "write_file", "memory"],
-    memory: "project",
-    runs: 234,
-    lastRun: "10 min ago",
-    icon: BookOpen,
-    color: "bg-green-500/10 text-green-500",
-  },
-  {
-    id: "6",
-    name: "Deployment Agent",
-    description: "Deploy applications, manage infrastructure, and handle CI/CD pipelines.",
-    type: "built-in",
-    model: "GPT-4o",
-    status: "idle",
-    tools: ["terminal", "read_file", "browser_navigate"],
-    memory: "global",
-    runs: 89,
-    lastRun: "Yesterday",
-    icon: Rocket,
-    color: "bg-orange-500/10 text-orange-500",
-  },
-  {
-    id: "7",
-    name: "Data Analysis Agent",
-    description: "Analyze datasets, generate visualizations, and build ML pipelines.",
-    type: "built-in",
-    model: "Claude Opus",
-    status: "idle",
-    tools: ["execute_code", "read_file", "memory"],
-    memory: "project",
-    runs: 445,
-    lastRun: "2 hrs ago",
-    icon: BarChart3,
-    color: "bg-cyan-500/10 text-cyan-500",
-  },
-];
+const agentIcons = {
+  research: Brain,
+  coding: Code2,
+  design: Palette,
+  qa: Bug,
+  docs: BookOpen,
+  deployment: Rocket,
+  analytics: BarChart3,
+} as const;
 
 const container = {
   hidden: { opacity: 0 },
@@ -177,7 +73,44 @@ const item = {
 
 export default function AgentsPage() {
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
+  const [selectedAgent, setSelectedAgent] = useState<ProductAgent | null>(null);
+  const [agents, setAgents] = useState<ProductAgent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    getJson<{ agents: Array<Record<string, unknown>> }>("/api/agents")
+      .then((data) => {
+        if (!active) return;
+        const mapped = data.agents.map((agent) => ({
+          id: String(agent.id),
+          name: String(agent.name),
+          description: String(agent.description ?? ""),
+          type: (agent.type as "built-in" | "custom") ?? "custom",
+          model: String(agent.model ?? "unknown"),
+          status: (agent.status as "active" | "idle" | "error") ?? "idle",
+          tools: Array.isArray(agent.tools) ? (agent.tools as string[]) : [],
+          memory: ((agent.memory_scope as "project" | "global") ?? "project"),
+          runs: Number(agent.runs ?? 0),
+          lastRun: agent.last_run_at ? new Date(String(agent.last_run_at)).toLocaleString() : "Never",
+          color: String((agent.config as { color?: string } | undefined)?.color ?? "bg-slate-500/10 text-slate-300"),
+          upstream: ((agent.config as { source?: ProductAgent["upstream"] } | undefined)?.source ?? "agentos"),
+        }));
+        setAgents(mapped);
+      })
+      .catch((fetchError) => {
+        if (!active) return;
+        setError(fetchError instanceof Error ? fetchError.message : "Failed to load agents");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const filteredAgents = agents.filter(
     (agent) =>
@@ -263,20 +196,24 @@ export default function AgentsPage() {
       </div>
 
       {/* Agents Grid */}
+      {loading && <p className="text-sm text-muted-foreground">Loading agents...</p>}
+      {error && <p className="text-sm text-destructive">{error}</p>}
       <motion.div
         variants={container}
         initial="hidden"
         animate="show"
         className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
       >
-        {filteredAgents.map((agent) => (
+        {filteredAgents.map((agent) => {
+          const AgentIcon = agentIcons[agent.id as keyof typeof agentIcons] ?? Bot;
+          return (
           <motion.div key={agent.id} variants={item}>
             <Card className="group hover:shadow-md transition-all cursor-pointer border-l-4 border-l-transparent hover:border-l-primary"
               onClick={() => setSelectedAgent(agent)}>
               <CardContent className="p-5">
                 <div className="flex items-start justify-between mb-3">
                   <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center", agent.color)}>
-                    <agent.icon className="w-5 h-5" />
+                    <AgentIcon className="w-5 h-5" />
                   </div>
                   <div className="flex items-center gap-2">
                     <div
@@ -330,7 +267,8 @@ export default function AgentsPage() {
               </CardContent>
             </Card>
           </motion.div>
-        ))}
+          );
+        })}
       </motion.div>
 
       {/* Agent Detail Dialog */}
@@ -338,10 +276,13 @@ export default function AgentsPage() {
         <DialogContent className="max-w-3xl">
           {selectedAgent && (
             <>
+              {(() => {
+                const AgentIcon = agentIcons[selectedAgent.id as keyof typeof agentIcons] ?? Bot;
+                return (
               <DialogHeader>
                 <div className="flex items-center gap-3">
                   <div className={cn("w-12 h-12 rounded-xl flex items-center justify-center", selectedAgent.color)}>
-                    <selectedAgent.icon className="w-6 h-6" />
+                    <AgentIcon className="w-6 h-6" />
                   </div>
                   <div>
                     <DialogTitle className="text-xl">{selectedAgent.name}</DialogTitle>
@@ -349,6 +290,8 @@ export default function AgentsPage() {
                   </div>
                 </div>
               </DialogHeader>
+                );
+              })()}
 
               <div className="grid grid-cols-2 gap-6 py-4">
                 <div className="space-y-4">

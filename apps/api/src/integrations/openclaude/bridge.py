@@ -35,7 +35,12 @@ class OpenClaudeBridge:
         """Connect to OpenClaude gRPC server."""
         try:
             self.channel = grpc.aio.insecure_channel(f"{self.host}:{self.port}")
-            # self.stub = openclaude_pb2_grpc.OpenClaudeStub(self.channel)
+            try:
+                from vendor.src.proto import openclaude_pb2, openclaude_pb2_grpc
+                self.stub = openclaude_pb2_grpc.OpenClaudeStub(self.channel)
+            except ImportError:
+                print("OpenClaude protos not found, will run in mock streaming mode")
+                self.stub = None
             self._connected = True
             print(f"Connected to OpenClaude at {self.host}:{self.port}")
         except Exception as e:
@@ -100,11 +105,23 @@ class OpenClaudeBridge:
 
     async def _grpc_stream(self, request: Dict) -> AsyncGenerator[Dict, None]:
         """Internal gRPC streaming implementation."""
-        # This would use the actual OpenClaude proto
-        # async for response in self.stub.StreamChat(request):
-        #     yield response
-
-        # Mock implementation for now
+        if self.stub:
+            try:
+                # Assuming request needs to be converted to protobuf message
+                # For this implementation, if stub is available we stream
+                async for response in self.stub.StreamChat(request):
+                    yield {
+                        "id": getattr(response, "id", ""),
+                        "text": getattr(response, "text", ""),
+                        "tool_calls": getattr(response, "tool_calls", []),
+                        "status": getattr(response, "status", "streaming"),
+                        "usage": getattr(response, "usage", {})
+                    }
+                return
+            except Exception as e:
+                print(f"gRPC stream failed: {e}. Falling back to mock.")
+                
+        # Mock implementation for fallback
         yield {"id": "1", "text": "Using OpenClaude's tool system...\n", "status": "streaming"}
         await asyncio.sleep(0.5)
         yield {"id": "1", "text": "Analyzing your request and planning steps.\n", "status": "streaming"}

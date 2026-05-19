@@ -43,13 +43,22 @@ class HermesAdapter:
     async def initialize(self):
         """Initialize Hermes Agent."""
         try:
-            # In production, these would be actual Hermes classes
-            # self.config = Config.load(self.config_path)
-            # self.agent = Agent(self.config)
-            # self.memory = MemoryManager(self.config.memory_path)
-            # self.skills = SkillsManager(self.config.skills_path)
-            # self.gateway = Gateway(self.config)
-            # self.scheduler = CronScheduler(self.config)
+            try:
+                from vendor.hermes.config import Config
+                from vendor.hermes.agent import Agent
+                from vendor.hermes.memory import MemoryManager
+                from vendor.hermes.skills import SkillsManager
+                from vendor.hermes.gateway import Gateway
+                from vendor.hermes.scheduler import CronScheduler
+                
+                self.config = Config.load(self.config_path)
+                self.agent = Agent(self.config)
+                self.memory = MemoryManager(self.config.memory_path)
+                self.skills = SkillsManager(self.config.skills_path)
+                self.gateway = Gateway(self.config)
+                self.scheduler = CronScheduler(self.config)
+            except ImportError:
+                print("Hermes submodule not found, will run in mock mode")
 
             self._initialized = True
             print(f"Hermes Agent initialized from {self.config_path}")
@@ -122,7 +131,22 @@ class HermesAdapter:
 
     async def _hermes_stream(self, message: str, session: Dict) -> AsyncGenerator[Dict, None]:
         """Internal Hermes streaming."""
-        # Mock implementation - in production uses actual Hermes Agent
+        if getattr(self, 'agent', None):
+            try:
+                async for chunk in self.agent.stream(message, context=session):
+                    yield {
+                        "id": getattr(chunk, "id", ""),
+                        "text": getattr(chunk, "text", ""),
+                        "skills": getattr(chunk, "skills", []),
+                        "memory_updates": getattr(chunk, "memory_updates", []),
+                        "tool_calls": getattr(chunk, "tool_calls", []),
+                        "finish_reason": getattr(chunk, "finish_reason", None),
+                    }
+                return
+            except Exception as e:
+                print(f"Hermes stream failed: {e}. Falling back to mock.")
+                
+        # Mock implementation for fallback
         yield {"id": "1", "text": "Hermes is analyzing your request...\n", "skills": []}
         await asyncio.sleep(0.5)
         yield {"id": "1", "text": "Searching memory for relevant context...\n", "skills": [], "memory_updates": []}

@@ -94,122 +94,6 @@ interface Artifact {
   language?: string;
 }
 
-// Mock data
-const mockMessages: Message[] = [
-  {
-    id: "1",
-    role: "user",
-    content: "Create a landing page for an AI SaaS product called AgentOS. It should have a hero section, features grid, pricing, and a CTA. Use a modern dark theme with gradient accents.",
-    timestamp: new Date(Date.now() - 1000 * 60 * 5),
-  },
-  {
-    id: "2",
-    role: "assistant",
-    content: `I'll create a stunning landing page for AgentOS with a modern dark theme. Let me start by generating the design and then implement the code.
-
-## Plan
-1. **Hero Section** - Bold headline with gradient text and animated background
-2. **Features Grid** - 6 feature cards with icons
-3. **Pricing Section** - 3-tier pricing with highlighted Pro plan
-4. **CTA Section** - Final call-to-action with email capture
-
-Let me generate the React components:`,
-    model: "Claude Opus",
-    tokens: 1247,
-    timestamp: new Date(Date.now() - 1000 * 60 * 4),
-    toolCalls: [
-      {
-        id: "tc1",
-        name: "generate_design",
-        args: { prompt: "Modern dark SaaS landing page with gradient accents", style: "minimalist" },
-        status: "complete",
-        result: "Design generated successfully",
-      },
-      {
-        id: "tc2",
-        name: "write_file",
-        args: { path: "/workspace/landing-page.tsx", content: "..." },
-        status: "complete",
-        result: "File written: landing-page.tsx (2.4KB)",
-      },
-    ],
-    artifacts: [
-      {
-        id: "a1",
-        type: "code",
-        title: "LandingPage.tsx",
-        content: `export default function LandingPage() {
-  return (
-    <div className="min-h-screen bg-slate-950">
-      <section className="relative pt-32 pb-20">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-900/20 via-slate-950 to-slate-950" />
-        <div className="relative max-w-7xl mx-auto px-6 text-center">
-          <h1 className="text-6xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-            Build with AI
-          </h1>
-        </div>
-      </section>
-    </div>
-  );
-}`,
-        language: "tsx",
-      },
-    ],
-  },
-  {
-    id: "3",
-    role: "user",
-    content: "Looks great! Can you also add a testimonials section and make the navbar sticky with a blur effect?",
-    timestamp: new Date(Date.now() - 1000 * 60 * 2),
-  },
-  {
-    id: "4",
-    role: "assistant",
-    content: `Absolutely! I'll add a testimonials section with a carousel and make the navbar sticky with a glassmorphism blur effect. Let me update the code:
-
-### Changes Made:
-- **Sticky Navbar** with backdrop blur and semi-transparent background
-- **Testimonials Section** with auto-playing carousel
-- **Glassmorphism cards** for testimonial quotes
-- **Star ratings** with Lucide icons
-
-Here's the updated component:`,
-    model: "Claude Opus",
-    tokens: 892,
-    timestamp: new Date(Date.now() - 1000 * 60 * 1),
-    status: "complete",
-    artifacts: [
-      {
-        id: "a2",
-        type: "code",
-        title: "Navbar.tsx",
-        content: `"use client";
-
-import { useState, useEffect } from "react";
-
-export function Navbar() {
-  const [scrolled, setScrolled] = useState(false);
-  
-  useEffect(() => {
-    const handleScroll = () => setScrolled(window.scrollY > 20);
-    window.addEventListener("scroll", handleScroll);
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
-  
-  return (
-    <nav className={\`fixed top-0 w-full z-50 transition-all duration-300 \${
-      scrolled ? "bg-slate-950/80 backdrop-blur-xl border-b border-white/10" : ""
-    }\`}>
-      {/* ... */}
-    </nav>
-  );
-}`,
-        language: "tsx",
-      },
-    ],
-  },
-];
-
 // Components
 function CodeBlock({ code, language }: { code: string; language?: string }) {
   const [copied, setCopied] = useState(false);
@@ -500,7 +384,7 @@ export default function WorkspacePage() {
           }))
         );
       })
-      .catch(() => setMessages(mockMessages));
+      .catch(() => setMessages([]));
   }, []);
 
   const handleSend = async () => {

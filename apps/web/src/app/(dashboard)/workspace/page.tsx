@@ -99,7 +99,7 @@ const mockMessages: Message[] = [
   {
     id: "2",
     role: "assistant",
-    content: "I'll create a stunning landing page for AgentOS with a modern dark theme. Let me start by generating the design and then implement the code.
+    content: `I'll create a stunning landing page for AgentOS with a modern dark theme. Let me start by generating the design and then implement the code.
 
 ## Plan
 1. **Hero Section** - Bold headline with gradient text and animated background
@@ -107,7 +107,7 @@ const mockMessages: Message[] = [
 3. **Pricing Section** - 3-tier pricing with highlighted Pro plan
 4. **CTA Section** - Final call-to-action with email capture
 
-Let me generate the React components:",
+Let me generate the React components:`,
     model: "Claude Opus",
     tokens: 1247,
     timestamp: new Date(Date.now() - 1000 * 60 * 4),
@@ -159,7 +159,7 @@ Let me generate the React components:",
   {
     id: "4",
     role: "assistant",
-    content: "Absolutely! I'll add a testimonials section with a carousel and make the navbar sticky with a glassmorphism blur effect. Let me update the code:
+    content: `Absolutely! I'll add a testimonials section with a carousel and make the navbar sticky with a glassmorphism blur effect. Let me update the code:
 
 ### Changes Made:
 - **Sticky Navbar** with backdrop blur and semi-transparent background
@@ -167,7 +167,7 @@ Let me generate the React components:",
 - **Glassmorphism cards** for testimonial quotes
 - **Star ratings** with Lucide icons
 
-Here's the updated component:",
+Here's the updated component:`,
     model: "Claude Opus",
     tokens: 892,
     timestamp: new Date(Date.now() - 1000 * 60 * 1),
@@ -373,8 +373,7 @@ function MessageBubble({ message }: { message: Message }) {
                 code({ node, inline, className, children, ...props }: any) {
                   const match = /language-(\w+)/.exec(className || "");
                   return !inline && match ? (
-                    <CodeBlock code={String(children).replace(/
-$/, "")} language={match[1]} />
+                    <CodeBlock code={String(children).replace(/\n$/, "")} language={match[1]} />
                   ) : (
                     <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono" {...props}>
                       {children}
@@ -501,22 +500,13 @@ export default function WorkspacePage() {
       setMessages((prev) => [...prev, assistantMessage]);
 
       const chunks = [
-        "
-
-## Analysis
-",
+        "\n\n## Analysis\n",
         "Based on your requirements, I'll create a comprehensive solution that includes:",
-        "
-- **Component architecture** with proper separation of concerns",
-        "
-- **TypeScript types** for full type safety",
-        "
-- **Tailwind styling** with custom design tokens",
-        "
-- **Animation** using Framer Motion for smooth interactions",
-        "
-
-Let me start implementing...",
+        "\n- **Component architecture** with proper separation of concerns",
+        "\n- **TypeScript types** for full type safety",
+        "\n- **Tailwind styling** with custom design tokens",
+        "\n- **Animation** using Framer Motion for smooth interactions",
+        "\n\nLet me start implementing...",
       ];
 
       let chunkIndex = 0;

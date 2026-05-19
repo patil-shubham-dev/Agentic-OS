@@ -1,0 +1,110 @@
+version: "3.8"
+
+services:
+  # Frontend
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://api:8000
+      - NODE_ENV=production
+    depends_on:
+      - api
+    networks:
+      - agentos
+
+  # Backend API
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/agentos
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - OPEN_DESIGN_API_KEY=${OPEN_DESIGN_API_KEY:-}
+    depends_on:
+      - postgres
+      - redis
+      - qdrant
+    networks:
+      - agentos
+    volumes:
+      - ./data/workspace:/workspace
+
+  # Celery Workers
+  workers:
+    build:
+      context: ./apps/workers
+      dockerfile: Dockerfile
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/agentos
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - agentos
+    command: celery -A tasks worker --loglevel=info --concurrency=4
+
+  # PostgreSQL
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=agentos
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - agentos
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - agentos
+
+  # Qdrant (Vector DB)
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - agentos
+
+  # OpenClaude gRPC Server (optional - can be external)
+  openclaude:
+    image: agentos/openclaude:latest
+    ports:
+      - "50051:50051"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    networks:
+      - agentos
+    profiles:
+      - with-openclaude
+
+volumes:
+  postgres_data:
+  qdrant_data:
+
+networks:
+  agentos:
+    driver: bridge

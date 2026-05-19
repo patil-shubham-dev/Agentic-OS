@@ -13,7 +13,7 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "clean": "turbo run clean",
-    "format": "prettier --write "**/*.{ts,tsx,md}"",
+    "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {

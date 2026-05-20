@@ -10,6 +10,13 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --parallel",
+    "dev:web": "pnpm --filter @agentos/web dev",
+    "dev:desktop": "pnpm --filter @agentos/desktop dev",
+    "dev:all": "pnpm --filter @agentos/web dev --filter @agentos/desktop dev",
+    "build:web": "pnpm --filter @agentos/web build",
+    "build:desktop": "pnpm --filter @agentos/desktop build",
+    "build:all": "pnpm --filter @agentos/web build && pnpm --filter @agentos/desktop build",
+    "package:desktop": "pnpm --filter @agentos/desktop dist",
     "lint": "turbo run lint",
     "test": "turbo run test",
     "clean": "turbo run clean",

@@ -27,7 +27,6 @@ import {
   Plus,
   Search,
   Settings,
-  Sparkles,
   Workflow,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -187,9 +186,11 @@ export default function DashboardLayout({
           {/* Logo */}
           <div className="flex h-14 items-center border-b border-amber-200/60 px-4">
             <Link href="/dashboard" prefetch={true} className="flex items-center gap-3">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-amber-300/60 bg-gradient-to-br from-amber-400 to-orange-400 shadow-sm">
-                <Sparkles className="h-4 w-4 text-white" />
-              </div>
+              <img 
+                src="/icon.svg" 
+                alt="AgentOS Studio"
+                className="h-8 w-8 shrink-0 rounded-xl" 
+              />
               {!collapsed && (
                 <span className="overflow-hidden whitespace-nowrap text-sm font-semibold uppercase tracking-[0.20em] text-amber-900">
                   {productName}

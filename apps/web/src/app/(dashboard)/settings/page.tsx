@@ -133,6 +133,7 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [discoveringId, setDiscoveringId] = useState<string | null>(null);
+  const [dbConnected, setDbConnected] = useState<boolean | null>(null);
 
   const loadData = async () => {
     try {
@@ -172,8 +173,10 @@ export default function SettingsPage() {
 
       const secData = await getJson<{ security: Record<string, boolean> }>("/api/settings/security");
       setSecurity(secData.security);
+      setDbConnected(true);
     } catch {
-      toast.error("Failed to load settings data.");
+      setDbConnected(false);
+      toast.error("Database unavailable — Settings saved to memory only.");
     }
   };
 
@@ -301,6 +304,36 @@ export default function SettingsPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-6xl mx-auto">
+      {/* DB Connection Banner */}
+      {dbConnected === false && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-amber-50/80 border border-amber-200/80 shadow-sm"
+        >
+          <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
+            <AlertCircle className="w-4 h-4 text-amber-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-amber-950">Database Unavailable</p>
+            <p className="text-[11px] text-amber-700/70">
+              Your Supabase project is offline. Settings will not persist between sessions.
+              Go to supabase.com to reactivate your project, or configure a local database.
+            </p>
+          </div>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <HelpCircle className="w-4 h-4 text-amber-500 shrink-0 cursor-help" />
+              </TooltipTrigger>
+              <TooltipContent className="bg-slate-900 text-white border-none text-[10px] max-w-[220px]">
+                Update SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in apps/web/.env to reconnect.
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </motion.div>
+      )}
+
       {/* Header */}
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between">
         <div>

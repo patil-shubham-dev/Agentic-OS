@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import { useChat } from "@ai-sdk/react";
 import { Button } from "@/components/ui/button";
@@ -76,7 +77,7 @@ import remarkGfm from "remark-gfm";
 import { getJson, sendJson } from "@/lib/client-api";
 import { toast } from "sonner";
 import Editor, { DiffEditor } from "@monaco-editor/react";
-import XtermTerminal from "@/components/workspace/XtermTerminal";
+const XtermTerminal = dynamic(() => import("@/components/workspace/XtermTerminal"), { ssr: false });
 import { DefaultChatTransport } from "ai";
 // Types
 interface ImageAttachment {
@@ -211,6 +212,7 @@ export default function WorkspacePage() {
     roleAssignments: Record<string, string>;
     security: Record<string, boolean>;
   } | null>(null);
+  const [dbConnected, setDbConnected] = useState<boolean | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const terminalEndRef = useRef<HTMLDivElement>(null);
@@ -631,8 +633,9 @@ export default function WorkspacePage() {
         roleAssignments: rolesRes.roles,
         security: secRes.security,
       });
+      setDbConnected(true);
     } catch {
-      // settings not configured yet
+      setDbConnected(false);
     }
   };
 
@@ -1183,6 +1186,18 @@ export default function WorkspacePage() {
                     {orchestrateMode ? "Multi-agent mode" : `Role: ${bridgeStatus?.activeRole || "Coding"}`}
                   </span>
                 </div>
+                {dbConnected === false && (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <AlertCircle className="w-3.5 h-3.5 text-amber-500 animate-pulse shrink-0" />
+                      </TooltipTrigger>
+                      <TooltipContent className="bg-slate-900 text-white border-none text-[10px] max-w-[200px]">
+                        Database offline — role routing & security will use defaults. Configure providers in Settings to restore full functionality.
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
               </div>
               <div className="flex items-center gap-1.5">
                 <TooltipProvider>

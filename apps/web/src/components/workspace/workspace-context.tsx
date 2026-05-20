@@ -3,6 +3,13 @@
 import React, { createContext, useContext, useState, useRef, useEffect, useCallback, type ReactNode } from "react";
 import { getJson, sendJson } from "@/lib/client-api";
 import { toast } from "sonner";
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from "@/components/ui/context-menu";
 
 // ============================================================
 // Types
@@ -912,44 +919,109 @@ export function WorkspaceProvider({
       const isExpanded = expandedPaths.has(item.path);
       const isLoading = loadingPaths.has(item.path);
       const isContextSelected = contextPaths.has(item.path);
-      // We can't use ContextMenu here because it requires imports that are in the page
-      // So let's return a simple clickable tree node
       return (
-        <div
-          key={item.path}
-          style={{ paddingLeft: `${depth * 10}px` }}
-          className="select-none"
-          draggable
-          onDragStart={(e) => handleFileTreeDragStart(e, item.path)}
-          onDragOver={(e) => handleFileTreeDragOver(e, item)}
-          onDrop={(e) => handleFileTreeDrop(e, item.isDir ? item.path : dirPath)}
-        >
-          <div
-            className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-amber-100/50 cursor-pointer text-xs transition-colors group"
-            onClick={() => (item.isDir ? handleToggleFolder(item.path) : handleOpenFile(item))}
+        <ContextMenu key={item.path}>
+          <ContextMenuTrigger
+            style={{ paddingLeft: `${depth * 10}px` }}
+            className="select-none block"
           >
-            {item.isDir ? (
-              isLoading ? (
-                <span className="w-3.5 h-3.5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
-              ) : isExpanded ? (
-                <svg className="w-3.5 h-3.5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2V9a2 2 0 00-2-2H9l-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+            <div
+              draggable
+              onDragStart={(e) => handleFileTreeDragStart(e, item.path)}
+              onDragOver={(e) => handleFileTreeDragOver(e, item)}
+              onDrop={(e) => handleFileTreeDrop(e, item.isDir ? item.path : dirPath)}
+              className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-amber-100/50 cursor-pointer text-xs transition-colors group"
+              onClick={() => (item.isDir ? handleToggleFolder(item.path) : handleOpenFile(item))}
+            >
+              {item.isDir ? (
+                isLoading ? (
+                  <span className="w-3.5 h-3.5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                ) : isExpanded ? (
+                  <svg className="w-3.5 h-3.5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2V9a2 2 0 00-2-2H9l-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                ) : (
+                  <svg className="w-3.5 h-3.5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
+                )
               ) : (
-                <svg className="w-3.5 h-3.5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
-              )
+                <svg className="w-3.5 h-3.5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              )}
+              <span className="truncate">{item.name}</span>
+            </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent className="w-48 bg-white border-amber-200 shadow-lg rounded-xl p-1">
+            {item.isDir ? (
+              <>
+                <ContextMenuItem
+                  className="text-xs cursor-pointer rounded-lg px-3 py-1.5 focus:bg-amber-100 focus:text-amber-900"
+                  onClick={() => handleToggleFolder(item.path)}
+                >
+                  {isExpanded ? "Collapse" : "Expand"}
+                </ContextMenuItem>
+                <ContextMenuSeparator className="bg-amber-100 my-0.5" />
+                <ContextMenuItem
+                  className="text-xs cursor-pointer rounded-lg px-3 py-1.5 focus:bg-amber-100 focus:text-amber-900"
+                  onClick={() => handleCreateFile(item.path)}
+                >
+                  New File
+                </ContextMenuItem>
+                <ContextMenuItem
+                  className="text-xs cursor-pointer rounded-lg px-3 py-1.5 focus:bg-amber-100 focus:text-amber-900"
+                  onClick={() => handleCreateFolder(item.path)}
+                >
+                  New Folder
+                </ContextMenuItem>
+                <ContextMenuSeparator className="bg-amber-100 my-0.5" />
+                <ContextMenuItem
+                  className="text-xs cursor-pointer rounded-lg px-3 py-1.5 focus:bg-amber-100 focus:text-amber-900"
+                  onClick={() => handleRenameItem(item.path, dirPath)}
+                >
+                  Rename
+                </ContextMenuItem>
+                <ContextMenuItem
+                  className="text-xs cursor-pointer rounded-lg px-3 py-1.5 focus:bg-red-100 focus:text-red-700 text-red-600"
+                  onClick={() => handleDeleteItem(item.path, dirPath)}
+                >
+                  Delete
+                </ContextMenuItem>
+              </>
             ) : (
-              <svg className="w-3.5 h-3.5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              <>
+                <ContextMenuItem
+                  className="text-xs cursor-pointer rounded-lg px-3 py-1.5 focus:bg-amber-100 focus:text-amber-900"
+                  onClick={() => handleOpenFile(item)}
+                >
+                  Open
+                </ContextMenuItem>
+                <ContextMenuItem
+                  className="text-xs cursor-pointer rounded-lg px-3 py-1.5 focus:bg-amber-100 focus:text-amber-900"
+                  onClick={(e) => handleToggleContext(item.path, e as unknown as React.MouseEvent)}
+                >
+                  {isContextSelected ? "Remove from Context" : "Add to Context"}
+                </ContextMenuItem>
+                <ContextMenuSeparator className="bg-amber-100 my-0.5" />
+                <ContextMenuItem
+                  className="text-xs cursor-pointer rounded-lg px-3 py-1.5 focus:bg-amber-100 focus:text-amber-900"
+                  onClick={() => handleRenameItem(item.path, dirPath)}
+                >
+                  Rename
+                </ContextMenuItem>
+                <ContextMenuItem
+                  className="text-xs cursor-pointer rounded-lg px-3 py-1.5 focus:bg-red-100 focus:text-red-700 text-red-600"
+                  onClick={() => handleDeleteItem(item.path, dirPath)}
+                >
+                  Delete
+                </ContextMenuItem>
+              </>
             )}
-            <span className="truncate">{item.name}</span>
-          </div>
+          </ContextMenuContent>
           {item.isDir && isExpanded && (
             <div className="border-l border-amber-200/50 ml-3.5 pl-1.5 my-0.5">
               {renderTreeNodes(item.path, depth + 1)}
             </div>
           )}
-        </div>
+        </ContextMenu>
       );
     });
-  }, [dirContents, expandedPaths, loadingPaths, contextPaths, handleFileTreeDragStart, handleFileTreeDragOver, handleFileTreeDrop, handleToggleFolder, handleOpenFile]);
+  }, [dirContents, expandedPaths, loadingPaths, contextPaths, handleFileTreeDragStart, handleFileTreeDragOver, handleFileTreeDrop, handleToggleFolder, handleOpenFile, handleCreateFile, handleCreateFolder, handleRenameItem, handleDeleteItem, handleToggleContext]);
 
   // ============================================================
   // Context Value

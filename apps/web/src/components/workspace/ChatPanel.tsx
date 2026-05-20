@@ -34,6 +34,7 @@ import {
   History,
   MessageSquare,
 } from "lucide-react";
+import { ListSkeleton } from "@/components/skeleton-loader";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { sendJson } from "@/lib/client-api";
@@ -591,8 +592,8 @@ function ChatHistoryBar() {
               )}
 
               {chatHistoryLoading ? (
-                <div className="flex items-center justify-center py-4">
-                  <Loader2 className="w-4 h-4 text-amber-500 animate-spin" />
+                <div className="p-2">
+                  <ListSkeleton count={3} />
                 </div>
               ) : chats.length === 0 ? (
                 <div className="text-center py-4 text-[11px] text-amber-600/60">

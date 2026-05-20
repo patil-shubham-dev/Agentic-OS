@@ -3,7 +3,8 @@
 import dynamic from "next/dynamic";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Button } from "@/components/ui/button";
-import { Save, Layers, FileText, X, Code2 } from "lucide-react";
+import { Save, Layers, FileText, X, Code2, Loader2 } from "lucide-react";
+import { Skeleton } from "@/components/skeleton-loader";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { sendJson } from "@/lib/client-api";
@@ -206,12 +207,32 @@ function DiffView({ tab }: { tab: any }) {
 
 function EmptyEditorState() {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center text-center text-xs text-amber-600/70 bg-amber-50/5">
-      <Code2 className="w-10 h-10 text-amber-600/50 mb-3" />
-      <h4 className="font-bold text-amber-950">Code Canvas</h4>
-      <p className="max-w-xs mt-1">
-        Double click a file in the sidebar explorer to open inside Monaco editor.
-      </p>
+    <div className="flex-1 flex flex-col items-center justify-center text-center text-xs text-amber-600/70 bg-amber-50/5 relative overflow-hidden">
+      {/* Background skeleton grid */}
+      <div className="absolute inset-0 p-6 space-y-4 opacity-25">
+        <div className="flex items-center gap-3">
+          <Skeleton className="h-4 w-12 rounded" />
+          <Skeleton className="h-4 w-24 rounded" />
+          <Skeleton className="h-4 w-16 rounded" />
+        </div>
+        <Skeleton className="h-3 w-3/4 rounded" />
+        <Skeleton className="h-3 w-1/2 rounded" />
+        <Skeleton className="h-3 w-5/6 rounded" />
+        <Skeleton className="h-20 rounded-xl" />
+        <Skeleton className="h-3 w-2/3 rounded" />
+        <Skeleton className="h-3 w-4/5 rounded" />
+      </div>
+
+      {/* Foreground prompt */}
+      <div className="relative z-10 flex flex-col items-center">
+        <div className="w-10 h-10 rounded-2xl bg-amber-100/50 flex items-center justify-center mb-3">
+          <Code2 className="w-5 h-5 text-amber-600/50" />
+        </div>
+        <h4 className="font-bold text-amber-950">Code Canvas</h4>
+        <p className="max-w-xs mt-1">
+          Double-click a file in the sidebar explorer to open it in the editor.
+        </p>
+      </div>
     </div>
   );
 }

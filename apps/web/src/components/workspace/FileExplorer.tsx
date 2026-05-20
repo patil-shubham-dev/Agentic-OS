@@ -11,6 +11,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Search, Plus, FolderPlus, Folder, Loader2 } from "lucide-react";
+import { ListSkeleton } from "@/components/skeleton-loader";
 import { useWorkspace } from "./workspace-context";
 
 // Quick Search is lazily loaded to avoid bloating the initial bundle
@@ -91,9 +92,8 @@ export function FileExplorer() {
           {rootPath ? (
             <div className="space-y-1">{renderTreeNodes(rootPath)}</div>
           ) : (
-            <div className="flex items-center justify-center p-8 text-center text-xs text-amber-600/70">
-              <Loader2 className="w-4 h-4 animate-spin text-amber-500 mr-1.5" />
-              Indexing codebase...
+            <div className="p-4">
+              <ListSkeleton count={6} />
             </div>
           )}
         </ScrollArea>

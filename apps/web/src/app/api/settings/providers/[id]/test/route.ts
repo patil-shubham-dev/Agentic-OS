@@ -40,6 +40,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           if (id === "anthropic") {
             headers["x-api-key"] = apiKey;
             headers["anthropic-version"] = "2023-06-01";
+          } else if (id === "google") {
+            // Google Gemini uses x-goog-api-key header, not Bearer
+            headers["x-goog-api-key"] = apiKey;
           } else if (apiKey.startsWith("nvapi-")) {
             // NVIDIA NGC API uses NVCF-API-KEY header instead of Bearer
             headers["NVCF-API-KEY"] = apiKey;

@@ -25,7 +25,7 @@ export function QuickSearchDialog() {
 
   return (
     <Dialog open={searchOpen} onOpenChange={setSearchOpen}>
-      <DialogContent className="max-w-2xl bg-white border border-amber-200 rounded-3xl shadow-2xl p-6">
+      <DialogContent className="max-w-2xl bg-white border border-amber-200 rounded-xl shadow-2xl p-6">
         <DialogHeader>
           <DialogTitle className="text-base font-bold text-amber-950 flex items-center gap-2">
             <Search className="w-5 h-5 text-amber-600" /> Quick Search Codebase

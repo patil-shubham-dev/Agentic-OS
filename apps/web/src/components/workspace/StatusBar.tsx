@@ -4,8 +4,10 @@ import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { getJson } from "@/lib/client-api";
 import { Skeleton } from "@/components/skeleton-loader";
+import { useWorkspace } from "./workspace-context";
 
 export function StatusBar() {
+  const { cursorPosition } = useWorkspace();
   const [gitInfo, setGitInfo] = useState<{ branch: string; changes: number } | null>(null);
   const [providerStatus, setProviderStatus] = useState<string | null>(null);
   const [activeModel, setActiveModel] = useState<string>("gpt-4o");
@@ -79,7 +81,9 @@ export function StatusBar() {
         <span className="text-slate-500">UTF-8</span>
 
         {/* Line/Column */}
-        <span className="text-slate-500">Ln 1, Col 1</span>
+        <span className="text-slate-500">
+          Ln {cursorPosition.line}, Col {cursorPosition.column}
+        </span>
       </div>
     </div>
   );

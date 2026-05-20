@@ -45,10 +45,10 @@ export async function POST(request: NextRequest) {
     if (apiKey) {
       updates.api_key_ciphertext = encryptSecret(apiKey);
       updates.api_key_last4 = apiKey.slice(-4);
-      // Re-validation must happen explicitly; clear any prior status.
-      updates.validation_status = "pending";
-      updates.last_validated_at = null;
     }
+    // Re-validation must happen explicitly; clear any prior status.
+    updates.validation_status = "pending";
+    updates.last_validated_at = null;
 
     // Validate base_url for known cloud providers
     if (!body.baseUrl && ["openai","anthropic","google"].includes(body.provider)) {

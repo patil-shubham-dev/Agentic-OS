@@ -37,9 +37,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (apiKey) {
       updates.api_key_ciphertext = encryptSecret(apiKey);
       updates.api_key_last4 = apiKey.slice(-4);
-      updates.validation_status = "pending";
-      updates.last_validated_at = null;
     }
+
+    // Reset validation status whenever config is edited (URL, model, etc. may have changed)
+    updates.validation_status = "pending";
+    updates.last_validated_at = null;
 
     const provider = await upsertProviderConfig(updates as ProviderConfigRecord);
     return NextResponse.json({ provider: sanitize(provider) });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -88,6 +88,27 @@ export function ChatPanel() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  /** Render message content handling AI SDK v6 format (string, array, or empty) */
+  const renderMessageContent = useCallback((message: any) => {
+    const content = message.content;
+    // AI SDK v6: content can be undefined, null, empty string, string, or array of content parts
+    if (content === undefined || content === null) return null;
+    if (typeof content === "string") {
+      if (!content.trim()) return null;
+      return <LazyMarkdown content={content} />;
+    }
+    // Array format: [{ type: "text", text: "..." }, { type: "image", ... }]
+    if (Array.isArray(content)) {
+      const textParts = content.filter((p: any) => p.type === "text" && p.text?.trim());
+      if (textParts.length === 0) return null;
+      return textParts.map((p: any, idx: number) => (
+        <LazyMarkdown key={idx} content={p.text} />
+      ));
+    }
+    // Fallback: try to render as string
+    return <LazyMarkdown content={String(content)} />;
+  }, []);
 
   const handleSend = () => {
     const text = chatInput;
@@ -266,9 +287,7 @@ export function ChatPanel() {
                   </div>
                 )}
 
-              {(message as any).content && (
-                <LazyMarkdown content={(message as any).content} />
-              )}
+              {renderMessageContent(message)}
             </div>
           ))}
           <div ref={messagesEndRef} />
@@ -282,24 +301,38 @@ export function ChatPanel() {
             <BookOpen className="w-3 h-3 text-amber-650" />
             Prompt File Context:
           </span>
-          {Array.from(contextPaths).map((p) => {
-            const name = p.split(/[/\\]/).pop() || "";
+          {(() => {
+            const paths = Array.from(contextPaths);
+            const visible = paths.slice(0, 4);
+            const overflow = paths.length - 4;
             return (
-              <Badge
-                key={p}
-                className="bg-amber-600/10 text-amber-900 border-amber-300 hover:bg-amber-600/20 flex items-center gap-1 text-[10px] px-2 py-0.5 shadow-none rounded-xl"
-              >
-                <FileText className="w-2.5 h-2.5 text-amber-600" />
-                <span className="max-w-[120px] truncate">{name}</span>
-                <button
-                  onClick={(e) => handleToggleContext(p, e)}
-                  className="hover:bg-amber-200/60 rounded p-0.5"
-                >
-                  <X className="w-2 h-2 text-amber-800" />
-                </button>
-              </Badge>
+              <>
+                {visible.map((p) => {
+                  const name = p.split(/[/\\]/).pop() || "";
+                  return (
+                    <Badge
+                      key={p}
+                      className="bg-amber-600/10 text-amber-900 border-amber-300 hover:bg-amber-600/20 flex items-center gap-1 text-[10px] px-2 py-0.5 shadow-none rounded-xl"
+                    >
+                      <FileText className="w-2.5 h-2.5 text-amber-600" />
+                      <span className="max-w-[120px] truncate">{name}</span>
+                      <button
+                        onClick={(e) => handleToggleContext(p, e)}
+                        className="hover:bg-amber-200/60 rounded p-0.5"
+                      >
+                        <X className="w-2 h-2 text-amber-800" />
+                      </button>
+                    </Badge>
+                  );
+                })}
+                {overflow > 0 && (
+                  <Badge className="bg-amber-100/70 text-amber-700 border-amber-200 text-[10px] px-2 py-0.5 shadow-none rounded-xl">
+                    +{overflow} more
+                  </Badge>
+                )}
+              </>
             );
-          })}
+          })()}
         </div>
       )}
 

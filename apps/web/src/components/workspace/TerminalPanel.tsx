@@ -56,7 +56,7 @@ export function TerminalPanel() {
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6 text-slate-400 hover:bg-slate-850 hover:text-white rounded"
+              className="h-6 w-6 text-slate-400 hover:bg-slate-800 hover:text-white rounded"
               onClick={handleAddNewSession}
             >
               <Plus className="w-3.5 h-3.5" />

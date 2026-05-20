@@ -111,6 +111,8 @@ interface WorkspaceContextType {
   handleSaveFile: () => Promise<void>;
   handleEditorChange: (val: string) => void;
   handleEditorChangeRight: (val: string) => void;
+  cursorPosition: { line: number; column: number };
+  setCursorPosition: (pos: { line: number; column: number }) => void;
 
   // Terminal
   sessions: TerminalSession[];
@@ -242,6 +244,7 @@ export function WorkspaceProvider({
   const [activeTabPathRight, setActiveTabPathRight] = useState<string | null>(null);
   const [focusedPane, setFocusedPane] = useState<"left" | "right">("left");
   const [editorOpen, setEditorOpen] = useState(true);
+  const [cursorPosition, setCursorPosition] = useState<{ line: number; column: number }>({ line: 1, column: 1 });
 
   // Terminal
   const [sessions, setSessions] = useState<TerminalSession[]>([
@@ -525,6 +528,12 @@ export function WorkspaceProvider({
         setActiveTabPathRight(file.path);
       }
       setEditorOpen(true);
+      // Auto-add the opened file to AI context
+      setContextPaths((prev) => {
+        const next = new Set(prev);
+        next.add(file.path);
+        return next;
+      });
     } catch {
       toast.error(`Failed to read file: ${file.name}`);
     }
@@ -532,6 +541,19 @@ export function WorkspaceProvider({
 
   const handleCloseTab = useCallback((tabPath: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    const tab = openTabs.find((t) => t.path === tabPath);
+    // Prompt user to save if dirty
+    if (tab?.dirty && !tab.isDiff) {
+      const shouldSave = window.confirm(`Save changes to "${tab.name}" before closing?`);
+      if (shouldSave) {
+        // Save then close
+        sendJson("/api/files/write", "POST", { path: tab.path, content: tab.content })
+          .then(() => {
+            toast.success(`Saved ${tab.name}`);
+          })
+          .catch(() => toast.error(`Failed to save ${tab.name}`));
+      }
+    }
     const tabIndex = openTabs.findIndex((t) => t.path === tabPath);
     const newTabs = openTabs.filter((t) => t.path !== tabPath);
     setOpenTabs(newTabs);
@@ -1054,6 +1076,8 @@ export function WorkspaceProvider({
     handleSaveFile,
     handleEditorChange,
     handleEditorChangeRight,
+    cursorPosition,
+    setCursorPosition,
     sessions,
     activeSessionId,
     setActiveSessionId,

@@ -552,32 +552,44 @@ export default function SettingsPage() {
                             </div>
                           </div>
 
-                          {/* Validation Status */}
-                          <AnimatePresence>
-                            {p.validationStatus && (
-                              <motion.div
-                                initial={{ height: 0, opacity: 0 }}
-                                animate={{ height: "auto", opacity: 1 }}
-                                exit={{ height: 0, opacity: 0 }}
-                                className={cn(
-                                  "flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium border",
-                                  p.validationStatus === "valid"
-                                    ? "bg-emerald-50/70 border-emerald-200/50 text-emerald-800"
-                                    : "bg-red-50/70 border-red-200/50 text-red-800"
-                                )}
-                              >
-                                {p.validationStatus === "valid" ? (
-                                  <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                                ) : (
-                                  <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
-                                )}
-                                <span>{p.validationStatus === "valid" ? "Connection Verified" : "Connection Failed"}</span>
-                                {p.lastValidatedAt && (
-                                  <span className="text-[10px] opacity-60 ml-auto">{new Date(p.lastValidatedAt).toLocaleDateString()}</span>
-                                )}
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
+                  {/* Validation Status */}
+                  <AnimatePresence>
+                    {p.validationStatus && p.validationStatus !== "pending" && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className={cn(
+                          "flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium border",
+                          p.validationStatus === "valid"
+                            ? "bg-emerald-50/70 border-emerald-200/50 text-emerald-800"
+                            : "bg-red-50/70 border-red-200/50 text-red-800"
+                        )}
+                      >
+                        {p.validationStatus === "valid" ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                        )}
+                        <span>{p.validationStatus === "valid" ? "Connection Verified" : "Connection Failed"}</span>
+                        {p.lastValidatedAt && (
+                          <span className="text-[10px] opacity-60 ml-auto">{new Date(p.lastValidatedAt).toLocaleDateString()}</span>
+                        )}
+                      </motion.div>
+                    )}
+                    {p.validationStatus === "pending" && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium border bg-amber-50/70 border-amber-200/50 text-amber-800"
+                      >
+                        <Loader2 className="w-4 h-4 text-amber-500 shrink-0 animate-spin" />
+                        <span>Connection Not Yet Tested</span>
+                        <span className="text-[10px] opacity-60 ml-auto">Click ⚡ to validate</span>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
 
                           {/* Expandable Models Section */}
                           {models.length > 0 && (

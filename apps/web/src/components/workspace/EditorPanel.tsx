@@ -3,13 +3,13 @@
 import dynamic from "next/dynamic";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Button } from "@/components/ui/button";
-import { Save, Layers, FileText, X, Code2, Loader2 } from "lucide-react";
+import { Save, Layers, FileText, X, Code2, Loader2, CheckCircle2 } from "lucide-react";
 import { Skeleton } from "@/components/skeleton-loader";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { sendJson } from "@/lib/client-api";
 import { useWorkspace } from "./workspace-context";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 
 const Editor = dynamic(() => import("./MonacoEditor").then((m) => ({ default: m.LazyEditor })), { ssr: false });
 const DiffEditor = dynamic(() => import("./MonacoDiffEditor").then((m) => ({ default: m.LazyDiffEditor })), { ssr: false });
@@ -32,9 +32,20 @@ export function EditorPanel() {
     editorOpen,
     addToolResult,
     setOpenTabs,
+    setCursorPosition,
   } = useWorkspace();
 
   const activeTab = openTabs.find((t) => t.path === activeTabPath);
+
+  // Wire Monaco cursor position changes to the status bar
+  const handleEditorMount = useCallback(
+    (editor: any) => {
+      editor.onDidChangeCursorPosition((e: any) => {
+        setCursorPosition({ line: e.position.lineNumber, column: e.position.column });
+      });
+    },
+    [setCursorPosition]
+  );
 
   // Breadcrumb helper
   const renderBreadcrumb = useCallback((path: string) => {
@@ -138,6 +149,7 @@ export function EditorPanel() {
                     path={activeTab.path}
                     value={activeTab.content}
                     onChange={(val) => handleEditorChange(val || "")}
+                    onMount={handleEditorMount}
                     options={{
                       fontSize: 13,
                       minimap: { enabled: false },
@@ -161,9 +173,15 @@ export function EditorPanel() {
 
 function DiffView({ tab }: { tab: any }) {
   const { addToolResult, setOpenTabs } = useWorkspace();
+  const [flashGreen, setFlashGreen] = useState(false);
 
   return (
     <div className="flex-1 flex flex-col relative group">
+      {/* Green flash overlay */}
+      {flashGreen && (
+        <div className="absolute inset-0 z-20 bg-emerald-500/20 animate-flash-green pointer-events-none" />
+      )}
+
       <div className="absolute top-2 right-6 z-10 flex gap-2">
         <Button
           size="sm"
@@ -183,6 +201,8 @@ function DiffView({ tab }: { tab: any }) {
             try {
               await sendJson("/api/files/write", "POST", { path: tab.path, content: tab.content });
               toast.success("Edit applied successfully");
+              setFlashGreen(true);
+              setTimeout(() => setFlashGreen(false), 600);
               if (tab.toolCallId)
                 addToolResult({ toolCallId: tab.toolCallId, state: "output-available" as const, output: "User approved the edit. It has been applied.", tool: "approve_edit" });
               setOpenTabs((prev) => prev.map((t) => (t.path === tab.path ? { ...t, isDiff: false, dirty: false } : t)));
@@ -191,6 +211,7 @@ function DiffView({ tab }: { tab: any }) {
             }
           }}
         >
+          <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
           Accept and Apply
         </Button>
       </div>
@@ -246,7 +267,20 @@ function SplitEditorView() {
     setFocusedPane,
     handleEditorChange,
     handleEditorChangeRight,
+    setCursorPosition,
   } = useWorkspace();
+
+  // NOTE: No focusedPane guard — onMount fires only once per mount so the
+  // closure would capture a stale value. Both panes freely update the same
+  // cursorPosition state; the user only interacts with one pane at a time.
+  const handleEditorMount = useCallback(
+    (editor: any) => {
+      editor.onDidChangeCursorPosition((e: any) => {
+        setCursorPosition({ line: e.position.lineNumber, column: e.position.column });
+      });
+    },
+    [setCursorPosition]
+  );
 
   const activeTab = openTabs.find((t) => t.path === activeTabPath);
 
@@ -278,6 +312,7 @@ function SplitEditorView() {
               path={`left-${activeTab.path}`}
               value={activeTab.content}
               onChange={(val) => handleEditorChange(val || "")}
+              onMount={handleEditorMount}
               options={{
                 fontSize: 13,
                 minimap: { enabled: false },
@@ -325,6 +360,7 @@ function SplitEditorView() {
                   ?.content || ""
               }
               onChange={(val) => handleEditorChangeRight(val || "")}
+              onMount={handleEditorMount}
               options={{
                 fontSize: 13,
                 minimap: { enabled: false },

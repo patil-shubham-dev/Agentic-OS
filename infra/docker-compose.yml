@@ -1,110 +1,70 @@
-version: "3.8"
+# AgentOS Studio — local development stack.
+# Brings up Postgres with pgvector for the canonical data layer, plus optional
+# Supabase services (PostgREST + Studio) so contributors can run the full app
+# locally without a hosted Supabase project.
+#
+# Quick start:
+#   docker compose -f infra/docker-compose.yml up -d postgres
+#   pnpm migrate
+#   pnpm dev
+#
+# Full Supabase-compatible stack (PostgREST + Studio):
+#   docker compose -f infra/docker-compose.yml --profile supabase up -d
 
 services:
-  # Frontend
-  web:
-    build:
-      context: ./apps/web
-      dockerfile: Dockerfile
-    ports:
-      - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_API_URL=http://api:8000
-      - NODE_ENV=production
-    depends_on:
-      - api
-    networks:
-      - agentos
-
-  # Backend API
-  api:
-    build:
-      context: ./apps/api
-      dockerfile: Dockerfile
-    ports:
-      - "8000:8000"
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/agentos
-      - REDIS_URL=redis://redis:6379/0
-      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - GROQ_API_KEY=${GROQ_API_KEY:-}
-      - OPEN_DESIGN_API_KEY=${OPEN_DESIGN_API_KEY:-}
-    depends_on:
-      - postgres
-      - redis
-      - qdrant
-    networks:
-      - agentos
-    volumes:
-      - ./data/workspace:/workspace
-
-  # Celery Workers
-  workers:
-    build:
-      context: ./apps/workers
-      dockerfile: Dockerfile
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/agentos
-    depends_on:
-      - redis
-      - postgres
-    networks:
-      - agentos
-    command: celery -A tasks worker --loglevel=info --concurrency=4
-
-  # PostgreSQL
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
+    container_name: agentos-postgres
+    restart: unless-stopped
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=agentos
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: agentos
+    ports:
+      - "54322:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-    networks:
-      - agentos
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
-  # Redis
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    networks:
-      - agentos
-
-  # Qdrant (Vector DB)
-  qdrant:
-    image: qdrant/qdrant:latest
-    ports:
-      - "6333:6333"
-    volumes:
-      - qdrant_data:/qdrant/storage
-    networks:
-      - agentos
-
-  # OpenClaude gRPC Server (optional - can be external)
-  openclaude:
-    image: agentos/openclaude:latest
-    ports:
-      - "50051:50051"
+  postgrest:
+    image: postgrest/postgrest:v12.0.2
+    container_name: agentos-postgrest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-    networks:
-      - agentos
-    profiles:
-      - with-openclaude
+      PGRST_DB_URI: postgresql://postgres:postgres@postgres:5432/agentos
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: postgres
+      PGRST_JWT_SECRET: ${SUPABASE_SERVICE_ROLE_KEY:-local-dev-service-role-key-please-replace}
+      PGRST_OPENAPI_SERVER_PROXY_URI: http://localhost:54321
+    ports:
+      - "54321:3000"
+    profiles: ["supabase"]
+
+  studio:
+    image: supabase/studio:20240414-2c81b56
+    container_name: agentos-supabase-studio
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      STUDIO_PG_META_URL: http://postgres:5432
+      DEFAULT_ORGANIZATION_NAME: AgentOS
+      DEFAULT_PROJECT_NAME: agentos-local
+      SUPABASE_URL: http://localhost:54321
+      SUPABASE_PUBLIC_URL: http://localhost:54321
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+    ports:
+      - "54323:3000"
+    profiles: ["supabase"]
 
 volumes:
   postgres_data:
-  qdrant_data:
-
-networks:
-  agentos:
-    driver: bridge

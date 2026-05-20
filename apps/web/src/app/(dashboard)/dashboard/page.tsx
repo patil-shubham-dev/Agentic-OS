@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Area,
   AreaChart,
@@ -15,414 +15,373 @@ import {
   Tooltip as RechartsTooltip,
 } from "recharts";
 import {
+  Activity,
   ArrowRight,
+  Bot,
   CheckCircle2,
+  Coins,
   Cpu,
-  FolderKanban,
-  GitBranch,
-  Mail,
-  Search,
-  ShieldCheck,
-  Sparkles,
-  Telescope,
-  Wrench,
+  PlugZap,
+  Workflow,
   type LucideIcon,
 } from "lucide-react";
-import {
-  automations,
-  costByProvider,
-  dashboardStats,
-  provenanceMatrix,
-  recentActivities,
-  usageData,
-} from "@/lib/product-blueprint";
 import { getJson } from "@/lib/client-api";
+import { EmptyState } from "@/components/empty-state";
 
-const skillCards: Array<{
-  id: string;
-  title: string;
-  subtitle: string;
-  invocations: number;
-  impact: string;
+interface DashboardResponse {
+  agents: Array<{ id: string; name: string; status: string }>;
+  automations: Array<{ id: string; name: string; status: string; trigger: { type?: string } }>;
+  chats: Array<{ id: string; title: string; model: string; updated_at: string; usage?: { total_tokens?: number } }>;
+  providerConfigs: Array<{ provider: string; label: string; enabled: boolean; validation_status?: string | null }>;
+  summary: {
+    totalTokens: number;
+    totalCost: number;
+    activeAgents: number;
+    activeAutomations: number;
+    knowledgeItems: number;
+    connectedProviders: number;
+  };
+  byProvider: Array<{ provider: string; cost: number; tokens: number }>;
+  usageTimeline: Array<{ name: string; tokens: number; cost: number }>;
+}
+
+const PROVIDER_PALETTE = ["#f59e0b", "#8b5cf6", "#3b82f6", "#10b981", "#ef4444", "#ec4899", "#06b6d4"];
+
+function StatTile({
+  label,
+  value,
+  icon: Icon,
+  hint,
+}: {
+  label: string;
+  value: string;
   icon: LucideIcon;
-  tone: string;
-}> = [
-  { id: "01", title: "Applications", subtitle: "Build full-stack apps & APIs", invocations: 132, impact: "$8.41", icon: FolderKanban, tone: "from-emerald-500/20 to-teal-500/5" },
-  { id: "02", title: "Agents", subtitle: "Autonomous task execution", invocations: 184, impact: "$6.72", icon: Sparkles, tone: "from-amber-500/20 to-orange-500/5" },
-  { id: "03", title: "Search", subtitle: "Web research & synthesis", invocations: 243, impact: "$4.21", icon: Search, tone: "from-violet-500/20 to-fuchsia-500/5" },
-  { id: "04", title: "Data Analysis", subtitle: "Analyze & visualize", invocations: 167, impact: "$5.31", icon: Cpu, tone: "from-sky-500/20 to-blue-500/5" },
-  { id: "05", title: "DevOps", subtitle: "Deploy & monitor", invocations: 98, impact: "$3.14", icon: ShieldCheck, tone: "from-emerald-500/20 to-cyan-500/5" },
-  { id: "06", title: "Diagramming", subtitle: "UML, flows, architecture", invocations: 76, impact: "$2.71", icon: GitBranch, tone: "from-indigo-500/20 to-violet-500/5" },
-  { id: "07", title: "Email", subtitle: "Compose & automate", invocations: 64, impact: "$1.12", icon: Mail, tone: "from-pink-500/20 to-rose-500/5" },
-  { id: "08", title: "GitHub", subtitle: "Repo analysis & automation", invocations: 211, impact: "$6.81", icon: Wrench, tone: "from-slate-500/20 to-slate-700/5" },
-];
+  hint?: string;
+}) {
+  return (
+    <div className="agentos-card agentos-border-glow p-4">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] uppercase tracking-[0.18em] text-amber-600/60">{label}</p>
+        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
+          <Icon className="h-3.5 w-3.5" />
+        </div>
+      </div>
+      <p className="mt-2 text-2xl font-semibold text-amber-900">{value}</p>
+      {hint ? <p className="mt-1 text-[11px] text-amber-600/60">{hint}</p> : null}
+    </div>
+  );
+}
 
-const sourceChips = ["GitHub", "Notion", "Supabase", "Linear", "Vercel", "Postgres", "Sentry", "Docs"];
+function formatTokens(n: number): string {
+  if (n === 0) return "0";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return n.toLocaleString();
+}
 
-const container = {
-  hidden: { opacity: 0 },
-  show: {
-    opacity: 1,
-    transition: { staggerChildren: 0.05 },
-  },
-};
-
-const item = {
-  hidden: { opacity: 0, y: 16 },
-  show: { opacity: 1, y: 0 },
-};
+function formatTimeAgo(iso: string): string {
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return iso;
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return "just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} min ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} hr ago`;
+  return new Date(ts).toLocaleDateString();
+}
 
 export default function DashboardPage() {
-  const [providerData, setProviderData] = useState(costByProvider);
-  const [timelineData, setTimelineData] = useState(usageData);
-  const [activityData, setActivityData] = useState(recentActivities);
-  const [summaryStats, setSummaryStats] = useState(dashboardStats);
+  const { data, isLoading, isError } = useQuery<DashboardResponse>({
+    queryKey: ["dashboard"],
+    queryFn: () => getJson<DashboardResponse>("/api/dashboard"),
+  });
 
-  useEffect(() => {
-    getJson<{
-      summary: {
-        totalTokens: number;
-        totalCost: number;
-        activeAgents: number;
-        activeAutomations: number;
-      };
-      byProvider: Array<{ provider: string; cost: number }>;
-      usageTimeline: Array<{ name: string; tokens: number; cost: number }>;
-      recentActivities: Array<{ id: string; title: string; model: string; time: string; tokens: number }>;
-    }>("/api/dashboard")
-      .then((data) => {
-        setSummaryStats([
-          { ...dashboardStats[0], value: data.summary.totalTokens ? data.summary.totalTokens.toLocaleString() : "0" },
-          { ...dashboardStats[1], value: `$${data.summary.totalCost.toFixed(2)}` },
-          { ...dashboardStats[2], value: String(data.summary.activeAgents) },
-          { ...dashboardStats[3], label: "Active Automations", value: String(data.summary.activeAutomations) },
-        ]);
-
-        if (data.byProvider.length > 0) {
-          const total = data.byProvider.reduce((sum, item) => sum + item.cost, 0) || 1;
-          setProviderData(
-            data.byProvider.map((item, index) => ({
-              name: item.provider,
-              value: Math.max(1, Math.round((item.cost / total) * 100)),
-              color: ["#45d196", "#8b5cf6", "#3b82f6", "#f59e0b", "#ef4444"][index % 5],
-            }))
-          );
-        }
-
-        if (data.usageTimeline.length > 0) {
-          setTimelineData(data.usageTimeline);
-        }
-
-        if (data.recentActivities.length > 0) {
-          setActivityData(
-            data.recentActivities.map((activity, index) => ({
-              id: index + 1,
-              type: "chat" as const,
-              title: activity.title,
-              model: activity.model,
-              tokens: activity.tokens,
-              time: new Date(activity.time).toLocaleString(),
-              status: "success" as const,
-            }))
-          );
-        }
-      })
-      .catch(() => undefined);
-  }, []);
+  const summary = data?.summary;
+  const usageTimeline = data?.usageTimeline ?? [];
+  const byProvider = (data?.byProvider ?? []).map((entry, index) => ({
+    name: entry.provider,
+    value: Math.max(1, Math.round(entry.cost * 100) / 100),
+    tokens: entry.tokens,
+    color: PROVIDER_PALETTE[index % PROVIDER_PALETTE.length],
+  }));
+  const recentChats = data?.chats?.slice(0, 6) ?? [];
+  const automations = data?.automations ?? [];
+  const connectedProviders = (data?.providerConfigs ?? []).filter(
+    (p: any) => p.enabled && (p.validation_status === "connected" || p.validation_status === null)
+  );
 
   return (
     <div className="px-3 pt-3 pb-6">
+      {isError ? (
+        <div className="mb-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          Failed to load dashboard data. Verify Supabase configuration in Settings.
+        </div>
+      ) : null}
+
       <div className="grid gap-4 xl:grid-cols-[1.8fr_1fr]">
+        {/* Left column */}
         <div className="space-y-4">
+          {/* Summary */}
           <motion.section initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }}>
-            <div className="agentos-card agentos-border-glow overflow-hidden p-4">
-              <div className="grid gap-4 lg:grid-cols-[240px_1fr]">
-                <div className="relative min-h-[280px] overflow-hidden rounded-[22px] border border-white/10 bg-[radial-gradient(circle_at_20%_20%,rgba(120,119,198,0.55),transparent_32%),linear-gradient(180deg,rgba(18,24,55,1),rgba(7,10,23,1))]">
-                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_15%,rgba(255,255,255,0.55),transparent_6%),radial-gradient(circle_at_72%_18%,rgba(255,255,255,0.18),transparent_22%)] opacity-80" />
-                  <div className="absolute inset-x-6 bottom-6 rounded-2xl border border-amber-300/15 bg-black/25 px-4 py-3 backdrop-blur">
-                    <p className="text-xs uppercase tracking-[0.2em] text-amber-200/80">Dream Review</p>
-                    <p className="mt-2 text-sm text-slate-200">Nightly orchestration snapshot generated from the manager lane.</p>
-                  </div>
-                </div>
-                <div className="flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Badge className="bg-violet-500/15 text-violet-200 hover:bg-violet-500/15">Strategy</Badge>
-                        <Badge className="bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/15">High Impact</Badge>
-                      </div>
-                      <span className="text-xs text-muted-foreground">12 May 23:59</span>
-                    </div>
-                    <h1 className="mt-5 max-w-3xl text-4xl font-semibold leading-tight text-white">
-                      4 improvements found overnight
-                    </h1>
-                    <p className="mt-3 text-sm text-muted-foreground">
-                      Pattern analysis across 7 days. Generated by the manager model after scanning cost, latency, and delegation behavior.
-                    </p>
-                    <div className="mt-6 grid gap-4 md:grid-cols-2">
-                      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                        <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Insight #1</p>
-                        <p className="mt-3 text-xl font-medium text-slate-100">87% of work is routed to Opus</p>
-                        <p className="mt-2 text-sm text-muted-foreground">Offload low-complexity tasks to Haiku or Llama for cheaper extraction and summarization.</p>
-                      </div>
-                      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                        <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Projected Savings</p>
-                        <p className="mt-3 text-xl font-medium text-slate-100">$18.4/day</p>
-                        <p className="mt-2 text-sm text-muted-foreground">Estimated 32% cost reduction with an 11% latency improvement across routine flows.</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-6 flex flex-wrap items-center gap-3">
-                    <span className="text-sm text-slate-300">1.2M tokens can be offloaded to Haiku</span>
-                    <span className="text-sm text-red-300">2.1s avg latency improvement</span>
-                    <div className="ml-auto flex gap-2">
-                      <Button variant="outline" className="border-white/10 bg-white/[0.03]">Skip</Button>
-                      <Button className="border border-emerald-500/20 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/20">Apply Changes</Button>
-                    </div>
-                  </div>
-                </div>
-              </div>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <StatTile
+                label="Total Tokens"
+                value={isLoading ? "…" : formatTokens(summary?.totalTokens ?? 0)}
+                icon={Cpu}
+                hint={summary?.totalTokens ? "Across all providers" : "No usage recorded yet"}
+              />
+              <StatTile
+                label="Total Cost"
+                value={isLoading ? "…" : `$${(summary?.totalCost ?? 0).toFixed(2)}`}
+                icon={Coins}
+                hint={summary?.totalCost ? "Lifetime spend" : "$0 spent"}
+              />
+              <StatTile
+                label="Active Agents"
+                value={isLoading ? "…" : String(summary?.activeAgents ?? 0)}
+                icon={Bot}
+                hint={summary?.activeAgents ? "Currently enabled" : "None active"}
+              />
+              <StatTile
+                label="Active Automations"
+                value={isLoading ? "…" : String(summary?.activeAutomations ?? 0)}
+                icon={Workflow}
+                hint={summary?.activeAutomations ? "Scheduled or running" : "None active"}
+              />
             </div>
           </motion.section>
 
-          <motion.section initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }}>
+          {/* Connected sources */}
+          <motion.section initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.06 }}>
             <div className="agentos-card agentos-border-glow p-4">
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Sources</p>
-                  <p className="text-sm text-slate-300">8 skill streams live · 14 data sources connected</p>
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-amber-600/60">Connected providers</p>
+                  <p className="text-sm text-amber-800">
+                    {connectedProviders.length === 0
+                      ? "No providers connected yet."
+                      : `${connectedProviders.length} configured`}
+                  </p>
                 </div>
-                <Button variant="ghost" className="hidden md:inline-flex text-muted-foreground">Manage sources</Button>
+                <Link href="/settings">
+                  <Button variant="ghost" className="hidden md:inline-flex text-amber-700/70 hover:text-amber-900 hover:bg-amber-100">
+                    Manage providers <ArrowRight className="ml-1 h-3 w-3" />
+                  </Button>
+                </Link>
               </div>
-              <div className="mt-4 flex flex-wrap gap-2">
-                {sourceChips.map((source) => (
-                  <div key={source} className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-slate-300">
-                    <span>{source}</span>
-                    <span className="ml-2 text-emerald-300">Live</span>
-                  </div>
-                ))}
-              </div>
+              {connectedProviders.length === 0 ? (
+                <EmptyState
+                  className="mt-4"
+                  compact
+                  icon={PlugZap}
+                  title="Connect your first AI provider."
+                  description="Add an API key in Settings to start chatting and running agents."
+                  action={
+                    <Link href="/settings">
+                      <Button className="bg-amber-500 text-white hover:bg-amber-600">Open Settings</Button>
+                    </Link>
+                  }
+                />
+              ) : (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {connectedProviders.map((provider: any) => (
+                    <div
+                      key={provider.provider}
+                      className="rounded-xl border border-amber-200/70 bg-white/60 px-3 py-1.5 text-sm text-amber-800 flex items-center gap-2"
+                    >
+                      <span>{provider.label}</span>
+                      <span className="text-[10px] text-emerald-600 font-semibold">Connected</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </motion.section>
 
-          <motion.section initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }}>
+          {/* Activity feed (recent chats) */}
+          <motion.section initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.10 }}>
             <div className="agentos-card agentos-border-glow p-4">
-              <div className="mb-4 flex items-center justify-between">
+              <div className="flex items-center justify-between mb-4">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Memory</p>
-                  <p className="text-sm text-slate-300">Everything AgentOS remembers about you and your workspace.</p>
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-amber-600/60">Activity Feed</p>
+                  <p className="text-sm text-amber-800">Recent workspace executions</p>
                 </div>
-                <span className="text-xs text-muted-foreground">Memory used 68%</span>
+                <Link href="/activity">
+                  <ArrowRight className="h-4 w-4 text-amber-500/60" />
+                </Link>
               </div>
-              <div className="grid gap-4 lg:grid-cols-3">
-                {[
-                  {
-                    title: "User Profile",
-                    body: ["You are a technical founder building AI tools.", "You prefer concise, actionable answers.", "You prioritize shipping over perfection."],
-                  },
-                  {
-                    title: "Agent Memory",
-                    body: ["Prefers TypeScript over Python.", "Uses Vercel for deployments.", "Likes dark, premium enterprise UIs."],
-                  },
-                  {
-                    title: "Soul",
-                    body: ["Be precise, honest, and useful.", "Optimize for long-term leverage.", "Protect operator time and focus."],
-                  },
-                ].map((memoryCard) => (
-                  <div key={memoryCard.title} className="relative overflow-hidden rounded-[22px] border border-white/10 bg-[linear-gradient(180deg,rgba(23,29,54,0.86),rgba(9,11,24,0.86))] p-4">
-                    <div className="absolute inset-y-0 right-0 w-24 bg-[radial-gradient(circle_at_70%_50%,rgba(255,255,255,0.12),transparent_60%)] opacity-60" />
-                    <p className="text-lg font-medium text-slate-50">{memoryCard.title}</p>
-                    <div className="mt-4 space-y-2 text-sm text-slate-300">
-                      {memoryCard.body.map((line) => (
-                        <p key={line}>• {line}</p>
-                      ))}
+              {recentChats.length === 0 ? (
+                <EmptyState
+                  compact
+                  icon={Activity}
+                  title="No activity yet."
+                  description="Start a conversation in the workspace to see runs appear here."
+                />
+              ) : (
+                <div className="space-y-2">
+                  {recentChats.map((chat: any) => (
+                    <div
+                      key={chat.id}
+                      className="flex items-center gap-3 rounded-xl border border-amber-200/50 bg-white/50 p-3"
+                    >
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-100 shrink-0">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-amber-900 truncate">{chat.title}</p>
+                        <p className="text-xs text-amber-600/60">
+                          {chat.model} · {formatTokens(chat.usage?.total_tokens ?? 0)} tokens
+                        </p>
+                      </div>
+                      <span className="text-xs text-amber-600/50 whitespace-nowrap">{formatTimeAgo(chat.updated_at)}</span>
                     </div>
-                    <Button variant="outline" className="mt-5 border-white/10 bg-white/[0.03]">Edit</Button>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           </motion.section>
         </div>
 
+        {/* Right column */}
         <div className="space-y-4">
-          <motion.section initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }}>
-            <div className="agentos-card agentos-border-glow p-4">
-              <div className="mb-4 flex items-center justify-between">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Skills Overview</p>
-                  <p className="text-sm text-slate-300">All systems operational</p>
-                </div>
-                <span className="text-xs text-emerald-300">Operational</span>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {skillCards.map((skill) => (
-                  <div key={skill.id} className={`rounded-[20px] border border-white/10 bg-gradient-to-br ${skill.tone} p-4`}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-black/15">
-                        <skill.icon className="h-5 w-5 text-white" />
-                      </div>
-                      <span className="text-sm text-slate-300">{skill.id}</span>
-                    </div>
-                    <p className="mt-4 text-xl font-medium text-white">{skill.title}</p>
-                    <p className="mt-1 text-sm text-slate-300">{skill.subtitle}</p>
-                    <div className="mt-5 flex items-end justify-between text-sm">
-                      <div>
-                        <p className="text-slate-300">{skill.invocations}</p>
-                        <p className="text-xs text-muted-foreground">Invocations</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-emerald-300">{skill.impact}</p>
-                        <p className="text-xs text-muted-foreground">Impact</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </motion.section>
-
+          {/* Usage analytics */}
           <motion.section initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.08 }}>
             <div className="agentos-card agentos-border-glow p-4">
               <div className="mb-4 flex items-center justify-between">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Automations</p>
-                  <p className="text-sm text-slate-300">AI-powered workflows currently active</p>
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-amber-600/60">Usage Analytics</p>
+                  <p className="text-sm text-amber-800">Recent activity</p>
                 </div>
-                <Button variant="ghost" className="text-muted-foreground">All automations</Button>
+                <Badge className="bg-amber-100 text-amber-700 border-amber-300 hover:bg-amber-100 text-[10px]">
+                  {summary?.totalTokens ? "Live" : "No data"}
+                </Badge>
               </div>
-              <div className="grid gap-2">
-                {automations.slice(0, 4).map((automation) => (
-                  <div key={automation.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium text-slate-100">{automation.name}</p>
-                        <p className="text-xs text-muted-foreground">Trigger: {automation.trigger.type}</p>
-                      </div>
-                      <Badge className="bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/15">Active</Badge>
-                    </div>
+              {usageTimeline.length === 0 && byProvider.length === 0 ? (
+                <EmptyState
+                  compact
+                  icon={Cpu}
+                  title="No usage recorded yet."
+                  description="Send a chat or run an agent to populate analytics."
+                />
+              ) : (
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div className="rounded-xl border border-amber-200/60 bg-white/50 p-3">
+                    <p className="text-[10px] text-amber-600/50 uppercase tracking-wider mb-2">Token Usage</p>
+                    {usageTimeline.length === 0 ? (
+                      <p className="text-xs text-amber-600/60">No usage yet</p>
+                    ) : (
+                      <ResponsiveContainer width="100%" height={130}>
+                        <AreaChart data={usageTimeline}>
+                          <defs>
+                            <linearGradient id="tokenGradient" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.4} />
+                              <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
+                            </linearGradient>
+                          </defs>
+                          <RechartsTooltip
+                            contentStyle={{
+                              backgroundColor: "#fffbf0",
+                              border: "1px solid rgba(200,150,40,0.2)",
+                              borderRadius: "12px",
+                              fontSize: "12px",
+                              color: "#78350f",
+                            }}
+                          />
+                          <Area type="monotone" dataKey="tokens" stroke="#f59e0b" strokeWidth={2} fill="url(#tokenGradient)" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    )}
                   </div>
-                ))}
-              </div>
+                  <div className="rounded-xl border border-amber-200/60 bg-white/50 p-3">
+                    <p className="text-[10px] text-amber-600/50 uppercase tracking-wider mb-1">By Provider</p>
+                    {byProvider.length === 0 ? (
+                      <p className="text-xs text-amber-600/60">No usage yet</p>
+                    ) : (
+                      <>
+                        <ResponsiveContainer width="100%" height={100}>
+                          <PieChart>
+                            <Pie data={byProvider} dataKey="value" innerRadius={28} outerRadius={44} paddingAngle={3}>
+                              {byProvider.map((entry: any) => (
+                                <Cell key={entry.name} fill={entry.color} />
+                              ))}
+                            </Pie>
+                          </PieChart>
+                        </ResponsiveContainer>
+                        <div className="mt-1 space-y-1">
+                          {byProvider.map((provider: any) => (
+                            <div
+                              key={provider.name}
+                              className="flex items-center justify-between text-[11px] text-amber-700"
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: provider.color }} />
+                                <span>{provider.name}</span>
+                              </div>
+                              <span className="font-semibold">${provider.value.toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </motion.section>
 
+          {/* Automations summary */}
           <motion.section initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.12 }}>
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="agentos-card agentos-border-glow p-4">
-                <div className="mb-4 flex items-center justify-between">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Activity Feed</p>
-                    <p className="text-sm text-slate-300">Live workspace execution</p>
-                  </div>
-                  <ArrowRight className="h-4 w-4 text-muted-foreground" />
+            <div className="agentos-card agentos-border-glow p-4">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-amber-600/60">Automations</p>
+                  <p className="text-sm text-amber-800">Configured workflows</p>
                 </div>
-                <div className="space-y-3">
-                  {activityData.map((activity) => (
-                    <div key={activity.id} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/10">
-                        <CheckCircle2 className="h-4 w-4 text-emerald-300" />
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-sm text-slate-100">{activity.title}</p>
-                        <p className="text-xs text-muted-foreground">{activity.model} · {activity.tokens.toLocaleString()} tokens</p>
-                      </div>
-                      <span className="text-xs text-muted-foreground">{activity.time}</span>
-                    </div>
-                  ))}
-                </div>
+                <Link href="/automations">
+                  <Button variant="ghost" size="sm" className="text-amber-700/60 hover:text-amber-900 hover:bg-amber-100 text-xs">
+                    View all
+                  </Button>
+                </Link>
               </div>
-
-              <div className="agentos-card agentos-border-glow p-4">
-                <div className="mb-4 flex items-center justify-between">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Usage Analytics</p>
-                    <p className="text-sm text-slate-300">This week</p>
-                  </div>
-                  <Badge className="bg-white/[0.06] text-slate-200 hover:bg-white/[0.06]">Live</Badge>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  {summaryStats.map((stat) => (
-                    <div key={stat.label} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-                      <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{stat.label}</p>
-                      <p className="mt-2 text-2xl font-semibold text-white">{stat.value}</p>
-                      <p className="mt-1 text-xs text-emerald-300">{stat.change}</p>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-4 grid gap-4 md:grid-cols-[1.1fr_0.9fr]">
-                  <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-                    <ResponsiveContainer width="100%" height={150}>
-                      <AreaChart data={timelineData}>
-                        <defs>
-                          <linearGradient id="dashboardUsage" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#45d196" stopOpacity={0.35} />
-                            <stop offset="95%" stopColor="#45d196" stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <RechartsTooltip
-                          contentStyle={{
-                            backgroundColor: "#0f1224",
-                            border: "1px solid rgba(255,255,255,0.08)",
-                            borderRadius: "14px",
-                          }}
-                        />
-                        <Area type="monotone" dataKey="tokens" stroke="#45d196" strokeWidth={2} fill="url(#dashboardUsage)" />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-                    <ResponsiveContainer width="100%" height={150}>
-                      <PieChart>
-                        <Pie data={providerData} dataKey="value" innerRadius={36} outerRadius={56} paddingAngle={4}>
-                          {providerData.map((entry) => (
-                            <Cell key={entry.name} fill={entry.color} />
-                          ))}
-                        </Pie>
-                      </PieChart>
-                    </ResponsiveContainer>
-                    <div className="space-y-2">
-                      {providerData.map((provider) => (
-                        <div key={provider.name} className="flex items-center justify-between text-xs text-slate-300">
-                          <div className="flex items-center gap-2">
-                            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: provider.color }} />
-                            <span>{provider.name}</span>
-                          </div>
-                          <span>{provider.value}%</span>
+              {automations.length === 0 ? (
+                <EmptyState
+                  compact
+                  icon={Workflow}
+                  title="No automations configured."
+                  description="Create your first automation to schedule agents and pipelines."
+                />
+              ) : (
+                <div className="space-y-2">
+                  {automations.slice(0, 4).map((automation: any) => (
+                    <div key={automation.id} className="rounded-xl border border-amber-200/50 bg-white/50 p-3">
+                      <div className="flex items-center justify-between">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-amber-900 truncate">{automation.name}</p>
+                          <p className="text-xs text-amber-600/60">
+                            Trigger: {automation.trigger?.type ?? "manual"}
+                          </p>
                         </div>
-                      ))}
+                        <Badge
+                          className={
+                            automation.status === "active"
+                              ? "bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100 text-[10px]"
+                              : automation.status === "paused"
+                              ? "bg-amber-100 text-amber-700 border-amber-200 hover:bg-amber-100 text-[10px]"
+                              : automation.status === "error"
+                              ? "bg-red-100 text-red-600 border-red-200 hover:bg-red-100 text-[10px]"
+                              : "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-100 text-[10px]"
+                          }
+                        >
+                          {automation.status}
+                        </Badge>
+                      </div>
                     </div>
-                  </div>
+                  ))}
                 </div>
-              </div>
+              )}
             </div>
           </motion.section>
         </div>
       </div>
-
-      <motion.section variants={container} initial="hidden" animate="show" className="mt-4 grid gap-4 lg:grid-cols-3">
-        {provenanceMatrix.map((itemData) => (
-          <motion.div key={itemData.name} variants={item}>
-            <Card className="agentos-card agentos-border-glow border-none">
-              <CardContent className="p-5">
-                <div className="flex items-center justify-between">
-                  <Badge className="bg-white/[0.06] text-slate-200 hover:bg-white/[0.06]">{itemData.upstream}</Badge>
-                  <Telescope className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <p className="mt-4 text-lg font-medium text-slate-50">{itemData.name}</p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {itemData.adoptedPatterns.map((pattern) => (
-                    <span key={pattern} className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-xs text-slate-300">
-                      {pattern}
-                    </span>
-                  ))}
-                </div>
-                <p className="mt-4 text-sm text-muted-foreground">{itemData.customLayer}</p>
-              </CardContent>
-            </Card>
-          </motion.div>
-        ))}
-      </motion.section>
     </div>
   );
 }

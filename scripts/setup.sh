@@ -10,15 +10,13 @@ command -v docker >/dev/null 2>&1 || { echo "Docker is recommended but not insta
 
 # Install pnpm if not present
 if ! command -v pnpm &> /dev/null; then
-    echo "Installing pnpm..."
-    npm install -g pnpm
+    echo "Installing pnpm via corepack..."
+    corepack enable
+    corepack prepare pnpm@latest --activate
 fi
-
-# Install frontend dependencies
-echo "Installing frontend dependencies..."
-cd apps/web
+# Install all workspace dependencies
+echo "Installing all workspace dependencies..."
 pnpm install
-cd ../..
 
 # Install backend dependencies
 echo "Installing backend dependencies..."

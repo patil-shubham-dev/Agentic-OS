@@ -37,6 +37,7 @@ import { cn } from "@/lib/utils";
 import { useDropzone } from "react-dropzone";
 import { Label } from "@/components/ui/label";
 import { getJson, sendJson } from "@/lib/client-api";
+import { EmptyState } from "@/components/empty-state";
 
 interface KnowledgeItem {
   id: string;
@@ -269,56 +270,67 @@ export default function KnowledgePage() {
         ))}
       </div>
 
-      <div>
         <h3 className="mb-3 font-semibold">Knowledge Items</h3>
         {loading && <p className="mb-3 text-sm text-muted-foreground">Loading knowledge base...</p>}
-        <motion.div variants={container} initial="hidden" animate="show" className="space-y-2">
-          {items.map((knowledgeItem) => (
-            <motion.div key={knowledgeItem.id} variants={itemVariant}>
-              <Card className="cursor-pointer transition-all hover:shadow-sm" onClick={() => setSelectedItem(knowledgeItem)}>
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
-                        {getIcon(knowledgeItem.type)}
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium">{knowledgeItem.name}</p>
-                        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                          <span>{knowledgeItem.size}</span>
-                          {knowledgeItem.chunks > 0 && <span>{knowledgeItem.chunks} chunks</span>}
-                          <span>{knowledgeItem.uploadedAt}</span>
-                          <Badge variant="outline" className="text-[10px]">{knowledgeItem.source}</Badge>
+        {!loading && items.length === 0 ? (
+          <EmptyState
+            title="No documents indexed yet."
+            description="Upload documents or configure a URL to index knowledge chunks for retrieval-augmented chat."
+            icon={Database}
+            action={
+              <Button className="gap-2 bg-amber-600 hover:bg-amber-700 text-white" onClick={() => setUploadDialogOpen(true)}>
+                <Plus className="w-4 h-4" /> Add Knowledge
+              </Button>
+            }
+          />
+        ) : (
+          <motion.div variants={container} initial="hidden" animate="show" className="space-y-2">
+            {items.map((knowledgeItem) => (
+              <motion.div key={knowledgeItem.id} variants={itemVariant}>
+                <Card className="cursor-pointer transition-all hover:shadow-sm" onClick={() => setSelectedItem(knowledgeItem)}>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
+                          {getIcon(knowledgeItem.type)}
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium">{knowledgeItem.name}</p>
+                          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                            <span>{knowledgeItem.size}</span>
+                            {knowledgeItem.chunks > 0 && <span>{knowledgeItem.chunks} chunks</span>}
+                            <span>{knowledgeItem.uploadedAt}</span>
+                            <Badge variant="outline" className="text-[10px]">{knowledgeItem.source}</Badge>
+                          </div>
                         </div>
                       </div>
+                      <div className="flex items-center gap-2">
+                        {knowledgeItem.status === "indexed" && (
+                          <Badge className="gap-1 bg-green-500/10 text-green-500 hover:bg-green-500/20">
+                            <CheckCircle2 className="h-3 w-3" /> Indexed
+                          </Badge>
+                        )}
+                        {knowledgeItem.status === "processing" && (
+                          <Badge className="gap-1 bg-blue-500/10 text-blue-500 hover:bg-blue-500/20">
+                            <Loader2 className="h-3 w-3 animate-spin" /> Processing
+                          </Badge>
+                        )}
+                        {knowledgeItem.status === "error" && (
+                          <Badge className="gap-1 bg-destructive/10 text-destructive hover:bg-destructive/20">
+                            <XCircle className="h-3 w-3" /> Error
+                          </Badge>
+                        )}
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <Trash2 className="h-4 w-4 text-muted-foreground" />
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      {knowledgeItem.status === "indexed" && (
-                        <Badge className="gap-1 bg-green-500/10 text-green-500 hover:bg-green-500/20">
-                          <CheckCircle2 className="h-3 w-3" /> Indexed
-                        </Badge>
-                      )}
-                      {knowledgeItem.status === "processing" && (
-                        <Badge className="gap-1 bg-blue-500/10 text-blue-500 hover:bg-blue-500/20">
-                          <Loader2 className="h-3 w-3 animate-spin" /> Processing
-                        </Badge>
-                      )}
-                      {knowledgeItem.status === "error" && (
-                        <Badge className="gap-1 bg-destructive/10 text-destructive hover:bg-destructive/20">
-                          <XCircle className="h-3 w-3" /> Error
-                        </Badge>
-                      )}
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <Trash2 className="h-4 w-4 text-muted-foreground" />
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          ))}
-        </motion.div>
-      </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            ))}
+          </motion.div>
+        )}
 
       <Dialog open={!!selectedItem} onOpenChange={() => setSelectedItem(null)}>
         <DialogContent className="max-w-2xl">

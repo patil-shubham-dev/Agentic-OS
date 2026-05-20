@@ -2,5 +2,8 @@
   "name": "@agentos/agent-core",
   "version": "0.1.0",
   "private": true,
+  "scripts": {
+    "test": "echo \"no tests in agent-core\""
+  },
   "dependencies": {}
 }

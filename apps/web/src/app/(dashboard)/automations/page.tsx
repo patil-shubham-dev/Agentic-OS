@@ -68,6 +68,7 @@ import {
 import { cn } from "@/lib/utils";
 import { getJson } from "@/lib/client-api";
 import type { ProductAutomation } from "@/lib/product-blueprint";
+import { EmptyState } from "@/components/empty-state";
 
 const initialNodes: Node[] = [
   { id: "trigger", type: "input", position: { x: 250, y: 0 }, data: { label: "Trigger: Schedule" } },
@@ -235,17 +236,17 @@ export default function AutomationsPage() {
           {/* Stats */}
           <div className="grid grid-cols-4 gap-4">
             {[
-              { label: "Active", value: String(automations.filter((item) => item.status === "active").length), icon: CheckCircle2, color: "text-green-500" },
-              { label: "Paused", value: String(automations.filter((item) => item.status === "paused").length), icon: Pause, color: "text-yellow-500" },
-              { label: "Error", value: String(automations.filter((item) => item.status === "error").length), icon: XCircle, color: "text-destructive" },
-              { label: "Total Runs", value: String(automations.reduce((sum, item) => sum + item.runs, 0)), icon: Zap, color: "text-primary" },
+              { label: "Active", value: String(automations.filter((item) => item.status === "active").length), icon: CheckCircle2, color: "text-emerald-600" },
+              { label: "Paused", value: String(automations.filter((item) => item.status === "paused").length), icon: Pause, color: "text-amber-600" },
+              { label: "Error", value: String(automations.filter((item) => item.status === "error").length), icon: XCircle, color: "text-red-500" },
+              { label: "Total Runs", value: String(automations.reduce((sum, item) => sum + item.runs, 0)), icon: Zap, color: "text-amber-500" },
             ].map((stat) => (
-              <Card key={stat.label}>
+              <Card key={stat.label} className="agentos-card agentos-border-glow border-none">
                 <CardContent className="p-4 flex items-center gap-3">
                   <stat.icon className={cn("w-5 h-5", stat.color)} />
                   <div>
-                    <p className="text-2xl font-bold">{stat.value}</p>
-                    <p className="text-xs text-muted-foreground">{stat.label}</p>
+                    <p className="text-2xl font-bold text-amber-900">{stat.value}</p>
+                    <p className="text-xs text-amber-600/60">{stat.label}</p>
                   </div>
                 </CardContent>
               </Card>
@@ -253,69 +254,77 @@ export default function AutomationsPage() {
           </div>
 
           {/* Automations List */}
-          <motion.div variants={container} initial="hidden" animate="show" className="space-y-3">
-            {automations.map((auto) => (
-              <motion.div key={auto.id} variants={item}>
-                <Card
-                  className="cursor-pointer hover:shadow-md transition-all"
-                  onClick={() => setSelectedAutomation(auto)}
-                >
-                  <CardContent className="p-5">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-start gap-4">
-                        <div
-                          className={cn(
-                            "w-10 h-10 rounded-lg flex items-center justify-center",
-                            auto.status === "active" && "bg-green-500/10",
-                            auto.status === "paused" && "bg-yellow-500/10",
-                            auto.status === "error" && "bg-destructive/10",
-                            auto.status === "draft" && "bg-muted"
-                          )}
-                        >
-                          {auto.trigger.type === "schedule" && <Clock className={cn("w-5 h-5", auto.status === "active" ? "text-green-500" : auto.status === "error" ? "text-destructive" : "text-yellow-500")} />}
-                          {auto.trigger.type === "webhook" && <Webhook className={cn("w-5 h-5", auto.status === "active" ? "text-green-500" : auto.status === "error" ? "text-destructive" : "text-yellow-500")} />}
-                          {auto.trigger.type === "file_change" && <FileText className={cn("w-5 h-5", auto.status === "active" ? "text-green-500" : auto.status === "error" ? "text-destructive" : "text-yellow-500")} />}
-                          {auto.trigger.type === "git_commit" && <GitCommit className={cn("w-5 h-5", auto.status === "active" ? "text-green-500" : auto.status === "error" ? "text-destructive" : "text-yellow-500")} />}
-                        </div>
-                        <div>
-                          <h3 className="font-semibold">{auto.name}</h3>
-                          <p className="text-sm text-muted-foreground">{auto.description}</p>
-                          <div className="flex items-center gap-3 mt-2">
-                            <Badge variant="outline" className="text-[10px]">
-                              {auto.trigger.type}
-                            </Badge>
-                            <span className="text-xs text-muted-foreground">
-                              {auto.steps.length} steps
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                              {auto.runs} runs
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                              {auto.successRate}% success
-                            </span>
+          {!loading && automations.length === 0 ? (
+            <EmptyState
+              title="No automations configured."
+              description="Create your first automated trigger-based workflow to run specialist agents."
+              icon={Zap}
+            />
+          ) : (
+            <motion.div variants={container} initial="hidden" animate="show" className="space-y-3">
+              {automations.map((auto) => (
+                <motion.div key={auto.id} variants={item}>
+                  <Card
+                    className="agentos-card agentos-border-glow border-none cursor-pointer hover:shadow-md transition-all"
+                    onClick={() => setSelectedAutomation(auto)}
+                  >
+                    <CardContent className="p-5">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-start gap-4">
+                          <div
+                            className={cn(
+                              "w-10 h-10 rounded-lg flex items-center justify-center",
+                              auto.status === "active" && "bg-green-500/10",
+                              auto.status === "paused" && "bg-yellow-500/10",
+                              auto.status === "error" && "bg-destructive/10",
+                              auto.status === "draft" && "bg-muted"
+                            )}
+                          >
+                            {auto.trigger.type === "schedule" && <Clock className={cn("w-5 h-5", auto.status === "active" ? "text-green-500" : auto.status === "error" ? "text-destructive" : "text-yellow-500")} />}
+                            {auto.trigger.type === "webhook" && <Webhook className={cn("w-5 h-5", auto.status === "active" ? "text-green-500" : auto.status === "error" ? "text-destructive" : "text-yellow-500")} />}
+                            {auto.trigger.type === "file_change" && <FileText className={cn("w-5 h-5", auto.status === "active" ? "text-green-500" : auto.status === "error" ? "text-destructive" : "text-yellow-500")} />}
+                            {auto.trigger.type === "git_commit" && <GitCommit className={cn("w-5 h-5", auto.status === "active" ? "text-green-500" : auto.status === "error" ? "text-destructive" : "text-yellow-500")} />}
+                          </div>
+                          <div>
+                            <h3 className="font-semibold">{auto.name}</h3>
+                            <p className="text-sm text-muted-foreground">{auto.description}</p>
+                            <div className="flex items-center gap-3 mt-2">
+                              <Badge variant="outline" className="text-[10px]">
+                                {auto.trigger.type}
+                              </Badge>
+                              <span className="text-xs text-muted-foreground">
+                                {auto.steps.length} steps
+                              </span>
+                              <span className="text-xs text-muted-foreground">
+                                {auto.runs} runs
+                              </span>
+                              <span className="text-xs text-muted-foreground">
+                                {auto.successRate}% success
+                              </span>
+                            </div>
                           </div>
                         </div>
+                        <div className="text-right">
+                          <Badge
+                            className={cn(
+                              auto.status === "active" && "bg-green-500/10 text-green-500 hover:bg-green-500/20",
+                              auto.status === "paused" && "bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500/20",
+                              auto.status === "error" && "bg-destructive/10 text-destructive hover:bg-destructive/20",
+                              auto.status === "draft" && "bg-muted text-muted-foreground"
+                            )}
+                          >
+                            {auto.status}
+                          </Badge>
+                          <p className="text-xs text-muted-foreground mt-2">Last: {auto.lastRun}</p>
+                          <p className="text-xs text-muted-foreground">Next: {auto.nextRun}</p>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <Badge
-                          className={cn(
-                            auto.status === "active" && "bg-green-500/10 text-green-500 hover:bg-green-500/20",
-                            auto.status === "paused" && "bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500/20",
-                            auto.status === "error" && "bg-destructive/10 text-destructive hover:bg-destructive/20",
-                            auto.status === "draft" && "bg-muted text-muted-foreground"
-                          )}
-                        >
-                          {auto.status}
-                        </Badge>
-                        <p className="text-xs text-muted-foreground mt-2">Last: {auto.lastRun}</p>
-                        <p className="text-xs text-muted-foreground">Next: {auto.nextRun}</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ))}
-          </motion.div>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              ))}
+            </motion.div>
+          )}
         </>
       ) : (
         /* Workflow Builder */

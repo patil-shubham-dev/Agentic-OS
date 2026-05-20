@@ -2,14 +2,13 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useChat } from "@ai-sdk/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -22,670 +21,1102 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+  ContextMenuSeparator,
+} from "@/components/ui/context-menu";
+import {
   Send,
-  Paperclip,
-  Image,
-  Mic,
   Square,
   Bot,
-  User,
   Sparkles,
   Code2,
-  Terminal,
-  Eye,
+  Terminal as TerminalIcon,
   FileText,
-  Settings,
   ChevronRight,
   ChevronDown,
-  Copy,
-  Check,
-  RotateCcw,
-  GitBranch,
-  Wand2,
-  Cpu,
-  Zap,
-  Clock,
-  MoreHorizontal,
-  PanelLeftClose,
-  PanelLeftOpen,
   X,
   Loader2,
-  Lightbulb,
-  Wrench,
+  Save,
+  Plus,
+  FolderPlus,
+  Trash2,
+  Edit2,
+  Search,
+  Folder,
+  FolderOpen,
+  Terminal,
+  Cpu,
+  HelpCircle,
+  Play,
+  RotateCcw,
+  BookOpen,
+  CheckCircle,
+  Layers,
+  Sparkle,
+  Image as ImageIcon,
+  Paperclip,
+  Copy,
+  ChevronRight as BreadcrumbSeparator,
+  Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import {
-  topBarModelRoles,
-  workspaceContextFiles,
-  workspaceToolActivity,
-} from "@/lib/product-blueprint";
 import { getJson, sendJson } from "@/lib/client-api";
-
+import { toast } from "sonner";
+import Editor, { DiffEditor } from "@monaco-editor/react";
+import XtermTerminal from "@/components/workspace/XtermTerminal";
 // Types
-interface Message {
-  id: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-  model?: string;
-  tokens?: number;
-  timestamp: Date;
-  status?: "streaming" | "complete" | "error";
-  toolCalls?: ToolCall[];
-  artifacts?: Artifact[];
-}
-
-interface ToolCall {
+interface ImageAttachment {
   id: string;
   name: string;
-  args: Record<string, any>;
-  result?: string;
-  status: "pending" | "running" | "complete" | "error";
+  base64: string;
+  type: string;
 }
 
-interface Artifact {
+interface DbAgent {
   id: string;
-  type: "code" | "design" | "file" | "terminal";
-  title: string;
+  name: string;
+  description: string;
+  model: string;
+  type: string;
+  status: string;
+  tools: string[];
+}
+
+interface FileNode {
+  name: string;
+  path: string;
+  relPath: string;
+  isDir: boolean;
+  size: number;
+  updatedAt: string;
+}
+
+interface OpenTab {
+  path: string;
+  name: string;
   content: string;
-  language?: string;
+  dirty: boolean;
+  isDiff?: boolean;
+  originalContent?: string;
+  toolCallId?: string;
 }
 
-// Components
-function CodeBlock({ code, language }: { code: string; language?: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  return (
-    <div className="relative group rounded-lg overflow-hidden my-4">
-      <div className="flex items-center justify-between px-4 py-2 bg-muted/80 border-b border-border">
-        <span className="text-xs font-medium text-muted-foreground uppercase">{language || "code"}</span>
-        <Button variant="ghost" size="sm" className="h-6 gap-1 text-xs" onClick={copyToClipboard}>
-          {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-          {copied ? "Copied" : "Copy"}
-        </Button>
-      </div>
-      <SyntaxHighlighter
-        language={language || "typescript"}
-        style={oneDark}
-        customStyle={{ margin: 0, borderRadius: 0, fontSize: "13px" }}
-      >
-        {code}
-      </SyntaxHighlighter>
-    </div>
-  );
+interface TerminalLog {
+  type: "stdout" | "stderr" | "error" | "system";
+  text: string;
+  timestamp: Date;
 }
 
-function ToolCallCard({ tool }: { tool: ToolCall }) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <div className="my-3 rounded-lg border bg-muted/30 overflow-hidden">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-muted/50 transition-colors"
-      >
-        <div className="flex items-center gap-3">
-          <div
-            className={cn(
-              "w-2 h-2 rounded-full",
-              tool.status === "complete" && "bg-green-500",
-              tool.status === "running" && "bg-blue-500 animate-pulse",
-              tool.status === "error" && "bg-destructive",
-              tool.status === "pending" && "bg-muted-foreground"
-            )}
-          />
-          <Wrench className="w-4 h-4 text-muted-foreground" />
-          <span className="text-sm font-medium">{tool.name}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Badge variant="outline" className="text-xs">
-            {tool.status}
-          </Badge>
-          {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-        </div>
-      </button>
-      <AnimatePresence>
-        {expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
-          >
-            <div className="px-4 pb-3 space-y-2">
-              <div className="text-xs">
-                <span className="text-muted-foreground font-medium">Arguments:</span>
-                <pre className="mt-1 p-2 rounded bg-muted text-xs overflow-x-auto">
-                  {JSON.stringify(tool.args, null, 2)}
-                </pre>
-              </div>
-              {tool.result && (
-                <div className="text-xs">
-                  <span className="text-muted-foreground font-medium">Result:</span>
-                  <pre className="mt-1 p-2 rounded bg-muted text-xs">{tool.result}</pre>
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
+interface TerminalSession {
+  id: string;
+  name: string;
+  logs: TerminalLog[];
+  running: boolean;
+  abortController: AbortController | null;
 }
 
-function ArtifactCard({ artifact }: { artifact: Artifact }) {
-  return (
-    <div className="my-4 rounded-xl border bg-card overflow-hidden shadow-sm">
-      <div className="flex items-center justify-between px-4 py-2.5 border-b bg-muted/30">
-        <div className="flex items-center gap-2">
-          {artifact.type === "code" && <Code2 className="w-4 h-4 text-primary" />}
-          {artifact.type === "design" && <Eye className="w-4 h-4 text-purple-500" />}
-          {artifact.type === "file" && <FileText className="w-4 h-4 text-blue-500" />}
-          {artifact.type === "terminal" && <Terminal className="w-4 h-4 text-green-500" />}
-          <span className="text-sm font-medium">{artifact.title}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" className="h-7 text-xs gap-1">
-            <Copy className="w-3 h-3" /> Copy
-          </Button>
-          <Button variant="ghost" size="sm" className="h-7 text-xs gap-1">
-            <GitBranch className="w-3 h-3" /> Apply
-          </Button>
-        </div>
-      </div>
-      <div className="p-0">
-        {artifact.type === "code" && (
-          <CodeBlock code={artifact.content} language={artifact.language} />
-        )}
-        {artifact.type === "design" && (
-          <div className="p-4 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMSIgY3k9IjEiIHI9IjEiIGZpbGw9InJnYmEoMCwwLDAsMC4wNSkiLz48L3N2Zz4=')]">
-            <div className="aspect-video bg-slate-950 rounded-lg flex items-center justify-center text-white/20 text-sm">
-              Design Preview
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function MessageBubble({ message }: { message: Message }) {
-  const isUser = message.role === "user";
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      className={cn("py-6", isUser ? "bg-transparent" : "bg-muted/30")}
-    >
-      <div className="max-w-4xl mx-auto px-4 flex gap-4">
-        {/* Avatar */}
-        <div className="shrink-0 mt-1">
-          {isUser ? (
-            <Avatar className="w-8 h-8">
-              <AvatarFallback className="bg-primary/10 text-primary text-xs">JD</AvatarFallback>
-            </Avatar>
-          ) : (
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-agentos-500 to-agentos-700 flex items-center justify-center">
-              <Sparkles className="w-4 h-4 text-white" />
-            </div>
-          )}
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 min-w-0 space-y-2">
-          {/* Header */}
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-sm">{isUser ? "You" : message.model || "AgentOS"}</span>
-            {!isUser && message.tokens && (
-              <span className="text-xs text-muted-foreground">{message.tokens.toLocaleString()} tokens</span>
-            )}
-            <span className="text-xs text-muted-foreground">
-              {message.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-            </span>
-          </div>
-
-          {/* Message Content */}
-          <div className="prose prose-sm dark:prose-invert max-w-none">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                code({ node, inline, className, children, ...props }: any) {
-                  const match = /language-(\w+)/.exec(className || "");
-                  return !inline && match ? (
-                    <CodeBlock code={String(children).replace(/\n$/, "")} language={match[1]} />
-                  ) : (
-                    <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono" {...props}>
-                      {children}
-                    </code>
-                  );
-                },
-              }}
-            >
-              {message.content}
-            </ReactMarkdown>
-          </div>
-
-          {/* Tool Calls */}
-          {message.toolCalls && message.toolCalls.length > 0 && (
-            <div className="mt-3">
-              <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
-                <Wrench className="w-3 h-3" /> Tool Calls ({message.toolCalls.length})
-              </p>
-              {message.toolCalls.map((tool) => (
-                <ToolCallCard key={tool.id} tool={tool} />
-              ))}
-            </div>
-          )}
-
-          {/* Artifacts */}
-          {message.artifacts && message.artifacts.length > 0 && (
-            <div className="mt-3 space-y-3">
-              {message.artifacts.map((artifact) => (
-                <ArtifactCard key={artifact.id} artifact={artifact} />
-              ))}
-            </div>
-          )}
-
-          {/* Streaming indicator */}
-          {message.status === "streaming" && (
-            <div className="flex items-center gap-2 mt-2">
-              <div className="flex gap-1">
-                <span className="w-1.5 h-1.5 bg-primary rounded-full animate-typing" style={{ animationDelay: "0ms" }} />
-                <span className="w-1.5 h-1.5 bg-primary rounded-full animate-typing" style={{ animationDelay: "200ms" }} />
-                <span className="w-1.5 h-1.5 bg-primary rounded-full animate-typing" style={{ animationDelay: "400ms" }} />
-              </div>
-              <span className="text-xs text-muted-foreground">Generating response...</span>
-            </div>
-          )}
-
-          {/* Message actions */}
-          {!isUser && message.status === "complete" && (
-            <div className="flex items-center gap-1 mt-3">
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-7 w-7">
-                      <Copy className="w-3.5 h-3.5" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Copy</TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-7 w-7">
-                      <RotateCcw className="w-3.5 h-3.5" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Regenerate</TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-7 w-7">
-                      <GitBranch className="w-3.5 h-3.5" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Branch</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-          )}
-        </div>
-      </div>
-    </motion.div>
-  );
+interface SearchResult {
+  name: string;
+  path: string;
+  relPath: string;
+  matches: Array<{ line: number; text: string }>;
 }
 
 export default function WorkspacePage() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [rightPanelOpen, setRightPanelOpen] = useState(true);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [agents, setAgents] = useState<DbAgent[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState("coding");
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  // Active Context / Prompt Reference Files
+  const [contextPaths, setContextPaths] = useState<Set<string>>(new Set());
+
+  // Image Attachments State (Vision multimodal context!)
+  const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Vercel AI SDK useChat
+  const { messages, input, handleInputChange, handleSubmit, isLoading, stop, setMessages, addToolResult } = useChat({
+    api: "/api/chat",
+    maxSteps: 10,
+    body: {
+      attachments: attachments.map(a => ({ base64: a.base64, name: a.name, type: a.type })),
+      agentId: selectedAgentId,
+      contextPaths: Array.from(contextPaths)
+    },
+    onFinish: () => {
+      setAttachments([]);
+    },
+    onError: (err) => {
+      toast.error(err.message || "Chat execution failed");
+    }
+  });
+
+  // Filesystem States
+  const [rootPath, setRootPath] = useState("");
+  const [dirContents, setDirContents] = useState<Record<string, FileNode[]>>({});
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set());
+
+  // Monaco Editor Canvas
+  const [openTabs, setOpenTabs] = useState<OpenTab[]>([]);
+  const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
+
+  // Shell Terminal Sessions state
+  const [sessions, setSessions] = useState<TerminalSession[]>([
+    { id: "term1", name: "bash-1", logs: [], running: false, abortController: null }
+  ]);
+  const [activeSessionId, setActiveSessionId] = useState("term1");
+  const [shellCommand, setShellCommand] = useState("");
+
+  // Global Command Palette & Search States
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+
+  // UI Panels
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [editorOpen, setEditorOpen] = useState(true);
+  const [terminalOpen, setTerminalOpen] = useState(true);
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const terminalEndRef = useRef<HTMLDivElement>(null);
+
+  const [approvingToolId, setApprovingToolId] = useState<string | null>(null);
+
+  const handleApproveTool = async (toolCallId: string, toolName: string, args: any) => {
+    setApprovingToolId(toolCallId);
+    try {
+      const res = await fetch("/api/tools/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toolName, args }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success(`Approved tool ${toolName} executed successfully.`);
+        addToolResult({
+          toolCallId,
+          result: typeof data.data === "string" ? data.data : JSON.stringify(data.data),
+        });
+      } else {
+        toast.error(`Tool execution failed: ${data.error}`);
+        addToolResult({
+          toolCallId,
+          result: `Failed to execute: ${data.error}`,
+        });
+      }
+    } catch (err: any) {
+      toast.error(`Error approving tool: ${err.message}`);
+      addToolResult({
+        toolCallId,
+        result: `Error executing approved tool: ${err.message}`,
+      });
+    } finally {
+      setApprovingToolId(null);
+    }
   };
 
+  const handleDenyTool = (toolCallId: string) => {
+    toast.warning("Tool execution denied by user.");
+    addToolResult({
+      toolCallId,
+      result: "User denied execution of this tool.",
+    });
+  };
+
+  const activeAgent = agents.find((a) => a.id === selectedAgentId) || agents[0];
+  const activeTab = openTabs.find((t) => t.path === activeTabPath);
+  const activeSession = sessions.find((s) => s.id === activeSessionId) || sessions[0];
+
+  // 1. Initial Load
   useEffect(() => {
-    scrollToBottom();
+    getJson<{ agents: Array<Record<string, any>> }>("/api/agents")
+      .then((data) => {
+        const mapped = data.agents.map((agent) => ({
+          id: String(agent.id),
+          name: String(agent.name),
+          description: String(agent.description ?? ""),
+          model: String(agent.model ?? ""),
+          type: String(agent.type ?? "custom"),
+          status: String(agent.status ?? "idle"),
+          tools: Array.isArray(agent.tools) ? (agent.tools as string[]) : [],
+        }));
+        setAgents(mapped);
+      })
+      .catch(() => setAgents([]));
+
+    loadFolderTree("");
+  }, []);
+
+  // Debounced Auto-Save
+  useEffect(() => {
+    const dirtyTabs = openTabs.filter(t => t.dirty && !t.isDiff);
+    if (dirtyTabs.length === 0) return;
+
+    const timer = setTimeout(() => {
+      dirtyTabs.forEach(async (tab) => {
+        try {
+          await sendJson("/api/files/write", "POST", { path: tab.path, content: tab.content });
+          setOpenTabs((prev) => prev.map((t) => (t.path === tab.path ? { ...t, dirty: false } : t)));
+        } catch {}
+      });
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [openTabs]);
+
+  // Global Keybindings
+  useEffect(() => {
+    const handleKeydown = (e: KeyboardEvent) => {
+      // Ctrl+P / Cmd+P: Command Palette
+      if ((e.ctrlKey || e.metaKey) && e.key === "p") {
+        e.preventDefault();
+        setSearchOpen((prev) => !prev);
+      }
+      // Ctrl+S / Cmd+S: Save active file
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        handleSaveFile();
+      }
+      // Ctrl+B / Cmd+B: Toggle Sidebar
+      if ((e.ctrlKey || e.metaKey) && e.key === "b") {
+        e.preventDefault();
+        setSidebarOpen((prev) => !prev);
+      }
+      // Ctrl+J / Cmd+J: Toggle Terminal
+      if ((e.ctrlKey || e.metaKey) && e.key === "j") {
+        e.preventDefault();
+        setTerminalOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeydown);
+    return () => window.removeEventListener("keydown", handleKeydown);
+  });
+
+  // Sync scroll positions
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
   useEffect(() => {
-    getJson<{ chats: Array<{ messages?: Array<Record<string, unknown>> }> }>("/api/chat")
-      .then((data) => {
-        const latestChat = data.chats[0];
-        if (!latestChat?.messages?.length) {
-          setMessages([]);
-          return;
+    terminalEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [activeSession?.logs]);
+
+  // Multimodal Drag-and-Drop + Clipboard Paste Handlers
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData.items;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf("image") !== -1) {
+        const file = items[i].getAsFile();
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            if (event.target?.result) {
+              const base64 = event.target.result as string;
+              if (file.size > 5 * 1024 * 1024) {
+                toast.warning("Image exceeds 5MB. Large attachments may be slow to process.");
+              }
+              setAttachments((prev) => [
+                ...prev,
+                { id: `img_${Date.now()}_${i}`, name: file.name || "Pasted Image", base64, type: file.type },
+              ]);
+              toast.success("Image pasted from clipboard.");
+            }
+          };
+          reader.readAsDataURL(file);
         }
-        setMessages(
-          latestChat.messages.map((message, index) => ({
-            id: String(message.id ?? `msg-${index}`),
-            role: (message.role as Message["role"]) ?? "assistant",
-            content: String(message.content ?? ""),
-            model: message.model ? String(message.model) : undefined,
-            tokens: message.tokens ? Number(message.tokens) : undefined,
-            timestamp: message.timestamp ? new Date(String(message.timestamp)) : new Date(),
-            status: "complete",
-            toolCalls: Array.isArray(message.toolCalls) ? (message.toolCalls as ToolCall[]) : undefined,
-          }))
-        );
-      })
-      .catch(() => setMessages([]));
-  }, []);
-
-  const handleSend = async () => {
-    if (!input.trim() || isStreaming) return;
-
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: "user",
-      content: input,
-      timestamp: new Date(),
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
-    setInput("");
-    setIsStreaming(true);
-
-    try {
-      const response = await sendJson<{ chat: { messages: Array<Record<string, unknown>> } }>("/api/chat", "POST", {
-        messages: [
-          ...messages.map((message) => ({
-            role: message.role,
-            content: message.content,
-            model: message.model,
-          })),
-          { role: "user", content: userMessage.content },
-        ],
-        model: topBarModelRoles[0]?.name ?? "Claude Opus",
-        agent: "coding",
-      });
-
-      const latestMessages = response.chat.messages;
-      setMessages(
-        latestMessages.map((message, index) => ({
-          id: String(message.id ?? `msg-${index}`),
-          role: (message.role as Message["role"]) ?? "assistant",
-          content: String(message.content ?? ""),
-          model: message.model ? String(message.model) : undefined,
-          tokens: message.tokens ? Number(message.tokens) : undefined,
-          timestamp: message.timestamp ? new Date(String(message.timestamp)) : new Date(),
-          status: "complete",
-          toolCalls: Array.isArray(message.toolCalls) ? (message.toolCalls as ToolCall[]) : undefined,
-        }))
-      );
-    } finally {
-      setIsStreaming(false);
+      }
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDraggingFile(true); };
+  const handleDragLeave = () => { setIsDraggingFile(false); };
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingFile(false);
+    const files = Array.from(e.dataTransfer.files);
+    let attachedCount = 0;
+    files.forEach((file, idx) => {
+      if (file.type.startsWith("image/")) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          if (event.target?.result) {
+            const base64 = event.target.result as string;
+            setAttachments((prev) => [
+              ...prev,
+              { id: `img_${Date.now()}_${idx}`, name: file.name, base64, type: file.type },
+            ]);
+            attachedCount++;
+            if (idx === files.length - 1 || attachedCount > 0) toast.success(`Attached reference image: ${file.name}`);
+          }
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    Array.from(e.target.files).forEach((file, idx) => {
+      if (file.type.startsWith("image/")) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          if (event.target?.result) {
+            setAttachments((prev) => [
+              ...prev,
+              { id: `img_${Date.now()}_${idx}`, name: file.name, base64: event.target.result as string, type: file.type },
+            ]);
+          }
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+  };
+
+  const handleRemoveAttachment = (id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  };
+
+  // Filesystem Operations
+  const loadFolderTree = async (folderPath: string) => {
+    const url = folderPath ? `/api/files/tree?path=${encodeURIComponent(folderPath)}` : "/api/files/tree";
+    setLoadingPaths((prev) => new Set(prev).add(folderPath || "root"));
+    try {
+      const data = await getJson<{ path: string; items: FileNode[] }>(url);
+      if (!rootPath && !folderPath) setRootPath(data.path);
+      setDirContents((prev) => ({ ...prev, [folderPath || data.path]: data.items }));
+      if (folderPath) setExpandedPaths((prev) => new Set(prev).add(folderPath));
+    } catch {
+      toast.error(`Failed to load folder tree for ${folderPath || "root"}`);
+    } finally {
+      setLoadingPaths((prev) => {
+        const next = new Set(prev);
+        next.delete(folderPath || "root");
+        return next;
+      });
     }
+  };
+
+  const handleToggleFolder = (folderPath: string) => {
+    if (expandedPaths.has(folderPath)) {
+      setExpandedPaths((prev) => {
+        const next = new Set(prev);
+        next.delete(folderPath);
+        return next;
+      });
+    } else {
+      loadFolderTree(folderPath);
+    }
+  };
+
+  const handleOpenFile = async (file: FileNode) => {
+    const alreadyOpen = openTabs.find((t) => t.path === file.path);
+    if (alreadyOpen) {
+      setActiveTabPath(file.path);
+      setEditorOpen(true);
+      return;
+    }
+    try {
+      const res = await getJson<{ content: string }>(`/api/files/read?path=${encodeURIComponent(file.path)}`);
+      setOpenTabs((prev) => [...prev, { path: file.path, name: file.name, content: res.content, dirty: false }]);
+      setActiveTabPath(file.path);
+      setEditorOpen(true);
+    } catch {
+      toast.error(`Failed to read file: ${file.name}`);
+    }
+  };
+
+  const handleCloseTab = (tabPath: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const tabIndex = openTabs.findIndex((t) => t.path === tabPath);
+    const newTabs = openTabs.filter((t) => t.path !== tabPath);
+    setOpenTabs(newTabs);
+    if (activeTabPath === tabPath) {
+      setActiveTabPath(newTabs.length > 0 ? newTabs[Math.max(0, tabIndex - 1)].path : null);
+    }
+  };
+
+  const handleSaveFile = async () => {
+    if (!activeTab) return;
+    try {
+      await sendJson("/api/files/write", "POST", { path: activeTab.path, content: activeTab.content });
+      setOpenTabs((prev) => prev.map((t) => (t.path === activeTab.path ? { ...t, dirty: false } : t)));
+      toast.success(`Saved changes to ${activeTab.name}`);
+    } catch {
+      toast.error(`Failed to save file: ${activeTab.name}`);
+    }
+  };
+
+  const handleEditorChange = (val: string) => {
+    if (!activeTabPath) return;
+    setOpenTabs((prev) => prev.map((t) => (t.path === activeTabPath ? { ...t, content: val, dirty: true } : t)));
+  };
+
+  const handleCreateFile = async (parentFolder: string) => {
+    const fileName = prompt("Enter new file name:");
+    if (!fileName) return;
+    const fullPath = `${parentFolder}/${fileName}`;
+    try {
+      await sendJson("/api/files/write", "POST", { path: fullPath, content: "" });
+      toast.success(`File ${fileName} created.`);
+      loadFolderTree(parentFolder);
+    } catch {
+      toast.error("Failed to create file.");
+    }
+  };
+
+  const handleCreateFolder = async (parentFolder: string) => {
+    const folderName = prompt("Enter new folder name:");
+    if (!folderName) return;
+    const fullPath = `${parentFolder}/${folderName}`;
+    try {
+      await sendJson("/api/files/mkdir", "POST", { path: fullPath });
+      toast.success(`Folder ${folderName} created.`);
+      loadFolderTree(parentFolder);
+    } catch {
+      toast.error("Failed to create folder.");
+    }
+  };
+
+  const handleRenameItem = async (itemPath: string, parentFolder: string) => {
+    const newName = prompt("Enter new name:", itemPath.split("/").pop());
+    if (!newName) return;
+    const parentDir = itemPath.substring(0, itemPath.lastIndexOf("/"));
+    const newFullPath = `${parentDir}/${newName}`;
+    try {
+      await sendJson("/api/files/rename", "POST", { oldPath: itemPath, newPath: newFullPath });
+      toast.success("Renamed successfully.");
+      loadFolderTree(parentFolder);
+      setOpenTabs((prev) => prev.map((t) => (t.path === itemPath ? { ...t, path: newFullPath, name: newName } : t)));
+      if (activeTabPath === itemPath) setActiveTabPath(newFullPath);
+    } catch {
+      toast.error("Rename failed.");
+    }
+  };
+
+  const handleDeleteItem = async (itemPath: string, parentFolder: string) => {
+    if (!confirm(`Are you sure you want to delete ${itemPath.split("/").pop()}?`)) return;
+    try {
+      await sendJson("/api/files/delete", "POST", { path: itemPath });
+      toast.success("Deleted successfully.");
+      loadFolderTree(parentFolder);
+      setOpenTabs((prev) => prev.filter((t) => t.path !== itemPath));
+      if (activeTabPath === itemPath) setActiveTabPath(null);
+    } catch {
+      toast.error("Failed to delete target.");
+    }
+  };
+
+  const handleToggleContext = (path: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setContextPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  const handleSearchChange = async (query: string) => {
+    setSearchQuery(query);
+    if (!query?.trim?.()) { setSearchResults([]); return; }
+    setSearching(true);
+    try {
+      const data = await getJson<{ results: SearchResult[] }>(`/api/files/search?q=${encodeURIComponent(query)}&root=${encodeURIComponent(rootPath)}`);
+      setSearchResults(data.results);
+    } catch {
+    } finally { setSearching(false); }
+  };
+
+  const handleSelectSearchResult = async (filePath: string) => {
+    setSearchOpen(false);
+    setSearchQuery("");
+    setSearchResults([]);
+    const name = filePath.split(/[/\\]/).pop() || "";
+    await handleOpenFile({ name, path: filePath, relPath: "", isDir: false, size: 0, updatedAt: new Date().toISOString() });
+  };
+
+  const handleAddNewSession = () => {
+    const newId = `term_${Date.now()}`;
+    setSessions((prev) => [...prev, { id: newId, name: `bash-${prev.length + 1}`, logs: [], running: false, abortController: null }]);
+    setActiveSessionId(newId);
+  };
+
+  const handleCloseSession = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (sessions.length === 1) return toast.warning("Must maintain at least one terminal session active.");
+    const session = sessions.find((s) => s.id === id);
+    if (session?.abortController) session.abortController.abort();
+    const nextSessions = sessions.filter((s) => s.id !== id);
+    setSessions(nextSessions);
+    if (activeSessionId === id) setActiveSessionId(nextSessions[0].id);
+  };
+
+  const handleExecuteCommand = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!shellCommand?.trim?.() || activeSession.running) return;
+    const commandToRun = shellCommand;
+    setShellCommand("");
+    setTerminalOpen(true);
+    setSessions((prev) => prev.map((s) => s.id === activeSessionId ? { ...s, running: true, logs: [...s.logs, { type: "system", text: `> ${commandToRun}`, timestamp: new Date() }] } : s));
+    const abortController = new AbortController();
+    setSessions((prev) => prev.map((s) => (s.id === activeSessionId ? { ...s, abortController } : s)));
+    try {
+      const response = await fetch("/api/terminal/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command: commandToRun, cwd: rootPath }),
+        signal: abortController.signal,
+      });
+      if (!response.ok) throw new Error(`Execution error: ${response.statusText}`);
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      if (reader) {
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+          for (const part of parts) {
+            if (part.startsWith("data: ")) {
+              try {
+                const eventData = JSON.parse(part.substring(6));
+                if (eventData.type === "stdout" || eventData.type === "stderr") {
+                  setSessions((prev) => prev.map((s) => s.id === activeSessionId ? { ...s, logs: [...s.logs, { type: eventData.type, text: eventData.text, timestamp: new Date() }] } : s));
+                } else if (eventData.type === "exit") {
+                  setSessions((prev) => prev.map((s) => s.id === activeSessionId ? { ...s, running: false, logs: [...s.logs, { type: "system", text: `Process exited with code ${eventData.code}`, timestamp: new Date() }] } : s));
+                } else if (eventData.type === "error") {
+                  setSessions((prev) => prev.map((s) => s.id === activeSessionId ? { ...s, logs: [...s.logs, { type: "error", text: eventData.text, timestamp: new Date() }] } : s));
+                }
+              } catch {}
+            }
+          }
+        }
+      }
+    } catch (err) {
+      const errMsg = err instanceof Error && err.name === "AbortError" ? "Command terminated by user." : (err instanceof Error ? err.message : "Execution failed.");
+      setSessions((prev) => prev.map((s) => s.id === activeSessionId ? { ...s, running: false, logs: [...s.logs, { type: "error", text: errMsg, timestamp: new Date() }] } : s));
+    } finally {
+      setSessions((prev) => prev.map((s) => (s.id === activeSessionId ? { ...s, running: false, abortController: null } : s)));
+    }
+  };
+
+  const handleStopCommand = () => {
+    if (activeSession.abortController) activeSession.abortController.abort();
+  };
+
+  // Interactive Folder Tree Renderer with Context Menus!
+  const renderTreeNodes = (dirPath: string, depth = 0) => {
+    const items = dirContents[dirPath] || [];
+
+    return items.map((item) => {
+      const isExpanded = expandedPaths.has(item.path);
+      const isLoading = loadingPaths.has(item.path);
+      const isContextSelected = contextPaths.has(item.path);
+
+      return (
+        <ContextMenu key={item.path}>
+          <ContextMenuTrigger>
+            <div style={{ paddingLeft: `${depth * 10}px` }} className="select-none">
+              <div
+                className={cn(
+                  "flex items-center justify-between group px-2 py-1 rounded-md hover:bg-amber-100/50 cursor-pointer text-xs transition-colors",
+                  activeTabPath === item.path ? "bg-amber-100 text-amber-900 font-semibold" : "text-amber-800"
+                )}
+                onClick={() => (item.isDir ? handleToggleFolder(item.path) : handleOpenFile(item))}
+              >
+                <div className="flex items-center gap-1.5 truncate">
+                  {item.isDir ? (
+                    isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-500" /> : isExpanded ? <FolderOpen className="w-3.5 h-3.5 text-amber-600" /> : <Folder className="w-3.5 h-3.5 text-amber-600" />
+                  ) : (
+                    <FileText className="w-3.5 h-3.5 text-amber-500" />
+                  )}
+                  <span className="truncate">{item.name}</span>
+                </div>
+              </div>
+              {item.isDir && isExpanded && (
+                <div className="border-l border-amber-200/50 ml-3.5 pl-1.5 my-0.5">
+                  {renderTreeNodes(item.path, depth + 1)}
+                </div>
+              )}
+            </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent className="w-48 text-xs bg-white border border-amber-200 rounded-xl shadow-xl">
+            {item.isDir && (
+              <>
+                <ContextMenuItem onClick={() => handleCreateFile(item.path)} className="focus:bg-amber-100 cursor-pointer">
+                  <Plus className="w-3.5 h-3.5 mr-2 text-amber-600" /> New File
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => handleCreateFolder(item.path)} className="focus:bg-amber-100 cursor-pointer">
+                  <FolderPlus className="w-3.5 h-3.5 mr-2 text-amber-600" /> New Folder
+                </ContextMenuItem>
+                <ContextMenuSeparator className="bg-amber-100" />
+              </>
+            )}
+            <ContextMenuItem onClick={() => {
+              navigator.clipboard.writeText(item.path);
+              toast.success("Path copied to clipboard.");
+            }} className="focus:bg-amber-100 cursor-pointer">
+              <Copy className="w-3.5 h-3.5 mr-2 text-amber-600" /> Copy Path
+            </ContextMenuItem>
+            {!item.isDir && (
+              <ContextMenuItem onClick={() => {
+                handleToggleContext(item.path, { stopPropagation: () => {} } as any);
+              }} className="focus:bg-amber-100 cursor-pointer">
+                <BookOpen className="w-3.5 h-3.5 mr-2 text-amber-600" /> Toggle Prompt Context
+              </ContextMenuItem>
+            )}
+            <ContextMenuSeparator className="bg-amber-100" />
+            <ContextMenuItem onClick={() => handleRenameItem(item.path, dirPath)} className="focus:bg-amber-100 cursor-pointer">
+              <Edit2 className="w-3.5 h-3.5 mr-2 text-amber-600" /> Rename
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => handleDeleteItem(item.path, dirPath)} className="focus:bg-red-50 text-red-600 cursor-pointer">
+              <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+      );
+    });
   };
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)]">
+    <div className="flex h-[calc(100vh-3.5rem)] bg-amber-50/10 overflow-hidden font-sans">
       <ResizablePanelGroup direction="horizontal" className="flex-1">
-        {/* Left Sidebar - Context */}
+        
+        {/* Left Panel: Filesystem Workspace Tree Explorer */}
         {sidebarOpen && (
-          <>
-            <ResizablePanel defaultSize={20} minSize={15} maxSize={30} className="min-w-[200px]">
-              <div className="h-full flex flex-col border-r bg-card/50">
-                <div className="p-3 border-b flex items-center justify-between">
-                  <span className="text-sm font-medium">Context</span>
-                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setSidebarOpen(false)}>
-                    <PanelLeftClose className="w-4 h-4" />
-                  </Button>
-                </div>
-                <ScrollArea className="flex-1">
-                  <div className="p-3 space-y-4">
-                    <div>
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Files</p>
-                      <div className="space-y-1">
-                        {workspaceContextFiles.map((file) => (
-                          <div
-                            key={file.path}
-                            className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted cursor-pointer text-sm"
-                          >
-                            <FileText className="w-3.5 h-3.5 text-muted-foreground" />
-                            <span className="truncate">{file.path}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Active Agents</p>
-                      <div className="space-y-2">
-                        {topBarModelRoles.slice(0, 3).map((agent, index) => (
-                          <div key={agent.name} className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted cursor-pointer">
-                            <div className={cn("w-2 h-2 rounded-full", index === 0 ? "bg-green-500" : "bg-muted-foreground")} />
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium truncate">{agent.name}</p>
-                              <p className="text-xs text-muted-foreground">{agent.role}</p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Memory</p>
-                      <div className="p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground space-y-1">
-                        <p>• User prefers dark themes</p>
-                        <p>• React + TypeScript stack</p>
-                        <p>• Tailwind for styling</p>
-                        <p>• Framer Motion for animations</p>
-                      </div>
-                    </div>
+          <ResizablePanel defaultSize={20} minSize={15} maxSize={30} className="min-w-[240px]">
+            <div className="h-full flex flex-col border-r border-amber-200/60 bg-amber-50/45">
+              <div className="p-3 border-b border-amber-200/60 flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-amber-950 uppercase tracking-wider">File Explorer</span>
+                  <div className="flex items-center gap-1">
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-6 w-6 text-amber-700 hover:bg-amber-100 rounded-lg" onClick={() => setSearchOpen(true)}>
+                            <Search className="w-3.5 h-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent className="bg-slate-900 text-white border-none text-[10px]">Quick Open (Ctrl + P)</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    <Button variant="ghost" size="icon" className="h-6 w-6 text-amber-700 hover:bg-amber-100 rounded-lg" onClick={() => handleCreateFile(rootPath)}>
+                      <Plus className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-6 w-6 text-amber-700 hover:bg-amber-100 rounded-lg" onClick={() => handleCreateFolder(rootPath)}>
+                      <FolderPlus className="w-3.5 h-3.5" />
+                    </Button>
                   </div>
-                </ScrollArea>
+                </div>
+
+                <div className="flex items-center gap-1.5 bg-white border border-amber-200/80 rounded-xl px-2 py-1 shadow-sm">
+                  <Folder className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
+                  <Input
+                    className="h-6 text-[11px] font-semibold border-none bg-transparent shadow-none p-0 focus-visible:ring-0 text-amber-900 truncate"
+                    value={rootPath}
+                    onChange={(e) => setRootPath(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && loadFolderTree(rootPath)}
+                  />
+                </div>
               </div>
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-          </>
+
+              <ScrollArea className="flex-1 p-2">
+                {rootPath ? <div className="space-y-1">{renderTreeNodes(rootPath)}</div> : <div className="flex items-center justify-center p-8 text-center text-xs text-amber-600/70"><Loader2 className="w-4 h-4 animate-spin text-amber-500 mr-1.5" /> Indexing codebase...</div>}
+              </ScrollArea>
+            </div>
+          </ResizablePanel>
         )}
 
-        {/* Main Chat Area */}
-        <ResizablePanel defaultSize={sidebarOpen ? (rightPanelOpen ? 50 : 80) : (rightPanelOpen ? 70 : 100)}>
-          <div className="h-full flex flex-col">
-            <ScrollArea className="flex-1">
+        <ResizableHandle withHandle />
+
+        {/* Center Panel: Code Editor / Live Multi-Terminal */}
+        <ResizablePanel defaultSize={50} minSize={30}>
+          <ResizablePanelGroup direction="vertical">
+            {editorOpen && (
+              <ResizablePanel defaultSize={60} minSize={20}>
+                <div className="h-full flex flex-col bg-white border-b border-amber-200/60">
+                  <div className="flex items-center justify-between border-b border-amber-200/60 bg-amber-50/20 px-2 py-1">
+                    <div className="flex items-center gap-1 overflow-x-auto">
+                      {openTabs.map((t) => (
+                        <div
+                          key={t.path}
+                          onClick={() => setActiveTabPath(t.path)}
+                          className={cn(
+                            "flex items-center gap-1.5 px-3 py-1.5 rounded-t-xl text-xs font-semibold cursor-pointer border-t-2 border-x border-transparent transition-all",
+                            activeTabPath === t.path ? "bg-white text-amber-900 border-t-amber-600 border-x-amber-200/70 shadow-sm" : "text-amber-700/75 hover:bg-amber-100/40"
+                          )}
+                        >
+                          <FileText className="w-3.5 h-3.5 text-amber-600" />
+                          <span>{t.name}</span>
+                          {t.dirty && <span className="w-1.5 h-1.5 rounded-full bg-amber-600 animate-pulse" />}
+                          <button onClick={(e) => handleCloseTab(t.path, e)} className="p-0.5 hover:bg-amber-100 rounded text-amber-600"><X className="w-3 h-3" /></button>
+                        </div>
+                      ))}
+                    </div>
+                    {activeTab && (
+                      <Button size="sm" onClick={handleSaveFile} className="bg-amber-600 hover:bg-amber-700 text-white rounded-xl h-8">
+                        <Save className="w-3.5 h-3.5 mr-1.5" /> Save
+                      </Button>
+                    )}
+                  </div>
+
+                  {/* Breadcrumb Navigation */}
+                  {activeTabPath && (
+                    <div className="flex items-center px-4 py-1.5 border-b border-amber-100 bg-amber-50/10 text-[11px] text-amber-700/80 font-medium">
+                      {activeTabPath.split(/[/\\]/).map((segment, idx, arr) => (
+                        <div key={idx} className="flex items-center">
+                          <span className={idx === arr.length - 1 ? "text-amber-950 font-bold" : ""}>{segment}</span>
+                          {idx < arr.length - 1 && <BreadcrumbSeparator className="w-3 h-3 mx-1 opacity-50" />}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex-1 flex overflow-hidden">
+                    {activeTab ? (
+                      activeTab.isDiff ? (
+                        <div className="flex-1 flex flex-col relative group">
+                          <div className="absolute top-2 right-6 z-10 flex gap-2">
+                            <Button size="sm" className="bg-red-600 hover:bg-red-700 text-white h-7 shadow" onClick={() => {
+                              if (activeTab.toolCallId) addToolResult({ toolCallId: activeTab.toolCallId, result: "User rejected the edit." });
+                              setOpenTabs(prev => prev.filter(t => t.path !== activeTab.path));
+                            }}>Reject</Button>
+                            <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white h-7 shadow" onClick={async () => {
+                              try {
+                                await sendJson("/api/files/write", "POST", { path: activeTab.path, content: activeTab.content });
+                                toast.success("Edit applied successfully");
+                                if (activeTab.toolCallId) addToolResult({ toolCallId: activeTab.toolCallId, result: "User approved the edit. It has been applied." });
+                                setOpenTabs(prev => prev.map(t => t.path === activeTab.path ? { ...t, isDiff: false, dirty: false } : t));
+                              } catch (e) {
+                                toast.error("Failed to apply edit");
+                                if (activeTab.toolCallId) addToolResult({ toolCallId: activeTab.toolCallId, result: "Failed to apply edit." });
+                              }
+                            }}>Accept and Apply</Button>
+                          </div>
+                          <DiffEditor
+                            height="100%"
+                            theme="vs-dark"
+                            original={activeTab.originalContent || ""}
+                            modified={activeTab.content}
+                            options={{ fontSize: 13, minimap: { enabled: false } }}
+                          />
+                        </div>
+                      ) : (
+                        <Editor
+                          height="100%"
+                          theme="vs-dark"
+                          path={activeTab.path}
+                          value={activeTab.content}
+                          onChange={(val) => handleEditorChange(val || "")}
+                          options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, padding: { top: 16 } }}
+                        />
+                      )
+                    ) : (
+                      <div className="flex-1 flex flex-col items-center justify-center text-center text-xs text-amber-600/70 bg-amber-50/5">
+                        <Code2 className="w-10 h-10 text-amber-600/50 mb-3" />
+                        <h4 className="font-bold text-amber-950">Code Canvas</h4>
+                        <p className="max-w-xs mt-1">Double click a file in the sidebar explorer to open inside Monaco editor.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </ResizablePanel>
+            )}
+
+            <ResizableHandle withHandle />
+
+            {/* Bottom Resizable Panel: Live Terminal shell logs */}
+            {terminalOpen && (
+              <ResizablePanel defaultSize={40} minSize={20}>
+                <div className="h-full flex flex-col bg-slate-900 text-slate-100">
+                  <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800 bg-slate-950/65">
+                    <div className="flex items-center gap-1.5 overflow-x-auto">
+                      {sessions.map((s) => (
+                        <div
+                          key={s.id}
+                          onClick={() => setActiveSessionId(s.id)}
+                          className={cn(
+                            "flex items-center gap-2 px-3 py-1 cursor-pointer text-xs rounded-lg transition-colors border",
+                            activeSessionId === s.id ? "bg-slate-800 text-emerald-400 border-emerald-500/40" : "text-slate-400 border-transparent hover:bg-slate-800/40 hover:text-slate-200"
+                          )}
+                        >
+                          <TerminalIcon className={cn("w-3.5 h-3.5", s.running && "text-emerald-400 animate-pulse")} />
+                          <span className="font-mono text-[11px]">{s.name}</span>
+                          <button onClick={(e) => handleCloseSession(s.id, e)} className="p-0.5 hover:bg-slate-700 rounded text-slate-500 hover:text-slate-300"><X className="w-2.5 h-2.5" /></button>
+                        </div>
+                      ))}
+                      <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-400 hover:bg-slate-850 hover:text-white rounded" onClick={handleAddNewSession}><Plus className="w-3.5 h-3.5" /></Button>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {activeSession.running && (
+                        <Button size="sm" onClick={handleStopCommand} className="h-6 bg-red-650 hover:bg-red-700 text-white rounded text-[10px] px-2 shadow">
+                          <Square className="w-2.5 h-2.5 mr-1" /> Kill Process
+                        </Button>
+                      )}
+                      <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-400 hover:bg-slate-800 hover:text-white" onClick={() => setSessions((prev) => prev.map((s) => (s.id === activeSessionId ? { ...s, logs: [] } : s)))}>
+                        <RotateCcw className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="flex-1 bg-slate-900 relative">
+                    <XtermTerminal
+                      key={activeSessionId}
+                      id={activeSessionId}
+                      cwd={rootPath || "."}
+                    />
+                  </div>
+                </div>
+              </ResizablePanel>
+            )}
+          </ResizablePanelGroup>
+        </ResizablePanel>
+
+        <ResizableHandle withHandle />
+
+        {/* Right Panel: Workspace Agent Chat (AI SDK `useChat` enabled) */}
+        <ResizablePanel defaultSize={30} minSize={20} maxSize={40} className="min-w-[280px]">
+          <div
+            className="h-full flex flex-col border-l border-amber-200/60 bg-white relative"
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            <AnimatePresence>
+              {isDraggingFile && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-amber-500/80 backdrop-blur-sm text-white p-6 text-center select-none">
+                  <motion.div animate={{ scale: [1, 1.05, 1] }} transition={{ repeat: Infinity, duration: 1.5 }} className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center mb-4"><ImageIcon className="w-8 h-8 text-white" /></motion.div>
+                  <h3 className="text-base font-bold">Drop Image to Attach</h3>
+                  <p className="text-xs text-white/95 max-w-[220px] mt-1 leading-relaxed">Release to attach reference context for the Vision multimodal model.</p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <div className="p-3 border-b border-amber-200/60 bg-amber-50/20 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Bot className="w-4 h-4 text-amber-700 animate-pulse" />
+                <span className="text-sm font-bold text-amber-950">{activeAgent?.name || "AgentOS"}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {isLoading && (
+                  <Button size="sm" variant="ghost" onClick={() => stop()} className="h-5 px-1.5 text-[9px] text-red-600 hover:bg-red-50 hover:text-red-700 border border-red-200 rounded">
+                    <Square className="w-2.5 h-2.5 mr-1" /> Stop
+                  </Button>
+                )}
+                <Badge variant="outline" className="text-[9px] border-amber-300/40 bg-amber-100 text-amber-800 font-medium">
+                  {activeAgent?.model || "default"}
+                </Badge>
+              </div>
+            </div>
+
+            <ScrollArea className="flex-1 bg-white">
               <div className="pb-4">
+                {messages.length === 0 && (
+                  <div className="flex flex-col items-center justify-center text-center p-6 pt-12">
+                    <div className="w-10 h-10 rounded-2xl bg-amber-500 flex items-center justify-center mb-3 shadow"><Sparkle className="w-5 h-5 text-white animate-spin-slow" /></div>
+                    <h3 className="text-sm font-bold text-amber-950">AgentOS Assistant</h3>
+                    <p className="text-xs text-amber-600/70 max-w-[200px] mt-1 leading-relaxed">Ask your active role model to make directory edits or index search paths. Drag or paste reference images to trigger Vision auto-routing!</p>
+                  </div>
+                )}
+                
                 {messages.map((message) => (
-                  <MessageBubble key={message.id} message={message} />
+                  <div key={message.id} className={cn("px-4 py-3 border-b border-amber-200/20", message.role === "user" ? "bg-white" : "bg-amber-50/15")}>
+                    <div className="flex items-center justify-between mb-2 text-[11px] font-semibold text-amber-900">
+                      <span>{message.role === "user" ? "You" : "Agent"}</span>
+                    </div>
+                    
+                    {/* Render tool invocations dynamically */}
+                    {message.toolInvocations && message.toolInvocations.length > 0 && (
+                      <div className="mb-3 space-y-1.5">
+                        {message.toolInvocations.map((tool) => (
+                          <div key={tool.toolCallId} className="flex flex-col gap-1.5 p-2 bg-amber-100/50 border border-amber-200/70 rounded-xl text-[10px] font-mono text-amber-900">
+                            <div className="flex items-center gap-2">
+                              {tool.state === 'result' ? <CheckCircle className="w-3.5 h-3.5 text-emerald-500" /> : <Loader2 className="w-3.5 h-3.5 text-amber-500 animate-spin" />}
+                              <span className="font-bold">{tool.toolName}</span>
+                              <span className="opacity-70 truncate max-w-[150px]">{JSON.stringify(tool.args)}</span>
+                            </div>
+                            {tool.toolName === 'suggestEdit' && tool.state !== 'result' && (
+                              <Button size="sm" className="w-full bg-amber-600 hover:bg-amber-700 text-white mt-1 h-7" onClick={() => {
+                                const args = tool.args as any;
+                                setOpenTabs(prev => [...prev.filter(t => t.path !== args.path), {
+                                  path: args.path, name: args.path.split(/[/\\]/).pop() || 'Edit',
+                                  content: args.newContent, originalContent: args.originalContent,
+                                  dirty: true, isDiff: true, toolCallId: tool.toolCallId
+                                }]);
+                                setActiveTabPath(args.path);
+                                setEditorOpen(true);
+                              }}>Review Code Diff</Button>
+                            )}
+                            {tool.toolName !== 'suggestEdit' && tool.state !== 'result' && (
+                              <div className="flex gap-2 mt-1">
+                                <Button
+                                  size="sm"
+                                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] h-6 flex items-center justify-center gap-1"
+                                  disabled={approvingToolId === tool.toolCallId}
+                                  onClick={() => handleApproveTool(tool.toolCallId, tool.toolName, tool.args)}
+                                >
+                                  {approvingToolId === tool.toolCallId ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <Check className="w-3 h-3" />
+                                  )}
+                                  Approve
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="flex-1 border-amber-300 text-amber-900 text-[9px] h-6 hover:bg-amber-100 flex items-center justify-center gap-1"
+                                  disabled={approvingToolId === tool.toolCallId}
+                                  onClick={() => handleDenyTool(tool.toolCallId)}
+                                >
+                                  <X className="w-3 h-3" />
+                                  Deny
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    
+                    {(message as any).content && (
+                      <div className="text-xs text-amber-950 prose prose-sm leading-relaxed">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{(message as any).content}</ReactMarkdown>
+                      </div>
+                    )}
+                  </div>
                 ))}
                 <div ref={messagesEndRef} />
               </div>
             </ScrollArea>
 
-            <div className="border-t bg-card/50 p-4">
-              <div className="max-w-4xl mx-auto">
-                <div className="relative">
-                  <Textarea
-                    ref={textareaRef}
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Ask anything... (Cmd+K for commands)"
-                    className="min-h-[80px] pr-24 resize-none bg-background"
-                    disabled={isStreaming}
-                  />
-                  <div className="absolute bottom-2 right-2 flex items-center gap-1">
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <Paperclip className="w-4 h-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Attach file</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <Image className="w-4 h-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Upload image</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <Mic className="w-4 h-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Voice input</TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                    <Button
-                      size="sm"
-                      className="h-8 gap-1"
-                      onClick={handleSend}
-                      disabled={!input.trim() || isStreaming}
-                    >
-                      {isStreaming ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Send className="w-4 h-4" />
-                      )}
-                    </Button>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
-                  <div className="flex items-center gap-3">
-                    {!sidebarOpen && (
-                      <Button variant="ghost" size="sm" className="h-6 gap-1 text-xs" onClick={() => setSidebarOpen(true)}>
-                        <PanelLeftOpen className="w-3 h-3" /> Context
-                      </Button>
-                    )}
-                    <span>Claude Opus can make mistakes. Consider checking important information.</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span>0 tokens</span>
-                    <span>$0.00</span>
-                  </div>
+            {contextPaths.size > 0 && (
+              <div className="px-3 py-2 border-t border-amber-200/40 bg-amber-50/20 flex flex-wrap gap-1.5">
+                <span className="text-[10px] font-bold text-amber-800 flex items-center gap-1 uppercase tracking-wider w-full mb-0.5"><BookOpen className="w-3 h-3 text-amber-650" /> Prompt File Context:</span>
+                {Array.from(contextPaths).map((p) => {
+                  const name = p.split(/[/\\]/).pop() || "";
+                  return (
+                    <Badge key={p} className="bg-amber-600/10 text-amber-900 border-amber-300 hover:bg-amber-600/20 flex items-center gap-1 text-[10px] px-2 py-0.5 shadow-none rounded-xl">
+                      <FileText className="w-2.5 h-2.5 text-amber-600" />
+                      <span className="max-w-[120px] truncate">{name}</span>
+                      <button onClick={(e) => handleToggleContext(p, e)} className="hover:bg-amber-200/60 rounded p-0.5"><X className="w-2 h-2 text-amber-800" /></button>
+                    </Badge>
+                  );
+                })}
+              </div>
+            )}
+
+            {attachments.length > 0 && (
+              <div className="px-3 py-2 border-t border-amber-200/40 bg-amber-50/30 flex flex-col gap-1">
+                <span className="text-[9px] font-bold text-amber-800 uppercase tracking-wider flex items-center gap-1.5"><ImageIcon className="w-3 h-3 text-amber-600" /> Multimodal Vision Context ({attachments.length}):</span>
+                <div className="flex items-center gap-2 overflow-x-auto py-1">
+                  {attachments.map((a) => (
+                    <div key={a.id} className="relative w-14 h-14 rounded-xl border border-amber-200/80 overflow-hidden flex-shrink-0 shadow-sm bg-white group">
+                      <img src={a.base64} alt={a.name} className="w-full h-full object-cover" />
+                      <button onClick={() => handleRemoveAttachment(a.id)} className="absolute top-0.5 right-0.5 bg-slate-900/85 hover:bg-red-650 text-white rounded-full p-0.5 shadow transition-colors"><X className="w-2.5 h-2.5" /></button>
+                    </div>
+                  ))}
                 </div>
               </div>
-            </div>
-          </div>
-        </ResizablePanel>
+            )}
 
-        {/* Right Panel - Task Plan & Tools */}
-        {rightPanelOpen && (
-          <>
-            <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={30} minSize={20} maxSize={40} className="min-w-[250px]">
-              <div className="h-full flex flex-col border-l bg-card/50">
-                <div className="p-3 border-b flex items-center justify-between">
-                  <span className="text-sm font-medium">Task Plan</span>
-                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setRightPanelOpen(false)}>
-                    <X className="w-4 h-4" />
+            <input type="file" multiple accept="image/png, image/jpeg, image/jpg, image/webp, image/gif" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
+
+            <form onSubmit={handleSubmit} className="border-t border-amber-200/60 bg-amber-50/20 p-3 flex flex-col gap-2">
+              <div className="relative flex flex-col gap-1">
+                <Textarea
+                  value={input}
+                  onChange={handleInputChange}
+                  onPaste={handlePaste}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSubmit(e as any);
+                    }
+                  }}
+                  placeholder={`Send instructions to agent (type @ to reference paths, paste or drag screenshots)...`}
+                  className="min-h-[70px] pr-12 pl-2 resize-none bg-white border-amber-200 focus-visible:ring-amber-500 text-amber-950 text-xs rounded-xl"
+                  disabled={isLoading}
+                />
+                
+                <div className="absolute bottom-2 right-2 flex items-center gap-1.5">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-amber-700 hover:bg-amber-100 rounded-lg" onClick={() => fileInputRef.current?.click()} disabled={isLoading}><Paperclip className="w-3.5 h-3.5" /></Button>
+                      </TooltipTrigger>
+                      <TooltipContent className="bg-slate-900 text-white border-none text-[9px]">Attach Screenshot</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+
+                  <Button type="submit" size="icon" className="h-7 w-7 bg-amber-600 hover:bg-amber-700 text-white rounded-lg shadow-sm" disabled={(!input?.trim?.() && attachments.length === 0) || isLoading}>
+                    <Send className="w-3.5 h-3.5" />
                   </Button>
                 </div>
-                <ScrollArea className="flex-1">
-                  <div className="p-3 space-y-4">
-                    <div className="p-3 rounded-lg bg-primary/5 border border-primary/20">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Loader2 className="w-4 h-4 text-primary animate-spin" />
-                        <span className="text-sm font-medium">Generating Landing Page</span>
-                      </div>
-                      <div className="space-y-2">
-                        {[
-                          { step: "Analyze requirements", status: "complete" },
-                          { step: "Generate design tokens", status: "complete" },
-                          { step: "Create component structure", status: "running" },
-                          { step: "Implement animations", status: "pending" },
-                          { step: "Add responsive styles", status: "pending" },
-                        ].map((step, i) => (
-                          <div key={i} className="flex items-center gap-2 text-xs">
-                            <div
-                              className={cn(
-                                "w-4 h-4 rounded-full flex items-center justify-center",
-                                step.status === "complete" && "bg-green-500/20 text-green-500",
-                                step.status === "running" && "bg-primary/20 text-primary",
-                                step.status === "pending" && "bg-muted text-muted-foreground"
-                              )}
-                            >
-                              {step.status === "complete" ? (
-                                <Check className="w-3 h-3" />
-                              ) : step.status === "running" ? (
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                              ) : (
-                                <span className="text-[10px]">{i + 1}</span>
-                              )}
-                            </div>
-                            <span className={cn(step.status === "pending" && "text-muted-foreground")}>
-                              {step.step}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Tool Activity</p>
-                      <div className="space-y-2">
-                        {workspaceToolActivity.map((activity) => (
-                          <div key={activity.tool} className="flex items-center justify-between p-2 rounded-md bg-muted/50 text-xs">
-                            <div className="flex items-center gap-2">
-                              <Wrench className="w-3 h-3 text-muted-foreground" />
-                              <span>{activity.tool}</span>
-                            </div>
-                            <div className="flex items-center gap-2 text-muted-foreground">
-                              <span>{activity.source}</span>
-                              <Clock className="w-3 h-3" />
-                              <span>{activity.duration}</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Model Configuration</p>
-                      <div className="space-y-2">
-                        {topBarModelRoles.map((model, index) => (
-                          <div
-                            key={model.name}
-                            className={cn(
-                              "flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors",
-                              index === 0 ? "bg-primary/10 border border-primary/20" : "hover:bg-muted"
-                            )}
-                          >
-                            <Cpu className="w-4 h-4 text-muted-foreground" />
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium truncate">{model.name}</p>
-                              <p className="text-xs text-muted-foreground">{model.role}</p>
-                            </div>
-                            {index === 0 && <Badge className="text-[10px]">Active</Badge>}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </ScrollArea>
               </div>
-            </ResizablePanel>
-          </>
-        )}
+            </form>
+          </div>
+        </ResizablePanel>
       </ResizablePanelGroup>
+
+      {/* Quick Search Dialog */}
+      <Dialog open={searchOpen} onOpenChange={setSearchOpen}>
+        <DialogContent className="max-w-2xl bg-white border border-amber-200 rounded-3xl shadow-2xl p-6">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold text-amber-950 flex items-center gap-2"><Search className="w-5 h-5 text-amber-600" /> Quick Search Codebase</DialogTitle>
+            <DialogDescription className="text-xs text-amber-600/70">Instantly search text matches or find files inside the workspace (Ctrl + P).</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="relative">
+              <Input autoFocus className="pl-9 border-amber-200 text-amber-950 bg-amber-50/10 rounded-xl" placeholder="Type your search query (e.g. function handleOpenFile)..." value={searchQuery} onChange={(e) => handleSearchChange(e.target.value)} />
+              <Search className="absolute left-3 top-3 w-4 h-4 text-amber-600/70" />
+            </div>
+            <ScrollArea className="max-h-[300px] border border-amber-100 rounded-2xl overflow-hidden bg-amber-50/5 p-2">
+              {searching ? (
+                <div className="flex items-center justify-center p-8 text-xs text-amber-750"><Loader2 className="w-4 h-4 animate-spin text-amber-500 mr-2" /> Scanning codebase...</div>
+              ) : searchResults.length === 0 ? (
+                <div className="p-8 text-center text-xs text-amber-600/60">{searchQuery ? "No matching files or snippets found." : "Type a query above to search files and code content."}</div>
+              ) : (
+                <div className="space-y-3">
+                  {searchResults.map((res) => (
+                    <div key={res.path} onClick={() => handleSelectSearchResult(res.path)} className="p-3 bg-white border border-amber-100 rounded-xl hover:border-amber-400 hover:shadow-sm cursor-pointer transition-all duration-150 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 font-bold text-xs text-amber-950"><FileText className="w-4 h-4 text-amber-600" /><span>{res.name}</span></div>
+                        <span className="text-[10px] font-mono text-amber-600/70">{res.relPath}</span>
+                      </div>
+                      <div className="pl-5 space-y-1">
+                        {res.matches.map((m, idx) => (
+                          <div key={idx} className="flex gap-2 text-[10px] font-mono text-amber-800/80 leading-relaxed bg-amber-50/45 p-1 rounded">
+                            <span className="text-amber-500 font-bold select-none w-6 text-right">L{m.line}:</span>
+                            <span className="truncate">{m.text}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

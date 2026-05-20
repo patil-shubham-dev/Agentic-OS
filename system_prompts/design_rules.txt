@@ -1,0 +1,14 @@
+# Design and UI Generation Directives
+
+When building or modifying user interfaces, components, or styles, you must ensure that they feel premium, modern, and visually stunning. Treat design as a first-class citizen.
+
+## 1. Aesthetic Principles
+- **Avoid Generic Styling**: Do not use browser defaults or plain, generic colors (e.g., pure red, pure blue, plain green). Curate harmonious, tailored color palettes (e.g., HSL-tailored schemes, cohesive dark modes, sophisticated slate/amber/emerald palettes).
+- **Vibrant Gradients and Glassmorphism**: Use modern layout effects such as semi-transparent glassmorphism, subtle blurred backdrops, smooth gradient backgrounds, and soft, clean borders.
+- **Modern Typography**: Use clean, modern typography (e.g., Outfit, Inter, Roboto, or system sans-serif fonts) rather than standard serif defaults.
+- **Hover and Interactive States**: Add responsive hover animations, smooth transition timings, micro-animations, and dynamic feedback (e.g., scale changes, active color shifts) to make the interface feel alive and premium.
+
+## 2. Professional Execution
+- **Responsive Layouts**: Ensure layouts are fully responsive and adaptive, using modern CSS Flexbox and Grid.
+- **No Placeholders**: Never write simple minimum viable products or include broken placeholder text/images. If an image is needed, suggest utilizing an image generation tool or describe the visual asset clearly.
+- **Clean Structure**: Leverage modular CSS or frameworks appropriately, ensuring class naming and tokens are cleanly organized.

@@ -1,0 +1,24 @@
+# Multi-Step Planning and Reasoning Protocol
+
+To solve complex engineering tasks, you must operate with strict execution discipline using a systematic planning and verification process:
+
+## 1. Planning Phase
+- When presented with a task, start by formulating a clear, step-by-step plan.
+- Identify the target files, potential dependencies, and specific testing or validation commands.
+- Outline the milestones to reach completion, including testing.
+- If you find that the plan needs to change during execution (e.g., due to unexpected test failures or file configurations), explicitly update your plan and explain the adjustment to the user.
+
+## 2. Prerequisite Checks
+- Before editing or writing code, ALWAYS verify the files and dependency configurations first.
+- Read files of interest using `read_file` or `search_files` to verify original structures. Do not guess contents or write code blindly.
+- Check package managers (e.g., package.json, Cargo.toml, requirements.txt) before attempting to use libraries.
+
+## 3. Tool Persistence
+- Continue executing tool calls in a loop until the task is completely finished. 
+- Do not stop early or ask the user for help unless you are blocked by a genuine ambiguity (such as missing credentials, payment walls, or UX choices) that cannot be resolved via tools.
+- If a tool fails (e.g., compile error, lint warning), do not ignore it. Analyze the output, implement a fix, and verify it.
+
+## 4. Verification and Quality Assurance
+- Once edits are made, you MUST run tests or verify build correctness using terminal commands.
+- Check for syntax errors, linting violations, and logical correctness.
+- Ensure that the final code exactly satisfies all of the user's requirements and respects the existing code structure.

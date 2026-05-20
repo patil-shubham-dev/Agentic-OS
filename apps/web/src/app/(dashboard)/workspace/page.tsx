@@ -76,6 +76,7 @@ import { getJson, sendJson } from "@/lib/client-api";
 import { toast } from "sonner";
 import Editor, { DiffEditor } from "@monaco-editor/react";
 import XtermTerminal from "@/components/workspace/XtermTerminal";
+import { DefaultChatTransport } from "ai";
 // Types
 interface ImageAttachment {
   id: string;
@@ -146,22 +147,23 @@ export default function WorkspacePage() {
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Vercel AI SDK useChat
-  const { messages, input, handleInputChange, handleSubmit, isLoading, stop, setMessages, addToolResult } = useChat({
-    api: "/api/chat",
-    maxSteps: 10,
-    body: {
-      attachments: attachments.map(a => ({ base64: a.base64, name: a.name, type: a.type })),
-      agentId: selectedAgentId,
-      contextPaths: Array.from(contextPaths)
-    },
+  // Chat input state (managed locally with new AI SDK v6 API)
+  const [chatInput, setChatInput] = useState("");
+
+  // Vercel AI SDK useChat (v6 API - uses sendMessage instead of handleSubmit)
+  const { messages, sendMessage, status, stop, setMessages, addToolResult } = useChat({
+    transport: new DefaultChatTransport({
+      api: "/api/chat",
+    }),
     onFinish: () => {
       setAttachments([]);
     },
     onError: (err) => {
-      toast.error(err.message || "Chat execution failed");
-    }
+      toast.error("Chat execution failed");
+    },
+    sendAutomaticallyWhen: () => false,
   });
+  const isLoading = status === 'submitted' || status === 'streaming';
 
   // Filesystem States
   const [rootPath, setRootPath] = useState("");
@@ -172,6 +174,11 @@ export default function WorkspacePage() {
   // Monaco Editor Canvas
   const [openTabs, setOpenTabs] = useState<OpenTab[]>([]);
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
+
+  // Split Monaco Editor Pane States
+  const [splitActive, setSplitActive] = useState(false);
+  const [activeTabPathRight, setActiveTabPathRight] = useState<string | null>(null);
+  const [focusedPane, setFocusedPane] = useState<"left" | "right">("left");
 
   // Shell Terminal Sessions state
   const [sessions, setSessions] = useState<TerminalSession[]>([
@@ -209,31 +216,39 @@ export default function WorkspacePage() {
         toast.success(`Approved tool ${toolName} executed successfully.`);
         addToolResult({
           toolCallId,
-          result: typeof data.data === "string" ? data.data : JSON.stringify(data.data),
+          state: 'output-available' as const,
+          output: typeof data.data === "string" ? data.data : JSON.stringify(data.data),
+          tool: toolName,
         });
       } else {
         toast.error(`Tool execution failed: ${data.error}`);
         addToolResult({
           toolCallId,
-          result: `Failed to execute: ${data.error}`,
+          state: 'output-error' as const,
+          errorText: `Failed to execute: ${data.error}`,
+          tool: toolName,
         });
       }
     } catch (err: any) {
       toast.error(`Error approving tool: ${err.message}`);
       addToolResult({
         toolCallId,
-        result: `Error executing approved tool: ${err.message}`,
+        state: 'output-error' as const,
+        errorText: `Error executing approved tool: ${err.message}`,
+        tool: toolName,
       });
     } finally {
       setApprovingToolId(null);
     }
   };
 
-  const handleDenyTool = (toolCallId: string) => {
+  const handleDenyTool = (toolCallId: string, toolName: string = "unknown") => {
     toast.warning("Tool execution denied by user.");
     addToolResult({
       toolCallId,
-      result: "User denied execution of this tool.",
+      state: 'output-available' as const,
+      output: "User denied execution of this tool.",
+      tool: toolName,
     });
   };
 
@@ -271,7 +286,7 @@ export default function WorkspacePage() {
         try {
           await sendJson("/api/files/write", "POST", { path: tab.path, content: tab.content });
           setOpenTabs((prev) => prev.map((t) => (t.path === tab.path ? { ...t, dirty: false } : t)));
-        } catch {}
+        } catch { /* ignore auto-save errors */ }
       });
     }, 1500);
 
@@ -324,8 +339,9 @@ export default function WorkspacePage() {
         if (file) {
           const reader = new FileReader();
           reader.onload = (event) => {
-            if (event.target?.result) {
-              const base64 = event.target.result as string;
+            const fileReader = event.target as FileReader;
+            if (fileReader?.result) {
+              const base64 = fileReader.result as string;
               if (file.size > 5 * 1024 * 1024) {
                 toast.warning("Image exceeds 5MB. Large attachments may be slow to process.");
               }
@@ -353,8 +369,9 @@ export default function WorkspacePage() {
       if (file.type.startsWith("image/")) {
         const reader = new FileReader();
         reader.onload = (event) => {
-          if (event.target?.result) {
-            const base64 = event.target.result as string;
+          const fileReader = event.currentTarget as FileReader;
+          if (fileReader?.result) {
+            const base64 = fileReader.result as string;
             setAttachments((prev) => [
               ...prev,
               { id: `img_${Date.now()}_${idx}`, name: file.name, base64, type: file.type },
@@ -374,10 +391,11 @@ export default function WorkspacePage() {
       if (file.type.startsWith("image/")) {
         const reader = new FileReader();
         reader.onload = (event) => {
-          if (event.target?.result) {
+          const fileReader = event.currentTarget as FileReader;
+          if (fileReader?.result) {
             setAttachments((prev) => [
               ...prev,
-              { id: `img_${Date.now()}_${idx}`, name: file.name, base64: event.target.result as string, type: file.type },
+              { id: `img_${Date.now()}_${idx}`, name: file.name, base64: fileReader.result as string, type: file.type },
             ]);
           }
         };
@@ -425,14 +443,22 @@ export default function WorkspacePage() {
   const handleOpenFile = async (file: FileNode) => {
     const alreadyOpen = openTabs.find((t) => t.path === file.path);
     if (alreadyOpen) {
-      setActiveTabPath(file.path);
+      if (focusedPane === "left" || !splitActive) {
+        setActiveTabPath(file.path);
+      } else {
+        setActiveTabPathRight(file.path);
+      }
       setEditorOpen(true);
       return;
     }
     try {
       const res = await getJson<{ content: string }>(`/api/files/read?path=${encodeURIComponent(file.path)}`);
       setOpenTabs((prev) => [...prev, { path: file.path, name: file.name, content: res.content, dirty: false }]);
-      setActiveTabPath(file.path);
+      if (focusedPane === "left" || !splitActive) {
+        setActiveTabPath(file.path);
+      } else {
+        setActiveTabPathRight(file.path);
+      }
       setEditorOpen(true);
     } catch {
       toast.error(`Failed to read file: ${file.name}`);
@@ -450,19 +476,77 @@ export default function WorkspacePage() {
   };
 
   const handleSaveFile = async () => {
-    if (!activeTab) return;
+    const savePath = (splitActive && focusedPane === "right") ? activeTabPathRight : activeTabPath;
+    if (!savePath) return;
+    const tabToSave = openTabs.find((t) => t.path === savePath);
+    if (!tabToSave) return;
     try {
-      await sendJson("/api/files/write", "POST", { path: activeTab.path, content: activeTab.content });
-      setOpenTabs((prev) => prev.map((t) => (t.path === activeTab.path ? { ...t, dirty: false } : t)));
-      toast.success(`Saved changes to ${activeTab.name}`);
+      await sendJson("/api/files/write", "POST", { path: tabToSave.path, content: tabToSave.content });
+      setOpenTabs((prev) => prev.map((t) => (t.path === savePath ? { ...t, dirty: false } : t)));
+      toast.success(`Saved changes to ${tabToSave.name}`);
     } catch {
-      toast.error(`Failed to save file: ${activeTab.name}`);
+      toast.error(`Failed to save file: ${tabToSave.name}`);
     }
   };
 
   const handleEditorChange = (val: string) => {
     if (!activeTabPath) return;
     setOpenTabs((prev) => prev.map((t) => (t.path === activeTabPath ? { ...t, content: val, dirty: true } : t)));
+  };
+
+  const handleEditorChangeRight = (val: string) => {
+    if (!activeTabPathRight) return;
+    setOpenTabs((prev) => prev.map((t) => (t.path === activeTabPathRight ? { ...t, content: val, dirty: true } : t)));
+  };
+
+  // Drag and Drop File/Folder Moving Handlers
+  const handleFileTreeDragStart = (e: React.DragEvent, path: string) => {
+    e.dataTransfer.setData("text/plain", path);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleFileTreeDragOver = (e: React.DragEvent, item: FileNode) => {
+    if (item.isDir) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+    }
+  };
+
+  const handleFileTreeDrop = async (e: React.DragEvent, targetFolder: string) => {
+    e.preventDefault();
+    const sourcePath = e.dataTransfer.getData("text/plain");
+    if (!sourcePath || sourcePath === targetFolder) return;
+
+    const name = sourcePath.split(/[/\\]/).pop();
+    if (!name) return;
+
+    const destinationPath = `${targetFolder}/${name}`;
+    if (sourcePath === destinationPath) return;
+
+    try {
+      await sendJson("/api/files/rename", "POST", { oldPath: sourcePath, newPath: destinationPath });
+      toast.success(`Moved ${name} successfully.`);
+      
+      const sourceParent = sourcePath.substring(0, sourcePath.lastIndexOf("/"));
+      if (sourceParent) {
+        loadFolderTree(sourceParent);
+      } else {
+        loadFolderTree(rootPath);
+      }
+      loadFolderTree(targetFolder);
+
+      setOpenTabs((prev) =>
+        prev.map((t) => (t.path === sourcePath ? { ...t, path: destinationPath } : t))
+      );
+      if (activeTabPath === sourcePath) {
+        setActiveTabPath(destinationPath);
+      }
+      if (activeTabPathRight === sourcePath) {
+        setActiveTabPathRight(destinationPath);
+      }
+    } catch {
+      toast.error("Failed to move file/folder.");
+    }
   };
 
   const handleCreateFile = async (parentFolder: string) => {
@@ -632,7 +716,14 @@ export default function WorkspacePage() {
       return (
         <ContextMenu key={item.path}>
           <ContextMenuTrigger>
-            <div style={{ paddingLeft: `${depth * 10}px` }} className="select-none">
+            <div
+              style={{ paddingLeft: `${depth * 10}px` }}
+              className="select-none"
+              draggable={true}
+              onDragStart={(e) => handleFileTreeDragStart(e, item.path)}
+              onDragOver={(e) => handleFileTreeDragOver(e, item)}
+              onDrop={(e) => handleFileTreeDrop(e, item.isDir ? item.path : dirPath)}
+            >
               <div
                 className={cn(
                   "flex items-center justify-between group px-2 py-1 rounded-md hover:bg-amber-100/50 cursor-pointer text-xs transition-colors",
@@ -769,11 +860,33 @@ export default function WorkspacePage() {
                         </div>
                       ))}
                     </div>
-                    {activeTab && (
-                      <Button size="sm" onClick={handleSaveFile} className="bg-amber-600 hover:bg-amber-700 text-white rounded-xl h-8">
-                        <Save className="w-3.5 h-3.5 mr-1.5" /> Save
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          if (!splitActive) {
+                            if (!activeTabPathRight) setActiveTabPathRight(activeTabPath);
+                            setFocusedPane("right");
+                          } else {
+                            setFocusedPane("left");
+                          }
+                          setSplitActive(!splitActive);
+                        }}
+                        className={cn(
+                          "h-8 text-xs border-amber-200 rounded-xl px-3 flex items-center gap-1.5",
+                          splitActive ? "bg-amber-100 text-amber-900 border-amber-300" : "text-amber-700 hover:bg-amber-50"
+                        )}
+                      >
+                        <Layers className="w-3.5 h-3.5" />
+                        {splitActive ? "Single View" : "Split View"}
                       </Button>
-                    )}
+                      {activeTab && (
+                        <Button size="sm" onClick={handleSaveFile} className="bg-amber-600 hover:bg-amber-700 text-white rounded-xl h-8">
+                          <Save className="w-3.5 h-3.5 mr-1.5" /> Save
+                        </Button>
+                      )}
+                    </div>
                   </div>
 
                   {/* Breadcrumb Navigation */}
@@ -789,50 +902,100 @@ export default function WorkspacePage() {
                   )}
 
                   <div className="flex-1 flex overflow-hidden">
-                    {activeTab ? (
-                      activeTab.isDiff ? (
-                        <div className="flex-1 flex flex-col relative group">
-                          <div className="absolute top-2 right-6 z-10 flex gap-2">
-                            <Button size="sm" className="bg-red-600 hover:bg-red-700 text-white h-7 shadow" onClick={() => {
-                              if (activeTab.toolCallId) addToolResult({ toolCallId: activeTab.toolCallId, result: "User rejected the edit." });
-                              setOpenTabs(prev => prev.filter(t => t.path !== activeTab.path));
-                            }}>Reject</Button>
-                            <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white h-7 shadow" onClick={async () => {
-                              try {
-                                await sendJson("/api/files/write", "POST", { path: activeTab.path, content: activeTab.content });
-                                toast.success("Edit applied successfully");
-                                if (activeTab.toolCallId) addToolResult({ toolCallId: activeTab.toolCallId, result: "User approved the edit. It has been applied." });
-                                setOpenTabs(prev => prev.map(t => t.path === activeTab.path ? { ...t, isDiff: false, dirty: false } : t));
-                              } catch (e) {
-                                toast.error("Failed to apply edit");
-                                if (activeTab.toolCallId) addToolResult({ toolCallId: activeTab.toolCallId, result: "Failed to apply edit." });
-                              }
-                            }}>Accept and Apply</Button>
+                    {!splitActive ? (
+                      activeTab ? (
+                        activeTab.isDiff ? (
+                          <div className="flex-1 flex flex-col relative group">
+                            <div className="absolute top-2 right-6 z-10 flex gap-2">
+                              <Button size="sm" className="bg-red-600 hover:bg-red-700 text-white h-7 shadow" onClick={() => {
+                                if (activeTab.toolCallId) addToolResult({ toolCallId: activeTab.toolCallId, state: 'output-available' as const, output: 'User rejected the edit.', tool: 'reject_edit' });
+                                setOpenTabs(prev => prev.filter(t => t.path !== activeTab.path));
+                              }}>Reject</Button>
+                              <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white h-7 shadow" onClick={async () => {
+                                try {
+                                  await sendJson("/api/files/write", "POST", { path: activeTab.path, content: activeTab.content });
+                                  toast.success("Edit applied successfully");
+                                  if (activeTab.toolCallId) addToolResult({ toolCallId: activeTab.toolCallId, state: 'output-available' as const, output: 'User approved the edit. It has been applied.', tool: 'approve_edit' });
+                                  setOpenTabs(prev => prev.map(t => t.path === activeTab.path ? { ...t, isDiff: false, dirty: false } : t));
+                                } catch (e) {
+                                  toast.error("Failed to apply edit");
+                                  if (activeTab.toolCallId) addToolResult({ toolCallId: activeTab.toolCallId, state: 'output-error' as const, errorText: 'Failed to apply edit.', tool: 'apply_edit' });
+                                }
+                              }}>Accept and Apply</Button>
+                            </div>
+                            <DiffEditor
+                              height="100%"
+                              theme="vs-dark"
+                              original={activeTab.originalContent || ""}
+                              modified={activeTab.content}
+                              options={{ fontSize: 13, minimap: { enabled: false } }}
+                            />
                           </div>
-                          <DiffEditor
-                            height="100%"
-                            theme="vs-dark"
-                            original={activeTab.originalContent || ""}
-                            modified={activeTab.content}
-                            options={{ fontSize: 13, minimap: { enabled: false } }}
-                          />
-                        </div>
+                        ) : (
+                          <div className="flex-1 h-full" onClick={() => setFocusedPane("left")}>
+                            <Editor
+                              height="100%"
+                              theme="vs-dark"
+                              path={activeTab.path}
+                              value={activeTab.content}
+                              onChange={(val) => handleEditorChange(val || "")}
+                              options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, padding: { top: 16 } }}
+                            />
+                          </div>
+                        )
                       ) : (
-                        <Editor
-                          height="100%"
-                          theme="vs-dark"
-                          path={activeTab.path}
-                          value={activeTab.content}
-                          onChange={(val) => handleEditorChange(val || "")}
-                          options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, padding: { top: 16 } }}
-                        />
+                        <div className="flex-1 flex flex-col items-center justify-center text-center text-xs text-amber-600/70 bg-amber-50/5">
+                          <Code2 className="w-10 h-10 text-amber-600/50 mb-3" />
+                          <h4 className="font-bold text-amber-950">Code Canvas</h4>
+                          <p className="max-w-xs mt-1">Double click a file in the sidebar explorer to open inside Monaco editor.</p>
+                        </div>
                       )
                     ) : (
-                      <div className="flex-1 flex flex-col items-center justify-center text-center text-xs text-amber-600/70 bg-amber-50/5">
-                        <Code2 className="w-10 h-10 text-amber-600/50 mb-3" />
-                        <h4 className="font-bold text-amber-950">Code Canvas</h4>
-                        <p className="max-w-xs mt-1">Double click a file in the sidebar explorer to open inside Monaco editor.</p>
-                      </div>
+                      <ResizablePanelGroup direction="horizontal">
+                        <ResizablePanel defaultSize={50} minSize={20}>
+                          <div className={cn("h-full flex flex-col border-r border-amber-100", focusedPane === "left" && "ring-1 ring-amber-500/40")} onClick={() => setFocusedPane("left")}>
+                            <div className="flex items-center justify-between px-3 py-1 bg-amber-50/15 border-b border-amber-250/20 text-[10px] font-bold text-amber-900 select-none">
+                              <span>L-PANE {activeTabPath ? `(${activeTabPath.split(/[/\\]/).pop()})` : "(Empty)"}</span>
+                              {focusedPane === "left" && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />}
+                            </div>
+                            {activeTab ? (
+                              <Editor
+                                height="100%"
+                                theme="vs-dark"
+                                path={`left-${activeTab.path}`}
+                                value={activeTab.content}
+                                onChange={(val) => handleEditorChange(val || "")}
+                                options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, padding: { top: 12 } }}
+                              />
+                            ) : (
+                              <div className="flex-1 flex items-center justify-center text-center text-[11px] text-amber-600/60 bg-amber-50/5">Left panel empty. Click a file.</div>
+                            )}
+                          </div>
+                        </ResizablePanel>
+                        
+                        <ResizableHandle withHandle />
+
+                        <ResizablePanel defaultSize={50} minSize={20}>
+                          <div className={cn("h-full flex flex-col", focusedPane === "right" && "ring-1 ring-amber-500/40")} onClick={() => setFocusedPane("right")}>
+                            <div className="flex items-center justify-between px-3 py-1 bg-amber-50/15 border-b border-amber-250/20 text-[10px] font-bold text-amber-900 select-none">
+                              <span>R-PANE {activeTabPathRight ? `(${activeTabPathRight.split(/[/\\]/).pop()})` : "(Empty)"}</span>
+                              {focusedPane === "right" && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />}
+                            </div>
+                            {activeTabPathRight && openTabs.find(t => t.path === activeTabPathRight) ? (
+                              <Editor
+                                height="100%"
+                                theme="vs-dark"
+                                path={`right-${activeTabPathRight}`}
+                                value={openTabs.find(t => t.path === activeTabPathRight)?.content || ""}
+                                onChange={(val) => handleEditorChangeRight(val || "")}
+                                options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, padding: { top: 12 } }}
+                              />
+                            ) : (
+                              <div className="flex-1 flex items-center justify-center text-center text-[11px] text-amber-600/60 bg-amber-50/5">Right panel empty. Focus and click a file to open.</div>
+                            )}
+                          </div>
+                        </ResizablePanel>
+                      </ResizablePanelGroup>
                     )}
                   </div>
                 </div>
@@ -942,37 +1105,42 @@ export default function WorkspacePage() {
                       <span>{message.role === "user" ? "You" : "Agent"}</span>
                     </div>
                     
-                    {/* Render tool invocations dynamically */}
-                    {message.toolInvocations && message.toolInvocations.length > 0 && (
+                    {/* Render tool invocations dynamically from message parts */}
+                    {message.parts && message.parts.filter((p: any) => p.type === 'tool-invocation' || p.type === 'dynamic-tool').length > 0 && (
                       <div className="mb-3 space-y-1.5">
-                        {message.toolInvocations.map((tool) => (
-                          <div key={tool.toolCallId} className="flex flex-col gap-1.5 p-2 bg-amber-100/50 border border-amber-200/70 rounded-xl text-[10px] font-mono text-amber-900">
+                        {message.parts.filter((p: any) => p.type === 'tool-invocation' || p.type === 'dynamic-tool').map((part: any) => {
+                          const toolCallId = part.toolCallId;
+                          const toolName = part.toolName || (part.type as string).replace('tool-', '');
+                          const state = part.state;
+                          const hasResult = state === 'result' || state === 'output-available' || state === 'output-error';
+                          return (
+                          <div key={toolCallId} className="flex flex-col gap-1.5 p-2 bg-amber-100/50 border border-amber-200/70 rounded-xl text-[10px] font-mono text-amber-900">
                             <div className="flex items-center gap-2">
-                              {tool.state === 'result' ? <CheckCircle className="w-3.5 h-3.5 text-emerald-500" /> : <Loader2 className="w-3.5 h-3.5 text-amber-500 animate-spin" />}
-                              <span className="font-bold">{tool.toolName}</span>
-                              <span className="opacity-70 truncate max-w-[150px]">{JSON.stringify(tool.args)}</span>
+                              {hasResult ? <CheckCircle className="w-3.5 h-3.5 text-emerald-500" /> : <Loader2 className="w-3.5 h-3.5 text-amber-500 animate-spin" />}
+                              <span className="font-bold">{toolName}</span>
+                              <span className="opacity-70 truncate max-w-[150px]">{JSON.stringify(part.input || part.args)}</span>
                             </div>
-                            {tool.toolName === 'suggestEdit' && tool.state !== 'result' && (
+                            {toolName === 'suggestEdit' && !hasResult && (
                               <Button size="sm" className="w-full bg-amber-600 hover:bg-amber-700 text-white mt-1 h-7" onClick={() => {
-                                const args = tool.args as any;
+                                const args = (part.input || part.args) as any;
                                 setOpenTabs(prev => [...prev.filter(t => t.path !== args.path), {
                                   path: args.path, name: args.path.split(/[/\\]/).pop() || 'Edit',
                                   content: args.newContent, originalContent: args.originalContent,
-                                  dirty: true, isDiff: true, toolCallId: tool.toolCallId
+                                  dirty: true, isDiff: true, toolCallId
                                 }]);
                                 setActiveTabPath(args.path);
                                 setEditorOpen(true);
                               }}>Review Code Diff</Button>
                             )}
-                            {tool.toolName !== 'suggestEdit' && tool.state !== 'result' && (
+                            {toolName !== 'suggestEdit' && !hasResult && (
                               <div className="flex gap-2 mt-1">
                                 <Button
                                   size="sm"
                                   className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] h-6 flex items-center justify-center gap-1"
-                                  disabled={approvingToolId === tool.toolCallId}
-                                  onClick={() => handleApproveTool(tool.toolCallId, tool.toolName, tool.args)}
+                                  disabled={approvingToolId === toolCallId}
+                                  onClick={() => handleApproveTool(toolCallId, toolName, part.input || part.args)}
                                 >
-                                  {approvingToolId === tool.toolCallId ? (
+                                  {approvingToolId === toolCallId ? (
                                     <Loader2 className="w-3 h-3 animate-spin" />
                                   ) : (
                                     <Check className="w-3 h-3" />
@@ -983,8 +1151,8 @@ export default function WorkspacePage() {
                                   size="sm"
                                   variant="outline"
                                   className="flex-1 border-amber-300 text-amber-900 text-[9px] h-6 hover:bg-amber-100 flex items-center justify-center gap-1"
-                                  disabled={approvingToolId === tool.toolCallId}
-                                  onClick={() => handleDenyTool(tool.toolCallId)}
+                                  disabled={approvingToolId === toolCallId}
+                                  onClick={() => handleDenyTool(toolCallId)}
                                 >
                                   <X className="w-3 h-3" />
                                   Deny
@@ -992,7 +1160,8 @@ export default function WorkspacePage() {
                               </div>
                             )}
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                     
@@ -1037,18 +1206,25 @@ export default function WorkspacePage() {
               </div>
             )}
 
-            <input type="file" multiple accept="image/png, image/jpeg, image/jpg, image/webp, image/gif" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
-
-            <form onSubmit={handleSubmit} className="border-t border-amber-200/60 bg-amber-50/20 p-3 flex flex-col gap-2">
+            <input type="file" multiple accept="image/png, image/jpeg, image/jpg, image/webp, image/gif" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />              <form onSubmit={(e) => {
+                e.preventDefault();
+                if (!chatInput.trim() && attachments.length === 0) return;
+                const text = chatInput;
+                setChatInput("");
+                sendMessage({ text });
+              }} className="border-t border-amber-200/60 bg-amber-50/20 p-3 flex flex-col gap-2">
               <div className="relative flex flex-col gap-1">
                 <Textarea
-                  value={input}
-                  onChange={handleInputChange}
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
                   onPaste={handlePaste}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
-                      handleSubmit(e as any);
+                      if (!chatInput.trim() && attachments.length === 0) return;
+                      const text = chatInput;
+                      setChatInput("");
+                      sendMessage({ text });
                     }
                   }}
                   placeholder={`Send instructions to agent (type @ to reference paths, paste or drag screenshots)...`}
@@ -1066,7 +1242,7 @@ export default function WorkspacePage() {
                     </Tooltip>
                   </TooltipProvider>
 
-                  <Button type="submit" size="icon" className="h-7 w-7 bg-amber-600 hover:bg-amber-700 text-white rounded-lg shadow-sm" disabled={(!input?.trim?.() && attachments.length === 0) || isLoading}>
+                  <Button type="submit" size="icon" className="h-7 w-7 bg-amber-600 hover:bg-amber-700 text-white rounded-lg shadow-sm" disabled={(!chatInput.trim() && attachments.length === 0) || isLoading}>
                     <Send className="w-3.5 h-3.5" />
                   </Button>
                 </div>

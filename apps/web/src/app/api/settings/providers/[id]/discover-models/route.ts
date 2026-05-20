@@ -78,7 +78,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     // Fallback to preset models if discovery was empty
     if (discoveredModels.length === 0) {
-      discoveredModels = PRESET_MODELS[id] || (config.default_model ? [config.default_model] : ["custom-model"]);
+      const customModelsStr = config.metadata?.customModels as string | undefined;
+      if (customModelsStr) {
+        discoveredModels = customModelsStr
+          .split(",")
+          .map((m) => m.trim())
+          .filter(Boolean);
+      } else {
+        discoveredModels = PRESET_MODELS[id] || (config.default_model ? [config.default_model] : ["custom-model"]);
+      }
     }
 
     // Persist discovered models in the provider_models cache
@@ -114,3 +122,21 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     );
   }
 }
+
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await params;
+    const { selectRows } = await import("@/lib/server/supabase");
+    const rows = await selectRows<{ model: string }>("provider_models", {
+      filters: { provider: id },
+    });
+    return NextResponse.json({ success: true, models: rows.map((r) => r.model) });
+  } catch (error) {
+    return NextResponse.json({
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to fetch models",
+      models: [],
+    });
+  }
+}
+

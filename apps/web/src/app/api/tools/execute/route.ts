@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { toolRegistry } from "../../../../../tool_execution_loop";
+import { toolRegistry } from "../../../../../../../tool_execution_loop";
 import { selectRows } from "@/lib/server/supabase";
 import { DEFAULT_PROJECT_ID } from "@/lib/server/agentos-data";
 

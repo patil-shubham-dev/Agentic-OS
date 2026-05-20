@@ -30,7 +30,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (baseUrl.startsWith("http")) {
       try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 6000); // 6s timeout
+        const timeout = setTimeout(() => controller.abort(), 10_000); // 10s timeout for slower APIs
 
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
@@ -40,57 +40,114 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           if (id === "anthropic") {
             headers["x-api-key"] = apiKey;
             headers["anthropic-version"] = "2023-06-01";
+          } else if (apiKey.startsWith("nvapi-")) {
+            // NVIDIA NGC API uses NVCF-API-KEY header instead of Bearer
+            headers["NVCF-API-KEY"] = apiKey;
           } else {
             headers["Authorization"] = `Bearer ${apiKey}`;
           }
         }
 
-        // Try getting model list or basic endpoint
-        const testUrl = id === "anthropic" 
-          ? `${baseUrl}/messages` 
-          : `${baseUrl}/models`;
+        // Apply custom headers from metadata
+        if (config.metadata?.headers) {
+          try {
+            const customHeaders = JSON.parse(config.metadata.headers as string);
+            Object.assign(headers, customHeaders);
+          } catch {}
+        }
 
-        const response = await fetch(testUrl, {
+        // Determine test URL based on provider type
+        let testUrl: string;
+        if (id === "anthropic") {
+          testUrl = `${baseUrl}/messages`;
+        } else if (id === "ollama") {
+          testUrl = `${baseUrl}/api/tags`;
+        } else {
+          testUrl = `${baseUrl}/models`;
+        }
+
+        // Apply custom query parameters from metadata
+        const testUrlObj = new URL(testUrl);
+        if (config.metadata?.queryParameters) {
+          try {
+            const queryParams = JSON.parse(config.metadata.queryParameters as string) as Record<string, string>;
+            Object.entries(queryParams).forEach(([key, val]) => testUrlObj.searchParams.append(key, String(val)));
+          } catch {}
+        }
+
+        const fetchOptions: RequestInit = {
           method: id === "anthropic" ? "POST" : "GET",
           headers,
-          body: id === "anthropic" ? JSON.stringify({ model: "claude-3-haiku-20240307", max_tokens: 1, messages: [{ role: "user", content: "Hi" }] }) : undefined,
           signal: controller.signal,
-        });
+        };
 
+        if (id === "anthropic") {
+          (fetchOptions as any).body = JSON.stringify({
+            model: "claude-3-haiku-20240307",
+            max_tokens: 1,
+            messages: [{ role: "user", content: "Hi" }],
+          });
+        }
+
+        const response = await fetch(testUrlObj.toString(), fetchOptions);
         clearTimeout(timeout);
 
-        if (response.ok || response.status === 400 || response.status === 404) {
-          // Anthropic /messages will fail with 400 if model list is wrong, but response.status 400/404 means the gateway resolved successfully!
+        // Any response (2xx, 4xx) means the gateway was reached successfully
+        const status = response.status;
+        if (status >= 200 && status < 500) {
           isValid = true;
-          message = `Successfully connected to ${config.label}. Status: ${response.status}`;
+          if (status >= 200 && status < 300) {
+            message = `Connected successfully to ${config.label} (${status})`;
+          } else if (status === 401 || status === 403) {
+            message = `Connected to ${config.label} but API key was rejected (${status}). Please verify your key.`;
+          } else {
+            const bodyText = await response.text().catch(() => "");
+            message = `Connected to ${config.label} (${status}): ${bodyText.substring(0, 80)}`;
+          }
         } else {
           const bodyText = await response.text().catch(() => "");
-          message = `Gateway responded with code ${response.status}: ${bodyText.substring(0, 100)}`;
+          message = `Gateway responded with status ${status}: ${bodyText.substring(0, 100)}`;
         }
       } catch (err) {
-        message = err instanceof Error ? err.message : "Network request timed out or failed.";
-        // For local offline setups (Ollama/LM Studio), if they aren't booted yet, we report validation status clearly.
+        if ((err as any)?.name === "AbortError") {
+          message = `Connection timed out after 10s. Ensure "${baseUrl}" is reachable from this server.`;
+        } else {
+          message = err instanceof Error ? err.message : "Network request failed.";
+        }
+
+        // For local setups (Ollama, LM Studio), give a clearer message
         if (id === "ollama" || id === "lm-studio") {
-          message = `Could not reach local gateway on ${baseUrl}. Ensure the application is running locally.`;
+          message = `Could not reach local service at ${baseUrl}. Ensure the application is running locally.`;
+        }
+
+        // For NVIDIA-specific connection failures, give guidance
+        if (apiKey.startsWith("nvapi-")) {
+          message = `NVIDIA NGC connection failed. Ensure the base URL is correct (typically https://integrate.api.nvidia.com/v1) and the API key format is valid. Error: ${message}`;
         }
       }
     } else {
-      // No URL, default validation based on presence of API Key if cloud provider
-      if (id === "openai" || id === "anthropic" || id === "google") {
+      // No URL configured
+      if (["openai", "anthropic", "google"].includes(id)) {
         isValid = apiKey.length > 0;
-        message = isValid ? "API Key loaded. Gateway validation skipped (no base URL configured)." : "API Key is missing.";
+        message = isValid
+          ? "API Key loaded. Connection test skipped (no custom base URL)."
+          : "No API Key configured and no custom base URL.";
       } else {
         isValid = true;
-        message = "Gateway config looks valid.";
+        message = "Provider configuration looks valid.";
       }
     }
 
     const validationStatus = isValid ? "valid" : "invalid";
-    await upsertProviderConfig({
-      ...config,
-      validation_status: validationStatus,
-      last_validated_at: new Date().toISOString(),
-    });
+    try {
+      await upsertProviderConfig({
+        ...config,
+        validation_status: validationStatus,
+        last_validated_at: new Date().toISOString(),
+      });
+    } catch {
+      // Best-effort persistence
+    }
 
     return NextResponse.json({
       success: isValid,

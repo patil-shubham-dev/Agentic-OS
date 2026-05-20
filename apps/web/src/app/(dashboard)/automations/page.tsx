@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
+import dynamic from "next/dynamic";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -27,19 +28,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  ReactFlow,
-  Background,
-  Controls,
-  MiniMap,
-  useNodesState,
-  useEdgesState,
-  addEdge,
-  Node,
-  Edge,
-  Connection,
-} from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
+
+const LazyFlowBuilder = dynamic(() => import("@/components/flow/FlowBuilder").then((m) => ({ default: m.LazyFlowBuilder })), { ssr: false });
 import {
   Plus,
   Play,
@@ -70,7 +60,7 @@ import { getJson } from "@/lib/client-api";
 import type { ProductAutomation } from "@/lib/product-blueprint";
 import { EmptyState } from "@/components/empty-state";
 
-const initialNodes: Node[] = [
+const initialNodes = [
   { id: "trigger", type: "input", position: { x: 250, y: 0 }, data: { label: "Trigger: Schedule" } },
   { id: "agent1", position: { x: 250, y: 100 }, data: { label: "Research Agent" } },
   { id: "tool1", position: { x: 250, y: 200 }, data: { label: "Write File" } },
@@ -78,7 +68,7 @@ const initialNodes: Node[] = [
   { id: "notify", position: { x: 250, y: 400 }, data: { label: "Send Notification" } },
 ];
 
-const initialEdges: Edge[] = [
+const initialEdges = [
   { id: "e1", source: "trigger", target: "agent1" },
   { id: "e2", source: "agent1", target: "tool1" },
   { id: "e3", source: "tool1", target: "approval" },
@@ -97,15 +87,11 @@ const item = {
 };
 
 export default function AutomationsPage() {
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [selectedAutomation, setSelectedAutomation] = useState<ProductAutomation | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "builder">("list");
   const [automations, setAutomations] = useState<ProductAutomation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const onConnect = (params: Connection) => setEdges((eds) => addEdge(params, eds));
 
   useEffect(() => {
     let active = true;
@@ -327,8 +313,7 @@ export default function AutomationsPage() {
           )}
         </>
       ) : (
-        /* Workflow Builder */
-        <Card className="h-[calc(100vh-16rem)]">
+        /* Workflow Builder */          <Card className="h-[calc(100vh-16rem)]">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
               <div>
@@ -349,18 +334,11 @@ export default function AutomationsPage() {
             </div>
           </CardHeader>
           <CardContent className="p-0 h-[calc(100%-5rem)]">
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
-              fitView
-            >
-              <Background />
-              <Controls />
-              <MiniMap />
-            </ReactFlow>
+            <LazyFlowBuilder
+              initialNodes={initialNodes}
+              initialEdges={initialEdges}
+              className="h-full"
+            />
           </CardContent>
         </Card>
       )}

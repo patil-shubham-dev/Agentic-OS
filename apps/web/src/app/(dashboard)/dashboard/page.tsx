@@ -1,19 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Area,
-  AreaChart,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip as RechartsTooltip,
-} from "recharts";
 import {
   Activity,
   ArrowRight,
@@ -27,6 +19,10 @@ import {
 } from "lucide-react";
 import { getJson } from "@/lib/client-api";
 import { EmptyState } from "@/components/empty-state";
+import { PageSkeleton } from "@/components/skeleton-loader";
+
+const LazyTokenAreaChart = dynamic(() => import("@/components/charts/Charts").then((m) => ({ default: m.LazyTokenAreaChart })), { ssr: false });
+const LazyProviderPieChart = dynamic(() => import("@/components/charts/Charts").then((m) => ({ default: m.LazyProviderPieChart })), { ssr: false });
 
 interface DashboardResponse {
   agents: Array<{ id: string; name: string; status: string }>;
@@ -266,61 +262,26 @@ export default function DashboardPage() {
                 <div className="grid md:grid-cols-2 gap-3">
                   <div className="rounded-xl border border-amber-200/60 bg-white/50 p-3">
                     <p className="text-[10px] text-amber-600/50 uppercase tracking-wider mb-2">Token Usage</p>
-                    {usageTimeline.length === 0 ? (
-                      <p className="text-xs text-amber-600/60">No usage yet</p>
-                    ) : (
-                      <ResponsiveContainer width="100%" height={130}>
-                        <AreaChart data={usageTimeline}>
-                          <defs>
-                            <linearGradient id="tokenGradient" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.4} />
-                              <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
-                            </linearGradient>
-                          </defs>
-                          <RechartsTooltip
-                            contentStyle={{
-                              backgroundColor: "#fffbf0",
-                              border: "1px solid rgba(200,150,40,0.2)",
-                              borderRadius: "12px",
-                              fontSize: "12px",
-                              color: "#78350f",
-                            }}
-                          />
-                          <Area type="monotone" dataKey="tokens" stroke="#f59e0b" strokeWidth={2} fill="url(#tokenGradient)" />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    )}
+                    <LazyTokenAreaChart data={usageTimeline} />
                   </div>
                   <div className="rounded-xl border border-amber-200/60 bg-white/50 p-3">
                     <p className="text-[10px] text-amber-600/50 uppercase tracking-wider mb-1">By Provider</p>
-                    {byProvider.length === 0 ? (
-                      <p className="text-xs text-amber-600/60">No usage yet</p>
-                    ) : (
-                      <>
-                        <ResponsiveContainer width="100%" height={100}>
-                          <PieChart>
-                            <Pie data={byProvider} dataKey="value" innerRadius={28} outerRadius={44} paddingAngle={3}>
-                              {byProvider.map((entry: any) => (
-                                <Cell key={entry.name} fill={entry.color} />
-                              ))}
-                            </Pie>
-                          </PieChart>
-                        </ResponsiveContainer>
-                        <div className="mt-1 space-y-1">
-                          {byProvider.map((provider: any) => (
-                            <div
-                              key={provider.name}
-                              className="flex items-center justify-between text-[11px] text-amber-700"
-                            >
-                              <div className="flex items-center gap-1.5">
-                                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: provider.color }} />
-                                <span>{provider.name}</span>
-                              </div>
-                              <span className="font-semibold">${provider.value.toFixed(2)}</span>
+                    <LazyProviderPieChart data={byProvider} />
+                    {byProvider.length > 0 && (
+                      <div className="mt-1 space-y-1">
+                        {byProvider.map((provider: any) => (
+                          <div
+                            key={provider.name}
+                            className="flex items-center justify-between text-[11px] text-amber-700"
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: provider.color }} />
+                              <span>{provider.name}</span>
                             </div>
-                          ))}
-                        </div>
-                      </>
+                            <span className="font-semibold">${provider.value.toFixed(2)}</span>
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </div>
                 </div>

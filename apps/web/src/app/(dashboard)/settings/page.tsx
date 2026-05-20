@@ -113,6 +113,86 @@ const cardVariants = {
   show: { opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 200, damping: 20 } },
 };
 
+/** Advanced configuration fields extracted to avoid duplication between built-in and custom providers */
+function AdvancedConfigFields({ activeProvider, setActiveProvider }: {
+  activeProvider: Partial<ProviderConfig>;
+  setActiveProvider: React.Dispatch<React.SetStateAction<Partial<ProviderConfig> | null>>;
+}) {
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-1.5">
+          <Label className="text-amber-950 text-xs font-bold">Compatibility Mode</Label>
+          <Select
+            value={activeProvider.metadata?.compatibilityMode || "openai-compatible"}
+            onValueChange={(val) =>
+              setActiveProvider((prev) => prev ? {
+                ...prev,
+                metadata: { ...(prev.metadata || {}), compatibilityMode: val },
+              } : null)
+            }
+          >
+            <SelectTrigger className="bg-white border-amber-200 rounded-xl h-10">
+              <SelectValue placeholder="Mode" />
+            </SelectTrigger>
+            <SelectContent className="bg-white border-amber-200">
+              <SelectItem value="openai-compatible" className="text-xs focus:bg-amber-50">OpenAI-compatible</SelectItem>
+              <SelectItem value="anthropic-compatible" className="text-xs focus:bg-amber-50">Anthropic-compatible</SelectItem>
+              <SelectItem value="custom-adapter" className="text-xs focus:bg-amber-50">Custom adapter</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label className="text-amber-950 text-xs font-bold">Custom Models List</Label>
+          <Input
+            className="border-amber-200 text-amber-950 rounded-xl h-10"
+            value={activeProvider.metadata?.customModels || ""}
+            onChange={(e) =>
+              setActiveProvider((prev) => prev ? {
+                ...prev,
+                metadata: { ...(prev.metadata || {}), customModels: e.target.value },
+              } : null)
+            }
+            placeholder="gpt-4o, mixtral-8x7b"
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-1.5">
+          <Label className="text-amber-950 text-xs font-bold">Custom Headers <span className="text-[9px] text-amber-500 font-normal">(JSON)</span></Label>
+          <Textarea
+            className="border-amber-200 font-mono text-xs rounded-xl bg-white min-h-[70px]"
+            value={activeProvider.metadata?.headers || "{}"}
+            onChange={(e) =>
+              setActiveProvider((prev) => prev ? {
+                ...prev,
+                metadata: { ...(prev.metadata || {}), headers: e.target.value },
+              } : null)
+            }
+            placeholder='{ "X-Custom-Header": "value" }'
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-amber-950 text-xs font-bold">Query Parameters <span className="text-[9px] text-amber-500 font-normal">(JSON)</span></Label>
+          <Textarea
+            className="border-amber-200 font-mono text-xs rounded-xl bg-white min-h-[70px]"
+            value={activeProvider.metadata?.queryParameters || "{}"}
+            onChange={(e) =>
+              setActiveProvider((prev) => prev ? {
+                ...prev,
+                metadata: { ...(prev.metadata || {}), queryParameters: e.target.value },
+              } : null)
+            }
+            placeholder='{ "ref": "agentos" }'
+          />
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function SettingsPage() {
   const [providers, setProviders] = useState<ProviderConfig[]>([]);
   const [allModels, setAllModels] = useState<ProviderModel[]>([]);
@@ -133,6 +213,7 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [discoveringId, setDiscoveringId] = useState<string | null>(null);
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [dbConnected, setDbConnected] = useState<boolean | null>(null);
 
   const loadData = async () => {
@@ -222,6 +303,7 @@ export default function SettingsPage() {
 
   const handleAddClick = () => {
     setIsNew(true);
+    setShowAdvancedSettings(false);
     setActiveProvider({
       id: "openai", provider: "openai", label: "OpenAI",
       baseUrl: "https://api.openai.com/v1", defaultModel: "gpt-4o", enabled: true,
@@ -232,6 +314,8 @@ export default function SettingsPage() {
 
   const handleEditClick = (p: ProviderConfig) => {
     setIsNew(false);
+    // Auto-show advanced settings for custom providers
+    setShowAdvancedSettings(p.provider === "custom");
     setActiveProvider({
       ...p,
       metadata: {
@@ -795,6 +879,8 @@ export default function SettingsPage() {
                               compatibilityMode: val === "anthropic" ? "anthropic-compatible" : "openai-compatible",
                             },
                           } : null);
+                          // Auto-show advanced settings when switching to Custom, hide for built-ins
+                          setShowAdvancedSettings(val === "custom");
                         }}
                       >
                         <SelectTrigger className="border-amber-200 text-amber-950 bg-white rounded-xl h-10">
@@ -876,82 +962,44 @@ export default function SettingsPage() {
                   />
                 </div>
 
-                {/* Custom Provider Options */}
-                {(activeProvider.provider === "custom" || activeProvider.provider === "openai" || activeProvider.provider === "anthropic") && (
+{/* Advanced Configuration — collapsed by default for built-in providers */}
+                {activeProvider.provider === "custom" ? (
+                  /* Custom provider: show advanced settings by default */
                   <div className="border border-dashed border-amber-200 p-4 space-y-4 rounded-2xl bg-gradient-to-br from-amber-50/20 to-amber-100/10">
                     <h4 className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
                       <Sliders className="w-3.5 h-3.5 text-amber-600" /> Advanced Configuration
                     </h4>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <Label className="text-amber-950 text-xs font-bold">Compatibility Mode</Label>
-                        <Select
-                          value={activeProvider.metadata?.compatibilityMode || "openai-compatible"}
-                          onValueChange={(val) =>
-                            setActiveProvider((prev) => prev ? {
-                              ...prev,
-                              metadata: { ...(prev.metadata || {}), compatibilityMode: val },
-                            } : null)
-                          }
-                        >
-                          <SelectTrigger className="bg-white border-amber-200 rounded-xl h-10">
-                            <SelectValue placeholder="Mode" />
-                          </SelectTrigger>
-                          <SelectContent className="bg-white border-amber-200">
-                            <SelectItem value="openai-compatible" className="text-xs focus:bg-amber-50">OpenAI-compatible</SelectItem>
-                            <SelectItem value="anthropic-compatible" className="text-xs focus:bg-amber-50">Anthropic-compatible</SelectItem>
-                            <SelectItem value="custom-adapter" className="text-xs focus:bg-amber-50">Custom adapter</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <Label className="text-amber-950 text-xs font-bold">Custom Models List</Label>
-                        <Input
-                          className="border-amber-200 text-amber-950 rounded-xl h-10"
-                          value={activeProvider.metadata?.customModels || ""}
-                          onChange={(e) =>
-                            setActiveProvider((prev) => prev ? {
-                              ...prev,
-                              metadata: { ...(prev.metadata || {}), customModels: e.target.value },
-                            } : null)
-                          }
-                          placeholder="gpt-4o, mixtral-8x7b"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <Label className="text-amber-950 text-xs font-bold">Custom Headers <span className="text-[9px] text-amber-500 font-normal">(JSON)</span></Label>
-                        <Textarea
-                          className="border-amber-200 font-mono text-xs rounded-xl bg-white min-h-[70px]"
-                          value={activeProvider.metadata?.headers || "{}"}
-                          onChange={(e) =>
-                            setActiveProvider((prev) => prev ? {
-                              ...prev,
-                              metadata: { ...(prev.metadata || {}), headers: e.target.value },
-                            } : null)
-                          }
-                          placeholder='{ "X-Custom-Header": "value" }'
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-amber-950 text-xs font-bold">Query Parameters <span className="text-[9px] text-amber-500 font-normal">(JSON)</span></Label>
-                        <Textarea
-                          className="border-amber-200 font-mono text-xs rounded-xl bg-white min-h-[70px]"
-                          value={activeProvider.metadata?.queryParameters || "{}"}
-                          onChange={(e) =>
-                            setActiveProvider((prev) => prev ? {
-                              ...prev,
-                              metadata: { ...(prev.metadata || {}), queryParameters: e.target.value },
-                            } : null)
-                          }
-                          placeholder='{ "ref": "agentos" }'
-                        />
-                      </div>
-                    </div>
+                    <AdvancedConfigFields activeProvider={activeProvider} setActiveProvider={setActiveProvider} />
+                  </div>
+                ) : (
+                  /* Built-in provider: show toggle to reveal advanced settings */
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                      className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-600 hover:text-amber-800 transition-colors"
+                    >
+                      {showAdvancedSettings ? (
+                        <><ChevronDown className="w-3.5 h-3.5" /> Hide Advanced Settings</>
+                      ) : (
+                        <><ChevronRight className="w-3.5 h-3.5" /> Show Advanced Settings</>
+                      )}
+                    </button>
+                    {showAdvancedSettings && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        className="mt-3 border border-dashed border-amber-200 p-4 space-y-4 rounded-2xl bg-gradient-to-br from-amber-50/20 to-amber-100/10 overflow-hidden"
+                      >
+                        <h4 className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                          <Sliders className="w-3.5 h-3.5 text-amber-600" /> Advanced Configuration
+                        </h4>
+                        <p className="text-[10px] text-amber-600/70">
+                          Only needed for non-standard API endpoints that require custom headers or model overrides.
+                        </p>
+                        <AdvancedConfigFields activeProvider={activeProvider} setActiveProvider={setActiveProvider} />
+                      </motion.div>
+                    )}
                   </div>
                 )}
               </>

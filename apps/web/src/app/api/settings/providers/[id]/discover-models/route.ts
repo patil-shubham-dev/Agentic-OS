@@ -45,30 +45,46 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         };
 
         if (apiKey) {
-          headers["Authorization"] = `Bearer ${apiKey}`;
+          if (id === "anthropic") {
+            headers["x-api-key"] = apiKey;
+            headers["anthropic-version"] = "2023-06-01";
+          } else if (apiKey.startsWith("nvapi-")) {
+            headers["NVCF-API-KEY"] = apiKey;
+          } else {
+            headers["Authorization"] = `Bearer ${apiKey}`;
+          }
         }
 
+        // Apply custom headers from metadata
+        if (config.metadata?.headers) {
+          try {
+            const customHeaders = JSON.parse(config.metadata.headers as string);
+            Object.assign(headers, customHeaders);
+          } catch {}
+        }
+
+        // Apply custom query parameters from metadata
+        // Use URL constructor to append params while preserving original path
+        const modelsUrl = new URL(baseUrl + (id === "ollama" ? "/api/tags" : "/models"));
+        if (config.metadata?.queryParameters) {
+          try {
+            const queryParams = JSON.parse(config.metadata.queryParameters as string) as Record<string, string>;
+            Object.entries(queryParams).forEach(([key, val]) => modelsUrl.searchParams.append(key, String(val)));
+          } catch {}
+        }
+
+        const res = await fetch(modelsUrl.toString(), { headers, signal: controller.signal });
+        clearTimeout(timeout);
+        const data = await res.json();
         if (id === "ollama") {
-          // Ollama model endpoint
-          const res = await fetch(`${baseUrl}/api/tags`, { headers, signal: controller.signal });
-          clearTimeout(timeout);
-          if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data.models)) {
-              discoveredModels = data.models.map((m: any) => m.name);
-              methodUsed = "ollama-api";
-            }
+          if (res.ok && Array.isArray(data.models)) {
+            discoveredModels = data.models.map((m: any) => m.name);
+            methodUsed = "ollama-api";
           }
         } else {
-          // Standard OpenAI-compatible model list
-          const res = await fetch(`${baseUrl}/models`, { headers, signal: controller.signal });
-          clearTimeout(timeout);
-          if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data.data)) {
-              discoveredModels = data.data.map((m: any) => m.id);
-              methodUsed = "openai-api";
-            }
+          if (res.ok && Array.isArray(data.data)) {
+            discoveredModels = data.data.map((m: any) => m.id);
+            methodUsed = "openai-api";
           }
         }
       } catch (err) {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -48,9 +49,10 @@ import {
   Info,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useDropzone } from "react-dropzone";
 import { getJson, sendJson } from "@/lib/client-api";
 import { toast } from "sonner";
+
+const FileUploadDropzone = dynamic(() => import("@/components/upload/FileDropzone").then((m) => ({ default: m.LazyFileDropzone })), { ssr: false });
 
 interface KnowledgeItem {
   id: string;
@@ -182,19 +184,9 @@ export default function KnowledgePage() {
     }
   }, [refresh, form.tags]);
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop: handleUpload,
-    accept: {
-      "application/pdf": [".pdf"],
-      "text/markdown": [".md"],
-      "text/plain": [".txt"],
-      "application/json": [".json"],
-      "text/javascript": [".ts", ".tsx", ".js", ".jsx"],
-      "text/x-python": [".py"],
-      "text/x-sql": [".sql"],
-    },
-    maxSize: 10 * 1024 * 1024,
-  });
+  const handleUploadFiles = useCallback((acceptedFiles: File[]) => {
+    handleUpload(acceptedFiles);
+  }, [handleUpload]);
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
@@ -338,26 +330,7 @@ export default function KnowledgePage() {
                 </TabsList>
 
                 <TabsContent value="upload" className="mt-4 space-y-4">
-                  <div
-                    {...getRootProps()}
-                    className={cn(
-                      "cursor-pointer rounded-2xl border-2 border-dashed p-10 text-center transition-all duration-200",
-                      isDragActive
-                        ? "border-amber-400 bg-amber-50/60 shadow-inner"
-                        : "border-amber-200/70 hover:border-amber-300 bg-amber-50/20 hover:bg-amber-50/40"
-                    )}
-                  >
-                    <input {...getInputProps()} />
-                    <motion.div animate={isDragActive ? { y: -4 } : { y: 0 }} className="space-y-3">
-                      <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center mx-auto shadow-lg shadow-amber-200/50">
-                        <Upload className="w-7 h-7 text-white" />
-                      </div>
-                      <p className="font-bold text-amber-950 text-sm">
-                        {isDragActive ? "Release to upload" : "Drag & drop files here"}
-                      </p>
-                      <p className="text-xs text-amber-600/70">or click to browse — PDF, MD, TXT, JSON, code files (max 10MB)</p>
-                    </motion.div>
-                  </div>
+                  <FileUploadDropzone onDrop={handleUploadFiles} />
 
                   <div className="space-y-1.5">
                     <Label className="text-amber-950 text-xs font-bold flex items-center gap-1">

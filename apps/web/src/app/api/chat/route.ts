@@ -1,83 +1,65 @@
 import { NextRequest, NextResponse } from "next/server";
 import { streamText } from "ai";
-import { createOpenAI } from "@ai-sdk/openai";
-import { createAnthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
-import {
-  DEFAULT_PROJECT_ID,
-  getProviderConfigs,
-} from "@/lib/server/agentos-data";
-import { selectRows } from "@/lib/server/supabase";
-import { decryptSecret } from "@/lib/server/encryption";
-import { getUnifiedSystemPrompt } from "../../../../../../system_prompts/unified_system_prompt";
+import { DEFAULT_PROJECT_ID } from "@/lib/server/agentos-data";
+import { resolveModelForRole } from "@/lib/runtime/role-router";
+import { loadSecuritySettings, loadRoleMappings } from "@/lib/runtime/settings-loader";
+import { loadSystemPromptForRole } from "@/lib/runtime/system-prompt-loader";
+import { SecurityGuard } from "@/lib/runtime/security-guard";
 
 export const dynamic = "force-dynamic";
 
-const DEFAULT_ROLES = {
-  Manager: "claude-3-5-sonnet-20241022",
-  Coding: "gpt-4o",
-  Design: "gemini-1.5-pro",
-  Research: "gpt-4o",
-  "Fast Inference": "gpt-4o",
-  Vision: "gpt-4o",
-};
+/**
+ * Detect the best role for a user message by analyzing content + attachments.
+ */
+function detectRole(messages: any[], hasAttachments: boolean): string {
+  if (hasAttachments) return "Vision";
 
-const DEFAULT_SECURITY = {
-  terminal: true,
-  filesystem: true,
-  approval: true,
-  browser: false,
-};
+  const lastMsg = messages[messages.length - 1]?.content?.toLowerCase?.() || "";
+  
+  // Keyword-based role detection
+  if (/design|ui|ux|layout|css|styling|frontend|appearance|beautif|looks/i.test(lastMsg)) {
+    return "Design";
+  }
+  if (/research|search|find|look up|documentation|read the docs|what is|how does/i.test(lastMsg)) {
+    return "Research";
+  }
+  if (/quick|fast|simple|classif|categoriz|label|tag|extract/i.test(lastMsg)) {
+    return "Fast Inference";
+  }
+  // Default to Coding for code-related tasks
+  if (/code|implement|refactor|write|create|modify|fix|bug|test|function|component/i.test(lastMsg)) {
+    return "Coding";
+  }
+  
+  // Fallback: let the Manager handle planning/complex requests
+  if (/plan|orchestrat|multi.?step|complex|architect|design\s*system/i.test(lastMsg)) {
+    return "Manager";
+  }
+  
+  return "Coding";
+}
 
 export async function POST(request: NextRequest) {
   try {
     const { messages, attachments, projectId = DEFAULT_PROJECT_ID } = await request.json();
 
-    // 1. Fetch Dynamic Role mappings from DB
-    const rolesRows = await selectRows<{ value: string }>("memories", {
-      filters: { project_id: projectId, key: "system_roles" },
-      limit: 1,
-    });
-    const roles = rolesRows.length > 0 ? JSON.parse(rolesRows[0].value) : DEFAULT_ROLES;
-
-    // 2. Multimodal Routing Hook
+    // 1. Detect role and load settings
     const hasAttachments = attachments && attachments.length > 0;
-    const assignedRole = hasAttachments ? "Vision" : "Coding";
-    const targetModel = roles[assignedRole] || DEFAULT_ROLES[assignedRole];
+    const assignedRole = detectRole(messages, hasAttachments);
+    
+    const roleMappings = await loadRoleMappings(projectId);
+    const securitySettings = await loadSecuritySettings(projectId);
+    const securityGuard = new SecurityGuard(securitySettings);
 
-    // 3. Find enabled provider
-    const providers = await getProviderConfigs();
-    const activeProvider = providers.find((p) => p.enabled);
+    // 2. Resolve the correct model + provider for the detected role
+    const resolved = await resolveModelForRole(assignedRole);
+    const aiModel = resolved.aiModel;
 
-    if (!activeProvider) {
-      return NextResponse.json({ error: "No active provider configured." }, { status: 400 });
-    }
+    // 3. Load the role-specific system prompt with security context
+    const systemPrompt = await loadSystemPromptForRole(assignedRole, securitySettings);
 
-    let decryptedApiKey = "";
-    if (activeProvider.api_key_ciphertext) {
-      try {
-        decryptedApiKey = decryptSecret(activeProvider.api_key_ciphertext);
-      } catch {
-        // Fall back gracefully
-      }
-    }
-
-    let aiModel;
-    if (activeProvider.provider === "anthropic") {
-      const anthropic = createAnthropic({
-        apiKey: decryptedApiKey,
-        baseURL: activeProvider.base_url || undefined,
-      });
-      aiModel = anthropic(targetModel);
-    } else {
-      const openai = createOpenAI({
-        apiKey: decryptedApiKey || "dummy",
-        baseURL: activeProvider.base_url || undefined,
-      });
-      aiModel = openai(targetModel);
-    }
-
-    // 4. Format Messages
+    // 4. Format Messages — handle multimodal content
     const lastMessage = messages[messages.length - 1];
     if (hasAttachments && lastMessage.role === "user") {
       const content = [
@@ -94,38 +76,18 @@ export async function POST(request: NextRequest) {
       messages[messages.length - 1] = { ...lastMessage, content };
     }
 
+    // 5. Build tools object — all tools are defined once here, shared across roles
+    const tools: Record<string, any> = {};
 
-    // 5. Fetch Security toggles
-    const securityRows = await selectRows<{ value: string }>("memories", {
-      filters: { project_id: projectId, key: "system_security" },
-      limit: 1,
-    });
-    const security = securityRows.length > 0 ? JSON.parse(securityRows[0].value) : DEFAULT_SECURITY;
+    const defineTool = (config: any) => config;
 
-    // 6. Compile System Prompt using Unified compiler
-    const systemPrompt = getUnifiedSystemPrompt({
-      cwd: process.cwd(),
-      osType: process.platform,
-      homeDir: process.env.USERPROFILE || process.env.HOME || process.cwd(),
-      securitySettings: {
-        allowTerminal: security.terminal,
-        allowFilesystem: security.filesystem,
-        requireApprovalForDestructive: security.approval,
-      },
-    });
-
-    // Helper: determine if execution should be deferred for manual client approval
-    const needsApproval = (toolName: string) => {
-      if (!security.approval) return false;
-      return toolName === "execute_terminal" || toolName === "delete_path";
+    // Helper to check if tool execution should be deferred for approval
+    const needsApproval = (toolName: string, args: any) => {
+      const isDestructive = toolName === "delete_path" || 
+        (toolName === "execute_terminal" && /rm\s+-rf|delete|format|shutdown/i.test(args.command || ""));
+      return securityGuard.checkApprovalRequired(toolName, isDestructive);
     };
 
-    // 7. Define Tools Object (excluding execute handler if approval is required)
-    const tools: Record<string, any> = {};
-    
-    // Helper to create tools with proper type loosening for AI SDK v6
-    const defineTool = (config: any) => config;
-    
     tools.read_file = defineTool({
       type: 'function' as const,
       description: "Read the contents of a local file in the workspace.",
@@ -152,7 +114,7 @@ export async function POST(request: NextRequest) {
         }
       },
     });
-    
+
     tools.write_file = defineTool({
       type: 'function' as const,
       description: "Write content to a local file in the workspace.",
@@ -161,9 +123,8 @@ export async function POST(request: NextRequest) {
         content: z.string().describe("The new file content"),
       }),
       execute: async ({ file_path, content }: { file_path: string; content: string }) => {
-        if (!security.filesystem) {
-          return "Execution Policy Blocked: Filesystem modifications are disabled.";
-        }
+        const fsCheck = securityGuard.checkFilesystemPermission(file_path, false);
+        if (!fsCheck.allowed) return fsCheck.reason;
         try {
           const fs = await import("fs/promises");
           const pathModule = await import("path");
@@ -176,7 +137,7 @@ export async function POST(request: NextRequest) {
         }
       },
     });
-    
+
     tools.create_file = defineTool({
       type: 'function' as const,
       description: "Create an empty file in the workspace.",
@@ -184,9 +145,8 @@ export async function POST(request: NextRequest) {
         file_path: z.string().describe("Path relative to the workspace root"),
       }),
       execute: async ({ file_path }: { file_path: string }) => {
-        if (!security.filesystem) {
-          return "Execution Policy Blocked: Filesystem modifications are disabled.";
-        }
+        const fsCheck = securityGuard.checkFilesystemPermission(file_path, false);
+        if (!fsCheck.allowed) return fsCheck.reason;
         try {
           const fs = await import("fs/promises");
           const pathModule = await import("path");
@@ -199,7 +159,7 @@ export async function POST(request: NextRequest) {
         }
       },
     });
-    
+
     tools.create_directory = defineTool({
       type: 'function' as const,
       description: "Create a new directory in the workspace.",
@@ -207,9 +167,8 @@ export async function POST(request: NextRequest) {
         dir_path: z.string().describe("Directory path relative to the workspace root"),
       }),
       execute: async ({ dir_path }: { dir_path: string }) => {
-        if (!security.filesystem) {
-          return "Execution Policy Blocked: Filesystem modifications are disabled.";
-        }
+        const fsCheck = securityGuard.checkFilesystemPermission(dir_path, false);
+        if (!fsCheck.allowed) return fsCheck.reason;
         try {
           const fs = await import("fs/promises");
           const pathModule = await import("path");
@@ -221,7 +180,7 @@ export async function POST(request: NextRequest) {
         }
       },
     });
-    
+
     tools.list_directory = defineTool({
       type: 'function' as const,
       description: "List the contents of a workspace directory.",
@@ -240,7 +199,7 @@ export async function POST(request: NextRequest) {
         }
       },
     });
-    
+
     tools.search_files = defineTool({
       type: 'function' as const,
       description: "Search for a string pattern in files inside the workspace.",
@@ -262,7 +221,7 @@ export async function POST(request: NextRequest) {
         }
       },
     });
-    
+
     tools.rename_path = defineTool({
       type: 'function' as const,
       description: "Rename or move a file/directory in the workspace.",
@@ -271,9 +230,8 @@ export async function POST(request: NextRequest) {
         new_path: z.string().describe("Target path relative to workspace root"),
       }),
       execute: async ({ old_path, new_path }: { old_path: string; new_path: string }) => {
-        if (!security.filesystem) {
-          return "Execution Policy Blocked: Filesystem modifications are disabled.";
-        }
+        const fsCheck = securityGuard.checkFilesystemPermission(new_path, false);
+        if (!fsCheck.allowed) return fsCheck.reason;
         try {
           const fs = await import("fs/promises");
           const pathModule = await import("path");
@@ -287,19 +245,17 @@ export async function POST(request: NextRequest) {
         }
       },
     });
-    
+
     tools.delete_path = defineTool({
       type: 'function' as const,
       description: "Delete a file or directory recursively. WARNING: Destructive operation.",
       parameters: z.object({
         path: z.string().describe("The workspace path to delete"),
       }),
-      // Always provide execute; if approval is needed, the client will execute it
       execute: async ({ path: delPath }: { path: string }) => {
-        if (!security.filesystem) {
-          return "Execution Policy Blocked: Filesystem writes are disabled.";
-        }
-        if (needsApproval("delete_path")) {
+        const fsCheck = securityGuard.checkFilesystemPermission(delPath, true);
+        if (!fsCheck.allowed) return fsCheck.reason;
+        if (needsApproval("delete_path", { path: delPath })) {
           return "Deferred: This destructive operation requires client-side approval. The AI will send a request for user approval.";
         }
         try {
@@ -313,7 +269,7 @@ export async function POST(request: NextRequest) {
         }
       },
     });
-    
+
     tools.execute_terminal = defineTool({
       type: 'function' as const,
       description: "Run a shell command in the terminal workspace.",
@@ -322,10 +278,9 @@ export async function POST(request: NextRequest) {
         process_id: z.string().optional().describe("Optional unique process ID to allow termination"),
       }),
       execute: async ({ command }: { command: string }) => {
-        if (!security.terminal) {
-          return "Execution Policy Blocked: Terminal execution is disabled.";
-        }
-        if (needsApproval("execute_terminal")) {
+        const termCheck = securityGuard.checkTerminalPermission(command);
+        if (!termCheck.allowed) return termCheck.reason;
+        if (needsApproval("execute_terminal", { command })) {
           return "Deferred: Terminal execution requires client-side approval. The AI will send a request for user approval.";
         }
         try {
@@ -338,7 +293,7 @@ export async function POST(request: NextRequest) {
         }
       },
     });
-    
+
     tools.stop_terminal = defineTool({
       type: 'function' as const,
       description: "Stop an active terminal background process by process_id.",
@@ -349,7 +304,7 @@ export async function POST(request: NextRequest) {
         return `Stop request sent for process: ${process_id}`;
       },
     });
-    
+
     tools.fetch_web = defineTool({
       type: 'function' as const,
       description: "Fetch contents from a URL for documentation or reference.",
@@ -366,7 +321,7 @@ export async function POST(request: NextRequest) {
         }
       },
     });
-    
+
     tools.analyze_image = defineTool({
       type: 'function' as const,
       description: "Analyze visual elements from a URL or base64 resource.",
@@ -379,7 +334,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // 8. Stream Text
+    // 6. Stream the response using the role-specific model + prompt
     const result = streamText({
       model: aiModel,
       messages,
@@ -387,7 +342,9 @@ export async function POST(request: NextRequest) {
       tools: tools as any,
     });
 
-    return (result as any).toDataStreamResponse ? (result as any).toDataStreamResponse() : (result as any).toTextStreamResponse();
+    return (result as any).toDataStreamResponse
+      ? (result as any).toDataStreamResponse()
+      : (result as any).toTextStreamResponse();
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Chat streaming failed" },

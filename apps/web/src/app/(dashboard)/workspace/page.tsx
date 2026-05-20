@@ -68,6 +68,7 @@ import {
   Copy,
   ChevronRight as BreadcrumbSeparator,
   Check,
+  AlertCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
@@ -198,6 +199,19 @@ export default function WorkspacePage() {
   const [editorOpen, setEditorOpen] = useState(true);
   const [terminalOpen, setTerminalOpen] = useState(true);
 
+  // Orchestration mode state
+  const [orchestrateMode, setOrchestrateMode] = useState(false);
+  const [orchestrating, setOrchestrating] = useState(false);
+  const [orchestrationEvents, setOrchestrationEvents] = useState<Array<{type: string; text: string; sender?: string}>>([]);
+  const orchestrationAbortRef = useRef<AbortController | null>(null);
+
+  // Settings bridge status (loaded from API)
+  const [bridgeStatus, setBridgeStatus] = useState<{
+    activeRole: string;
+    roleAssignments: Record<string, string>;
+    security: Record<string, boolean>;
+  } | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const terminalEndRef = useRef<HTMLDivElement>(null);
 
@@ -274,6 +288,7 @@ export default function WorkspacePage() {
       .catch(() => setAgents([]));
 
     loadFolderTree("");
+    loadBridgeStatus();
   }, []);
 
   // Debounced Auto-Save
@@ -602,6 +617,87 @@ export default function WorkspacePage() {
     } catch {
       toast.error("Failed to delete target.");
     }
+  };
+
+  // Load bridge status (role assignments + security from settings)
+  const loadBridgeStatus = async () => {
+    try {
+      const [rolesRes, secRes] = await Promise.all([
+        getJson<{ roles: Record<string, string> }>("/api/settings/roles"),
+        getJson<{ security: Record<string, boolean> }>("/api/settings/security"),
+      ]);
+      setBridgeStatus({
+        activeRole: "Coding",
+        roleAssignments: rolesRes.roles,
+        security: secRes.security,
+      });
+    } catch {
+      // settings not configured yet
+    }
+  };
+
+  // Orchestration: send task to /api/chat/orchestrate and stream SSE events
+  const handleOrchestrateSubmit = async (task: string) => {
+    if (orchestrating) return;
+    setOrchestrating(true);
+    setOrchestrationEvents([{ type: "status", text: "Initializing multi-agent control plane..." }]);
+
+    const abortController = new AbortController();
+    orchestrationAbortRef.current = abortController;
+
+    try {
+      const res = await fetch("/api/chat/orchestrate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task, workspaceRoot: rootPath || process.cwd() }),
+        signal: abortController.signal,
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        setOrchestrationEvents(prev => [...prev, { type: "error", text: `Orchestration failed: ${errText}` }]);
+        setOrchestrating(false);
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (reader) {
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+          for (const part of parts) {
+            if (part.startsWith("data: ")) {
+              try {
+                const event = JSON.parse(part.substring(6));
+                setOrchestrationEvents(prev => [...prev, {
+                  type: event.type,
+                  text: event.text || "",
+                  sender: event.sender,
+                }]);
+              } catch {}
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err.name !== "AbortError") {
+        setOrchestrationEvents(prev => [...prev, { type: "error", text: `Orchestration error: ${err.message}` }]);
+      }
+    } finally {
+      setAttachments([]);
+      setOrchestrating(false);
+      orchestrationAbortRef.current = null;
+    }
+  };
+
+  const handleStopOrchestration = () => {
+    orchestrationAbortRef.current?.abort();
+    setOrchestrating(false);
   };
 
   const handleToggleContext = (path: string, e: React.MouseEvent) => {
@@ -1074,17 +1170,56 @@ export default function WorkspacePage() {
 
             <div className="p-3 border-b border-amber-200/60 bg-amber-50/20 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Bot className="w-4 h-4 text-amber-700 animate-pulse" />
-                <span className="text-sm font-bold text-amber-950">{activeAgent?.name || "AgentOS"}</span>
+                {orchestrateMode ? (
+                  <Cpu className="w-4 h-4 text-purple-600 animate-pulse" />
+                ) : (
+                  <Bot className="w-4 h-4 text-amber-700 animate-pulse" />
+                )}
+                <div className="flex flex-col">
+                  <span className="text-sm font-bold text-amber-950">
+                    {orchestrateMode ? "Orchestrator" : (bridgeStatus?.activeRole || "AgentOS")}
+                  </span>
+                  <span className="text-[9px] text-amber-600/60">
+                    {orchestrateMode ? "Multi-agent mode" : `Role: ${bridgeStatus?.activeRole || "Coding"}`}
+                  </span>
+                </div>
               </div>
               <div className="flex items-center gap-1.5">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className={cn(
+                          "h-6 text-[9px] border rounded-lg px-2",
+                          orchestrateMode
+                            ? "bg-purple-100 border-purple-300 text-purple-700"
+                            : "border-amber-200 text-amber-700 hover:bg-amber-50"
+                        )}
+                        onClick={() => {
+                          if (!orchestrateMode && attachments.length > 0) {
+                            setAttachments([]);
+                          }
+                          setOrchestrateMode(!orchestrateMode);
+                        }}
+                      >
+                        <Cpu className="w-3 h-3 mr-1" />
+                        {orchestrateMode ? "Single" : "Orchestrate"}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent className="bg-slate-900 text-white border-none text-[10px]">
+                      {orchestrateMode ? "Switch to single-agent chat" : "Enable multi-agent orchestration"}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
                 {isLoading && (
                   <Button size="sm" variant="ghost" onClick={() => stop()} className="h-5 px-1.5 text-[9px] text-red-600 hover:bg-red-50 hover:text-red-700 border border-red-200 rounded">
                     <Square className="w-2.5 h-2.5 mr-1" /> Stop
                   </Button>
                 )}
                 <Badge variant="outline" className="text-[9px] border-amber-300/40 bg-amber-100 text-amber-800 font-medium">
-                  {activeAgent?.model || "default"}
+                  {orchestrateMode ? "Multi-Agent" : (bridgeStatus?.activeRole || "Coding")}
                 </Badge>
               </div>
             </div>
@@ -1206,12 +1341,52 @@ export default function WorkspacePage() {
               </div>
             )}
 
-            <input type="file" multiple accept="image/png, image/jpeg, image/jpg, image/webp, image/gif" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />              <form onSubmit={(e) => {
+            <input type="file" multiple accept="image/png, image/jpeg, image/jpg, image/webp, image/gif" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
+
+            {/* Orchestration Events Panel */}
+            {orchestrateMode && orchestrationEvents.length > 0 && (
+              <div className="border-t border-purple-200/40 bg-purple-50/20 px-3 py-2 max-h-[200px] overflow-y-auto">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[9px] font-bold text-purple-800 uppercase tracking-wider flex items-center gap-1">
+                    <Cpu className="w-3 h-3" /> Orchestration Events
+                  </span>
+                  {orchestrating && (
+                    <Button size="sm" variant="ghost" onClick={handleStopOrchestration}
+                      className="h-5 text-[9px] text-red-500 hover:bg-red-50 rounded px-1.5">
+                      <Square className="w-2.5 h-2.5 mr-1" /> Stop
+                    </Button>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  {orchestrationEvents.map((event, idx) => (
+                    <div key={idx} className="flex items-start gap-2 text-[10px] font-mono">
+                      {event.type === "status" && <Loader2 className="w-3 h-3 text-amber-500 animate-spin mt-0.5 shrink-0" />}
+                      {event.type === "completed" && <CheckCircle className="w-3 h-3 text-emerald-500 mt-0.5 shrink-0" />}
+                      {event.type === "error" && <AlertCircle className="w-3 h-3 text-red-500 mt-0.5 shrink-0" />}
+                      {event.type === "agent_message" && <Cpu className="w-3 h-3 text-purple-500 mt-0.5 shrink-0" />}
+                      {(event.type === "text" || event.type === "plan_update" || event.type === "tool_call" || event.type === "tool_result") &&
+                        <ChevronRight className="w-3 h-3 text-amber-400 mt-0.5 shrink-0" />
+                      }
+                      <div className="flex-1 min-w-0">
+                        {event.sender && <span className="font-bold text-purple-700">[{event.sender}] </span>}
+                        <span className="text-amber-900">{event.text}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <form onSubmit={(e) => {
                 e.preventDefault();
                 if (!chatInput.trim() && attachments.length === 0) return;
                 const text = chatInput;
                 setChatInput("");
-                sendMessage({ text });
+                if (orchestrateMode) {
+                  handleOrchestrateSubmit(text);
+                } else {
+                  sendMessage({ text });
+                }
               }} className="border-t border-amber-200/60 bg-amber-50/20 p-3 flex flex-col gap-2">
               <div className="relative flex flex-col gap-1">
                 <Textarea
@@ -1224,7 +1399,11 @@ export default function WorkspacePage() {
                       if (!chatInput.trim() && attachments.length === 0) return;
                       const text = chatInput;
                       setChatInput("");
-                      sendMessage({ text });
+                      if (orchestrateMode) {
+                        handleOrchestrateSubmit(text);
+                      } else {
+                        sendMessage({ text });
+                      }
                     }
                   }}
                   placeholder={`Send instructions to agent (type @ to reference paths, paste or drag screenshots)...`}

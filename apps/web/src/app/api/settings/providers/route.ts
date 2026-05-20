@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
       label: body.label,
       base_url: body.baseUrl ?? null,
       default_model: body.defaultModel ?? null,
-      enabled: Boolean(body.enabled ?? false),
+      enabled: Boolean(body.enabled ?? true),
       metadata: body.metadata ?? {},
     };
 
@@ -48,6 +48,16 @@ export async function POST(request: NextRequest) {
       // Re-validation must happen explicitly; clear any prior status.
       updates.validation_status = "pending";
       updates.last_validated_at = null;
+    }
+
+    // Validate base_url for known cloud providers
+    if (!body.baseUrl && ["openai","anthropic","google"].includes(body.provider)) {
+      const presetMap: Record<string, string> = {
+        openai: "https://api.openai.com/v1",
+        anthropic: "https://api.anthropic.com/v1",
+        google: "https://generativelanguage.googleapis.com/v1beta",
+      };
+      updates.base_url = presetMap[body.provider];
     }
 
     const provider = await upsertProviderConfig(updates as ProviderConfigRecord);

@@ -27,11 +27,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const apiKey: string | undefined = typeof body.apiKey === "string" && body.apiKey.length > 0 ? body.apiKey : undefined;
     const updates: Partial<ProviderConfigRecord> = {
       provider: id,
-      label: body.label || existing.label,
+      label: body.label !== undefined ? body.label : existing.label,
       base_url: body.baseUrl !== undefined ? body.baseUrl : existing.base_url,
       default_model: body.defaultModel !== undefined ? body.defaultModel : existing.default_model,
       enabled: body.enabled !== undefined ? Boolean(body.enabled) : existing.enabled,
-      metadata: body.metadata !== undefined ? { ...(existing.metadata ?? {}), ...body.metadata } : existing.metadata,
+      metadata: body.metadata !== undefined ? { ...(body.metadata ?? {}) } : existing.metadata,
     };
 
     if (apiKey) {

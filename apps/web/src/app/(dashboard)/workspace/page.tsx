@@ -1,5 +1,7 @@
 "use client";
 
+import { useChat } from "@ai-sdk/react";
+import { DefaultChatTransport } from "ai";
 import { Toaster } from "sonner";
 import { FileExplorer } from "@/components/workspace/FileExplorer";
 import { EditorPanel } from "@/components/workspace/EditorPanel";
@@ -7,19 +9,32 @@ import { TerminalPanel } from "@/components/workspace/TerminalPanel";
 import { ChatPanel } from "@/components/workspace/ChatPanel";
 import { StatusBar } from "@/components/workspace/StatusBar";
 import { ExecutionGraph } from "@/components/workspace/ExecutionGraph";
+import { QuickSearchDialog } from "@/components/workspace/QuickSearchDialog";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { useWorkspace } from "@/components/workspace/workspace-context";
+import { WorkspaceProvider, useWorkspace } from "@/components/workspace/workspace-context";
 
 /**
  * WorkspacePage — clean page shell that consumes the global
  * workspace context and sets up the native desktop IDE panel layout.
  */
 export default function WorkspacePage() {
-  const { sidebarOpen, terminalOpen } = useWorkspace();
+  const chat = useChat({
+    transport: new DefaultChatTransport({ api: "/api/chat" }),
+  });
+
+  return (
+    <WorkspaceProvider useChatHook={() => chat}>
+      <WorkspacePageInner />
+    </WorkspaceProvider>
+  );
+}
+
+function WorkspacePageInner() {
+  const { sidebarOpen, terminalOpen, searchOpen } = useWorkspace();
 
   return (
     <div className="flex flex-col h-full bg-background overflow-hidden font-sans">
@@ -62,6 +77,8 @@ export default function WorkspacePage() {
       <StatusBar />
 
       <Toaster position="bottom-right" />
+
+      {searchOpen && <QuickSearchDialog />}
     </div>
   );
 }

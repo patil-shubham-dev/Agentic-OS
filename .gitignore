@@ -154,3 +154,7 @@ Desktop.ini
 *.sln
 *.sw?
 nul
+
+# Temporary cloned reference repos
+tmp_repos/
+**/tmp_repos/

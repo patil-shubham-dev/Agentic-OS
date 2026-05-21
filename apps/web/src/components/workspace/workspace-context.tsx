@@ -15,6 +15,7 @@ import {
   isElectron
 } from "@/lib/client-api";
 import { useContextStore } from "@/stores/context-store";
+import { useLayout } from "@/components/layout-context";
 import { toast } from "sonner";
 import {
   ContextMenu,
@@ -279,9 +280,7 @@ export function WorkspaceProvider({
     { id: "term1", name: "bash-1", logs: [], running: false, abortController: null },
   ]);
   const [activeSessionId, setActiveSessionId] = useState("term1");
-  const [terminalOpen, setTerminalOpen] = useState(true);
-
-  // Chat
+  const { terminalOpen, setTerminalOpen, searchOpen, setSearchOpen, sidebarOpen, setSidebarOpen } = useLayout();
   const [chatInput, setChatInput] = useState("");
   const isLoading = chat.status === "submitted" || chat.status === "streaming";
 
@@ -302,13 +301,9 @@ export function WorkspaceProvider({
   const orchestrationAbortRef = useRef<AbortController | null>(null);
 
   // Command Palette
-  const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
-
-  // Layout
-  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   // Tool approval
   const [approvingToolId, setApprovingToolId] = useState<string | null>(null);

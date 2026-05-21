@@ -184,6 +184,17 @@ export async function POST(request: NextRequest) {
 
     const lastMessage = messages[messages.length - 1];
     if (hasAttachments && lastMessage.role === "user") {
+      const supportsVision = resolved.normalizedModel.capabilities.has("vision");
+
+      if (!supportsVision) {
+        return NextResponse.json(
+          {
+            error: `The model "${resolved.modelName}" does not support image input. Paste only text, or assign a vision-capable model (e.g. GPT-4o, Claude 3.5 Sonnet, Gemini) to the Vision role in Settings.`,
+          },
+          { status: 400 },
+        );
+      }
+
       const content: any[] = [
         { type: "text", text: lastMessage.content || "Analyze this image." },
       ];

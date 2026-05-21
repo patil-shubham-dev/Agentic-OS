@@ -1,12 +1,10 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Tooltip,
@@ -30,7 +28,7 @@ import {
 import { cn } from "@/lib/utils";
 import { productName } from "@/lib/product-blueprint";
 import { getJson } from "@/lib/client-api";
-import { WorkspaceProvider, useWorkspace } from "@/components/workspace/workspace-context";
+import { LayoutProvider, useLayout } from "@/components/layout-context";
 
 interface SetupStatusResponse {
   ready: boolean;
@@ -57,19 +55,15 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const chat = useChat({
-    transport: new DefaultChatTransport({ api: "/api/chat" }),
-  });
-
   return (
-    <WorkspaceProvider useChatHook={() => chat}>
+    <LayoutProvider>
       <DashboardLayoutInner>{children}</DashboardLayoutInner>
-    </WorkspaceProvider>
+    </LayoutProvider>
   );
 }
 
 function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
-  const { sidebarOpen, setSidebarOpen, setSearchOpen, searchOpen } = useWorkspace();
+  const { sidebarOpen, setSidebarOpen, setSearchOpen, searchOpen } = useLayout();
   const pathname = usePathname();
   const router = useRouter();
 
@@ -87,12 +81,6 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
 
   const projectName = setup?.projectName ?? "My Workspace";
   const providerConnected = Boolean(setup?.hasConnectedProvider);
-
-  // Lazy load search dialog inside the layout to support Ctrl+K anywhere
-  const QuickSearchDialog = useMemo(() => {
-    if (typeof window === "undefined") return null;
-    return require("@/components/workspace/QuickSearchDialog").QuickSearchDialog;
-  }, []);
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -274,7 +262,6 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
         </div>
       </div>
 
-      {searchOpen && QuickSearchDialog && <QuickSearchDialog />}
     </TooltipProvider>
   );
 }

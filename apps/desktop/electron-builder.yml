@@ -30,7 +30,7 @@ asarUnpack:
 
 win:
   target:
-    - target: portable
+    - target: nsis
       arch: [x64]
     - target: zip
       arch: [x64]
@@ -41,9 +41,9 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
-  installerIcon: resources/icon.png
-  uninstallerIcon: resources/icon.png
-  installerHeaderIcon: resources/icon.png
+  installerIcon: resources/icon.ico
+  uninstallerIcon: resources/icon.ico
+  installerHeaderIcon: resources/icon.ico
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: AgentOS Studio

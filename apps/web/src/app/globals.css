@@ -3,38 +3,99 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
-    /* Light creamy yellowish palette */
-    --background: 46 60% 97%;
-    --foreground: 38 30% 18%;
+  /* Cursor Dark (charcoal slate) - default dark theme */
+  :root, .dark {
+    --background: 220 13% 7%;
+    --foreground: 210 20% 98%;
 
-    --card: 44 55% 95%;
-    --card-foreground: 38 30% 18%;
+    --card: 220 13% 10%;
+    --card-foreground: 210 20% 98%;
 
-    --popover: 44 55% 96%;
-    --popover-foreground: 38 30% 18%;
+    --popover: 220 13% 8%;
+    --popover-foreground: 210 20% 98%;
 
-    /* Warm amber/saffron as primary */
     --primary: 38 92% 50%;
-    --primary-foreground: 38 30% 10%;
+    --primary-foreground: 38 30% 5%;
 
-    --secondary: 45 40% 90%;
-    --secondary-foreground: 38 30% 22%;
+    --secondary: 220 12% 14%;
+    --secondary-foreground: 210 20% 98%;
 
-    --muted: 44 35% 91%;
-    --muted-foreground: 38 20% 52%;
+    --muted: 220 12% 14%;
+    --muted-foreground: 215 15% 65%;
 
-    --accent: 34 80% 60%;
-    --accent-foreground: 38 30% 10%;
+    --accent: 142 70% 45%;
+    --accent-foreground: 210 20% 98%;
 
-    --destructive: 0 74% 55%;
-    --destructive-foreground: 0 0% 98%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 20% 98%;
 
-    --border: 42 30% 84%;
-    --input: 42 30% 84%;
+    --border: 220 12% 14%;
+    --input: 220 12% 14%;
     --ring: 38 92% 50%;
 
-    --radius: 0.875rem;
+    --radius: 0.5rem;
+  }
+
+  /* OLED Black Theme */
+  .theme-oled {
+    --background: 0 0% 0%;
+    --foreground: 0 0% 98%;
+
+    --card: 0 0% 3%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 0 0% 2%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 38 92% 50%;
+    --primary-foreground: 0 0% 0%;
+
+    --secondary: 0 0% 8%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 0 0% 8%;
+    --muted-foreground: 0 0% 63%;
+
+    --accent: 142 70% 45%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 0 0% 10%;
+    --input: 0 0% 10%;
+    --ring: 38 92% 50%;
+  }
+
+  /* Sleek Light Theme */
+  .theme-light {
+    --background: 220 15% 97%;
+    --foreground: 220 20% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 20% 10%;
+
+    --popover: 0 0% 99%;
+    --popover-foreground: 220 20% 10%;
+
+    --primary: 38 92% 45%;
+    --primary-foreground: 220 20% 98%;
+
+    --secondary: 220 10% 90%;
+    --secondary-foreground: 220 20% 10%;
+
+    --muted: 220 10% 92%;
+    --muted-foreground: 220 8% 40%;
+
+    --accent: 142 70% 40%;
+    --accent-foreground: 220 20% 98%;
+
+    --destructive: 0 84% 50%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 220 10% 88%;
+    --input: 220 10% 88%;
+    --ring: 38 92% 45%;
   }
 }
 
@@ -44,123 +105,80 @@
   }
 
   html {
-    color-scheme: light;
+    color-scheme: dark;
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground overflow-hidden;
     font-feature-settings: "rlig" 1, "calt" 1;
-    background-image:
-      radial-gradient(circle at top left, rgba(251, 191, 36, 0.12), transparent 28%),
-      radial-gradient(circle at top right, rgba(245, 158, 11, 0.08), transparent 24%),
-      radial-gradient(circle at bottom center, rgba(252, 211, 77, 0.06), transparent 30%),
-      linear-gradient(180deg, hsl(46 60% 97%) 0%, hsl(44 52% 95%) 100%);
+    background-image: none; /* Remove cream background image */
   }
 }
 
-/* Scrollbar */
+/* Custom scrollbars - thin and elegant like VS Code */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(42 30% 75%);
-  border-radius: 3px;
+  background: hsl(var(--border));
+  border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(38 40% 62%);
+  background: hsl(var(--muted-foreground) / 0.5);
 }
 
-/* Glass panel — warm ivory with subtle amber border */
+/* High quality shadows and layers */
 .agentos-glass {
-  @apply border bg-white/60 shadow-[0_8px_32px_rgba(180,130,30,0.10)] backdrop-blur-xl;
-  border-color: hsl(42 40% 82% / 0.7);
+  @apply border bg-card/65 shadow-2xl backdrop-blur-xl;
+  border-color: hsl(var(--border));
 }
 
-/* Card — warm parchment */
 .agentos-card {
-  @apply rounded-2xl border bg-white/70 shadow-[0_4px_24px_rgba(180,130,30,0.08)] transition-all;
-  border-color: hsl(42 35% 84%);
+  @apply rounded-xl border bg-card shadow-lg transition-all;
+  border-color: hsl(var(--border));
 }
 
-/* Gradient banner */
-.agentos-gradient {
-  background: linear-gradient(135deg,
-    rgba(251, 191, 36, 0.18) 0%,
-    rgba(245, 158, 11, 0.10) 50%,
-    rgba(252, 228, 160, 0.08) 100%);
-}
-
-/* Shell / page background */
 .agentos-shell {
-  background:
-    radial-gradient(circle at 10% 10%, rgba(251, 191, 36, 0.10), transparent 30%),
-    radial-gradient(circle at 90% 5%, rgba(245, 158, 11, 0.07), transparent 22%),
-    linear-gradient(180deg, hsl(46 60% 97%) 0%, hsl(44 50% 94%) 100%);
+  @apply bg-background;
 }
 
-/* Border glow — warm amber */
-.agentos-border-glow {
-  box-shadow:
-    inset 0 1px 0 rgba(255, 210, 100, 0.25),
-    0 0 0 1px rgba(200, 150, 40, 0.12),
-    0 8px 32px rgba(180, 130, 30, 0.10);
-}
-
-/* Code block */
+/* Code block highlight integration */
 .code-block {
-  @apply relative overflow-hidden rounded-lg;
+  @apply relative overflow-hidden rounded-lg border border-border bg-black/40;
 }
 .code-block pre {
-  @apply overflow-x-auto p-4 text-sm leading-relaxed;
+  @apply overflow-x-auto p-4 text-sm leading-relaxed font-mono;
 }
 
-/* Fade-in */
+/* Animations */
 .animate-in {
-  animation: fade-in 0.25s ease-out;
+  animation: fade-in 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
 @keyframes fade-in {
-  from { opacity: 0; transform: translateY(6px); }
+  from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Terminal cursor */
-.terminal-cursor::after {
-  content: "|";
-  animation: blink 1s step-end infinite;
-}
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0; }
-}
-
-/* Streaming indicator */
-.streaming-text {
-  @apply relative;
-}
-.streaming-text::after {
-  content: "";
-  @apply ml-1 inline-block h-4 w-2 animate-pulse;
-  background: hsl(var(--primary));
-}
-
-/* Green flash overlay — used in DiffView accept animation */
-@keyframes flash-green {
-  0%   { opacity: 0.6; }
-  100% { opacity: 0; }
-}
 .animate-flash-green {
-  animation: flash-green 0.6s ease-out forwards;
+  animation: flash-green 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-/* Typing dots */
-@keyframes typing {
-  0%, 100% { opacity: 0.3; transform: translateY(0); }
-  50%       { opacity: 1;   transform: translateY(-3px); }
+@keyframes flash-green {
+  0%   { background-color: rgba(16, 185, 129, 0.25); }
+  100% { background-color: transparent; }
 }
-.animate-typing {
-  animation: typing 1.2s ease-in-out infinite;
+
+/* Pulse rings for active agents */
+@keyframes pulse-ring {
+  0% { transform: scale(0.95); opacity: 0.5; }
+  50% { transform: scale(1.05); opacity: 0.8; }
+  100% { transform: scale(0.95); opacity: 0.5; }
+}
+.animate-pulse-ring {
+  animation: pulse-ring 2s infinite ease-in-out;
 }

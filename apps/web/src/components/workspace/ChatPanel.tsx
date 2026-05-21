@@ -33,12 +33,19 @@ import {
   Trash2,
   History,
   MessageSquare,
+  HelpCircle,
+  FileCode,
+  Layers,
+  ChevronDown
 } from "lucide-react";
 import { ListSkeleton } from "@/components/skeleton-loader";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { sendJson } from "@/lib/client-api";
 import { useWorkspace } from "./workspace-context";
+import { MessageCard } from "./MessageCard";
+import { FileDiffCard } from "./FileDiffCard";
+import { AgentActivityBar } from "./AgentActivityBar";
 
 const LazyMarkdown = dynamic(
   () => import("./MarkdownRenderer").then((m) => ({ default: m.MarkdownInner })),
@@ -77,28 +84,86 @@ export function ChatPanel() {
     approvingToolId,
     handleApproveTool,
     handleDenyTool,
-    addToolResult,
-    setOpenTabs,
-    setActiveTabPath,
-    setEditorOpen,
+    dirContents,
   } = useWorkspace();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Composer Mode State
+  const [composerMode, setComposerMode] = useState<"ask" | "agent" | "edit" | "architect">("ask");
+  const [atMenuOpen, setAtMenuOpen] = useState(false);
+  const [atFilter, setAtFilter] = useState("");
+
+  // Sync composerMode and orchestrateMode
+  useEffect(() => {
+    if (composerMode === "agent") {
+      setOrchestrateMode(true);
+    } else {
+      setOrchestrateMode(false);
+    }
+  }, [composerMode, setOrchestrateMode]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  /** Render message content handling AI SDK v6 format (string, array, or empty) */
+  // Extract all files from tree to support @ autocomplete
+  const getAllFiles = useCallback(() => {
+    const list: { name: string; path: string }[] = [];
+    Object.values(dirContents).forEach((files) => {
+      files.forEach((file) => {
+        if (!file.isDir) {
+          list.push({ name: file.name, path: file.path });
+        }
+      });
+    });
+    // Deduplicate
+    const uniqueList: { name: string; path: string }[] = [];
+    const seen = new Set<string>();
+    list.forEach((item) => {
+      if (!seen.has(item.path)) {
+        seen.add(item.path);
+        uniqueList.push(item);
+      }
+    });
+    return uniqueList;
+  }, [dirContents]);
+
+  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    setChatInput(value);
+
+    // Simple @ check
+    const atIndex = value.lastIndexOf("@");
+    if (atIndex !== -1 && atIndex >= value.length - 15) {
+      const query = value.slice(atIndex + 1);
+      if (!query.includes(" ") && !query.includes("\n")) {
+        setAtMenuOpen(true);
+        setAtFilter(query.toLowerCase());
+        return;
+      }
+    }
+    setAtMenuOpen(false);
+  };
+
+  const handleSelectAtFile = (filePath: string) => {
+    handleToggleContext(filePath, { stopPropagation: () => {} } as any);
+    const atIndex = chatInput.lastIndexOf("@");
+    if (atIndex !== -1) {
+      setChatInput(chatInput.slice(0, atIndex));
+    }
+    setAtMenuOpen(false);
+    textareaRef.current?.focus();
+  };
+
   const renderMessageContent = useCallback((message: any) => {
     const content = message.content;
-    // AI SDK v6: content can be undefined, null, empty string, string, or array of content parts
     if (content === undefined || content === null) return null;
     if (typeof content === "string") {
       if (!content.trim()) return null;
       return <LazyMarkdown content={content} />;
     }
-    // Array format: [{ type: "text", text: "..." }, { type: "image", ... }]
     if (Array.isArray(content)) {
       const textParts = content.filter((p: any) => p.type === "text" && p.text?.trim());
       if (textParts.length === 0) return null;
@@ -106,7 +171,6 @@ export function ChatPanel() {
         <LazyMarkdown key={idx} content={p.text} />
       ));
     }
-    // Fallback: try to render as string
     return <LazyMarkdown content={String(content)} />;
   }, []);
 
@@ -121,9 +185,13 @@ export function ChatPanel() {
     }
   };
 
+  // Filtered files for @ menu
+  const allFiles = getAllFiles();
+  const filteredAtFiles = allFiles.filter(f => f.name.toLowerCase().includes(atFilter)).slice(0, 5);
+
   return (
     <div
-      className="h-full flex flex-col border-l border-amber-200/60 bg-white relative"
+      className="h-full flex flex-col border-l border-zinc-800 bg-[#141416] relative text-zinc-300"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -135,18 +203,18 @@ export function ChatPanel() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-amber-500/80 backdrop-blur-sm text-white p-6 text-center select-none"
+            className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-amber-500/80 backdrop-blur-sm text-zinc-950 p-6 text-center select-none"
           >
             <motion.div
               animate={{ scale: [1, 1.05, 1] }}
               transition={{ repeat: Infinity, duration: 1.5 }}
-              className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center mb-4"
+              className="w-16 h-16 rounded-full bg-zinc-950/20 flex items-center justify-center mb-4"
             >
-              <ImageIcon className="w-8 h-8 text-white" />
+              <ImageIcon className="w-8 h-8 text-zinc-950" />
             </motion.div>
             <h3 className="text-base font-bold">Drop Image to Attach</h3>
-            <p className="text-xs text-white/95 max-w-[220px] mt-1 leading-relaxed">
-              Release to attach reference context for the Vision multimodal model.
+            <p className="text-xs text-zinc-900/90 max-w-[220px] mt-1 leading-relaxed">
+              Attach image reference for Vision routing.
             </p>
           </motion.div>
         )}
@@ -155,151 +223,143 @@ export function ChatPanel() {
       {/* Chat History Bar */}
       <ChatHistoryBar />
 
-      {/* Header */}
-      <div className="p-3 border-b border-amber-200/60 bg-amber-50/20 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          {orchestrateMode ? (
-            <Cpu className="w-4 h-4 text-purple-600 animate-pulse" />
-          ) : (
-            <Bot className="w-4 h-4 text-amber-700 animate-pulse" />
-          )}
-          <div className="flex flex-col">
-            <span className="text-sm font-bold text-amber-950">
-              {orchestrateMode
-                ? "Orchestrator"
-                : bridgeStatus?.activeRole || "AgentOS"}
-            </span>
-            <span className="text-[9px] text-amber-600/60">
-              {orchestrateMode
-                ? "Multi-agent mode"
-                : `Role: ${bridgeStatus?.activeRole || "Coding"}`}
-            </span>
-          </div>
-          {dbConnected === false && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <AlertCircle className="w-3.5 h-3.5 text-amber-500 animate-pulse shrink-0" />
-                </TooltipTrigger>
-                <TooltipContent className="bg-slate-900 text-white border-none text-[10px] max-w-[200px]">
-                  Database offline — role routing & security will use defaults.
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
+      {/* Mode Selector Panel */}
+      <div className="px-3 py-2 border-b border-zinc-800/80 bg-[#18181c]/60 flex items-center justify-between">
+        <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded px-1.5 py-0.5">
+          <span className="text-[10px] text-zinc-500 font-bold uppercase select-none mr-1.5">Mode:</span>
+          <button
+            onClick={() => setComposerMode("ask")}
+            className={cn(
+              "px-1.5 py-0.5 rounded text-[10px] font-semibold transition-all flex items-center gap-1",
+              composerMode === "ask" ? "bg-zinc-800 text-amber-500" : "text-zinc-450 hover:text-zinc-200"
+            )}
+          >
+            <HelpCircle className="w-3 h-3" />
+            Ask
+          </button>
+          <button
+            onClick={() => setComposerMode("edit")}
+            className={cn(
+              "px-1.5 py-0.5 rounded text-[10px] font-semibold transition-all flex items-center gap-1",
+              composerMode === "edit" ? "bg-zinc-800 text-amber-500" : "text-zinc-450 hover:text-zinc-200"
+            )}
+          >
+            <FileCode className="w-3 h-3" />
+            Edit
+          </button>
+          <button
+            onClick={() => setComposerMode("agent")}
+            className={cn(
+              "px-1.5 py-0.5 rounded text-[10px] font-semibold transition-all flex items-center gap-1",
+              composerMode === "agent" ? "bg-zinc-800 text-amber-500" : "text-zinc-450 hover:text-zinc-200"
+            )}
+          >
+            <Cpu className="w-3 h-3" />
+            Agent
+          </button>
+          <button
+            onClick={() => setComposerMode("architect")}
+            className={cn(
+              "px-1.5 py-0.5 rounded text-[10px] font-semibold transition-all flex items-center gap-1",
+              composerMode === "architect" ? "bg-zinc-800 text-amber-500" : "text-zinc-450 hover:text-zinc-200"
+            )}
+          >
+            <Layers className="w-3 h-3" />
+            Arch
+          </button>
         </div>
+
         <div className="flex items-center gap-1.5">
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className={cn(
-                    "h-6 text-[9px] border rounded-lg px-2",
-                    orchestrateMode
-                      ? "bg-purple-100 border-purple-300 text-purple-700"
-                      : "border-amber-200 text-amber-700 hover:bg-amber-50"
-                  )}
-                  onClick={() => setOrchestrateMode(!orchestrateMode)}
-                >
-                  <Cpu className="w-3 h-3 mr-1" />
-                  {orchestrateMode ? "Single" : "Orchestrate"}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent className="bg-slate-900 text-white border-none text-[10px]">
-                {orchestrateMode
-                  ? "Switch to single-agent chat"
-                  : "Enable multi-agent orchestration"}
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
           {isLoading && (
             <Button
               size="sm"
               variant="ghost"
               onClick={() => stop()}
-              className="h-5 px-1.5 text-[9px] text-red-600 hover:bg-red-50 hover:text-red-700 border border-red-200 rounded"
+              className="h-5 px-1.5 text-[9px] text-red-400 hover:bg-red-950/40 border border-red-900/50 rounded"
             >
-              <Square className="w-2.5 h-2.5 mr-1" /> Stop
+              <Square className="w-2.5 h-2.5 mr-1 fill-red-450" /> Stop
             </Button>
           )}
           <Badge
             variant="outline"
-            className="text-[9px] border-amber-300/40 bg-amber-100 text-amber-800 font-medium"
+            className="text-[9px] border-zinc-800 bg-zinc-900 text-zinc-400 font-medium px-2 py-0.5"
           >
-            {orchestrateMode
-              ? "Multi-Agent"
-              : bridgeStatus?.activeRole || "Coding"}
+            {composerMode.toUpperCase()}
           </Badge>
         </div>
       </div>
 
       {/* Messages */}
-      <ScrollArea className="flex-1 bg-white">
+      <ScrollArea className="flex-1 bg-[#141416]">
         <div className="pb-4">
           {messages.length === 0 && !orchestrating && (
-            <div className="flex flex-col items-center justify-center text-center p-6 pt-12">
-              <div className="w-10 h-10 rounded-2xl bg-amber-500 flex items-center justify-center mb-3 shadow">
-                <Sparkles className="w-5 h-5 text-white animate-spin-slow" />
+            <div className="flex flex-col items-center justify-center text-center p-6 pt-16">
+              <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center mb-4 border border-zinc-700/30">
+                <Sparkles className="w-6 h-6 text-amber-500 animate-pulse" />
               </div>
-              <h3 className="text-sm font-bold text-amber-950">
-                AgentOS Assistant
+              <h3 className="text-sm font-bold text-zinc-200 tracking-wide">
+                AgentOS Composer ({composerMode})
               </h3>
-              <p className="text-xs text-amber-600/70 max-w-[200px] mt-1 leading-relaxed">
-                Ask your active role model to make directory edits or index
-                search paths. Drag or paste reference images to trigger Vision
-                auto-routing!
+              <p className="text-xs text-zinc-500 max-w-[220px] mt-2 leading-relaxed">
+                {composerMode === "ask" && "Ask code architecture questions, inspect definitions, and learn concepts."}
+                {composerMode === "edit" && "Make direct targeted editing modifications to your file system."}
+                {composerMode === "agent" && "Run autonomous agentic loops to build features, fix bugs, and execute tasks."}
+                {composerMode === "architect" && "Design full system modules, structural data models, and database flows."}
+              </p>
+              <p className="text-[10px] text-zinc-650 mt-4 max-w-[200px] border border-zinc-900 rounded p-1.5 font-mono">
+                Type <span className="text-amber-500 font-bold">@</span> to attach specific workspace files directly to prompt context.
               </p>
             </div>
           )}
 
-          {messages.map((message) => (
-            <div
-              key={message.id}
-              className={cn(
-                "px-4 py-3 border-b border-amber-200/20",
-                message.role === "user" ? "bg-white" : "bg-amber-50/15"
-              )}
-            >
-              <div className="flex items-center justify-between mb-2 text-[11px] font-semibold text-amber-900">
-                <span>
-                  {message.role === "user" ? "You" : "Agent"}
-                </span>
-              </div>
-
-              {/* Tool invocations */}
-              {message.parts &&
-                message.parts.filter(
-                  (p: any) =>
-                    p.type === "tool-invocation" || p.type === "dynamic-tool"
-                ).length > 0 && (
-                  <div className="mb-3 space-y-1.5">
-                    {message.parts
-                      .filter(
-                        (p: any) =>
-                          p.type === "tool-invocation" ||
-                          p.type === "dynamic-tool"
-                      )
-                      .map((part: any) => (
-                        <ToolInvocationCard key={part.toolCallId} part={part} />
-                      ))}
-                  </div>
+          {messages.map((message) => {
+            const parts = message.parts?.filter(
+              (p: any) => p.type === "tool-invocation" || p.type === "dynamic-tool"
+            );
+            return (
+              <MessageCard
+                key={message.id}
+                id={message.id}
+                role={message.role === "user" ? "user" : "Manager"}
+                content={typeof message.content === "string" ? message.content : ""}
+                parts={parts}
+                renderMessageContent={renderMessageContent}
+                renderToolInvocation={(part: any) => (
+                  <ToolInvocationCard key={part.toolCallId} part={part} />
                 )}
-
-              {renderMessageContent(message)}
-            </div>
-          ))}
+              />
+            );
+          })}
           <div ref={messagesEndRef} />
         </div>
       </ScrollArea>
 
+      {/* Autocomplete Menu for @ references */}
+      {atMenuOpen && filteredAtFiles.length > 0 && (
+        <div className="absolute left-3 right-3 bottom-[115px] z-50 bg-[#1e1e24] border border-zinc-800 shadow-2xl rounded-lg overflow-hidden p-1">
+          <div className="text-[9px] font-bold text-zinc-500 px-2 py-1 uppercase tracking-wider border-b border-zinc-800">
+            Files in workspace:
+          </div>
+          {filteredAtFiles.map((file) => (
+            <button
+              key={file.path}
+              onClick={() => handleSelectAtFile(file.path)}
+              className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white rounded transition-colors flex items-center gap-2 truncate"
+            >
+              <FileText className="w-3.5 h-3.5 text-zinc-400 flex-shrink-0" />
+              <span className="truncate flex-1 font-mono text-[11px]">{file.name}</span>
+              <span className="text-[9px] text-zinc-500 truncate max-w-[120px]">{file.path.split(/[/\\]/).slice(-2, -1)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Context file chips */}
       {contextPaths.size > 0 && (
-        <div className="px-3 py-2 border-t border-amber-200/40 bg-amber-50/20 flex flex-wrap gap-1.5">
-          <span className="text-[10px] font-bold text-amber-800 flex items-center gap-1 uppercase tracking-wider w-full mb-0.5">
-            <BookOpen className="w-3 h-3 text-amber-650" />
-            Prompt File Context:
+        <div className="px-3 py-2 border-t border-zinc-800 bg-[#18181c]/60 flex flex-wrap gap-1.5 max-h-[80px] overflow-y-auto">
+          <span className="text-[9px] font-bold text-zinc-400 flex items-center gap-1 uppercase tracking-wider w-full mb-0.5">
+            <BookOpen className="w-3 h-3 text-amber-500" />
+            Prompt File Context ({contextPaths.size}):
           </span>
           {(() => {
             const paths = Array.from(contextPaths);
@@ -312,21 +372,21 @@ export function ChatPanel() {
                   return (
                     <Badge
                       key={p}
-                      className="bg-amber-600/10 text-amber-900 border-amber-300 hover:bg-amber-600/20 flex items-center gap-1 text-[10px] px-2 py-0.5 shadow-none rounded-xl"
+                      className="bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700 flex items-center gap-1 text-[10px] px-2 py-0.5 shadow-none rounded"
                     >
-                      <FileText className="w-2.5 h-2.5 text-amber-600" />
+                      <FileText className="w-2.5 h-2.5 text-zinc-450" />
                       <span className="max-w-[120px] truncate">{name}</span>
                       <button
                         onClick={(e) => handleToggleContext(p, e)}
-                        className="hover:bg-amber-200/60 rounded p-0.5"
+                        className="hover:bg-zinc-700 rounded p-0.5 ml-1 transition-colors"
                       >
-                        <X className="w-2 h-2 text-amber-800" />
+                        <X className="w-2 h-2 text-zinc-400 hover:text-white" />
                       </button>
                     </Badge>
                   );
                 })}
                 {overflow > 0 && (
-                  <Badge className="bg-amber-100/70 text-amber-700 border-amber-200 text-[10px] px-2 py-0.5 shadow-none rounded-xl">
+                  <Badge className="bg-zinc-900 text-zinc-500 border-zinc-800 text-[10px] px-2 py-0.5 shadow-none rounded">
                     +{overflow} more
                   </Badge>
                 )}
@@ -338,16 +398,15 @@ export function ChatPanel() {
 
       {/* Image attachments */}
       {attachments.length > 0 && (
-        <div className="px-3 py-2 border-t border-amber-200/40 bg-amber-50/30 flex flex-col gap-1">
-          <span className="text-[9px] font-bold text-amber-800 uppercase tracking-wider flex items-center gap-1.5">
-            <ImageIcon className="w-3 h-3 text-amber-600" /> Multimodal Vision
-            Context ({attachments.length}):
+        <div className="px-3 py-2 border-t border-zinc-800 bg-[#18181c]/40 flex flex-col gap-1">
+          <span className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+            <ImageIcon className="w-3 h-3 text-amber-500" /> Vision Context ({attachments.length}):
           </span>
           <div className="flex items-center gap-2 overflow-x-auto py-1">
             {attachments.map((a) => (
               <div
                 key={a.id}
-                className="relative w-14 h-14 rounded-xl border border-amber-200/80 overflow-hidden flex-shrink-0 shadow-sm bg-white group"
+                className="relative w-14 h-14 rounded border border-zinc-850 overflow-hidden flex-shrink-0 shadow bg-[#18181c] group"
               >
                 <img
                   src={a.base64}
@@ -356,7 +415,7 @@ export function ChatPanel() {
                 />
                 <button
                   onClick={() => handleRemoveAttachment(a.id)}
-                  className="absolute top-0.5 right-0.5 bg-slate-900/85 hover:bg-red-650 text-white rounded-full p-0.5 shadow transition-colors"
+                  className="absolute top-0.5 right-0.5 bg-zinc-900/90 hover:bg-red-600 text-white rounded-full p-0.5 shadow transition-colors"
                 >
                   <X className="w-2.5 h-2.5" />
                 </button>
@@ -375,61 +434,12 @@ export function ChatPanel() {
         className="hidden"
       />
 
-      {/* Orchestration events */}
-      {orchestrateMode && orchestrationEvents.length > 0 && (
-        <div className="border-t border-purple-200/40 bg-purple-50/20 px-3 py-2 max-h-[200px] overflow-y-auto">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[9px] font-bold text-purple-800 uppercase tracking-wider flex items-center gap-1">
-              <Cpu className="w-3 h-3" /> Orchestration Events
-            </span>
-            {orchestrating && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={handleStopOrchestration}
-                className="h-5 text-[9px] text-red-500 hover:bg-red-50 rounded px-1.5"
-              >
-                <Square className="w-2.5 h-2.5 mr-1" /> Stop
-              </Button>
-            )}
-          </div>
-          <div className="space-y-1">
-            {orchestrationEvents.map((event, idx) => (
-              <div
-                key={idx}
-                className="flex items-start gap-2 text-[10px] font-mono"
-              >
-                {event.type === "status" && (
-                  <Loader2 className="w-3 h-3 text-amber-500 animate-spin mt-0.5 shrink-0" />
-                )}
-                {event.type === "completed" && (
-                  <CheckCircle className="w-3 h-3 text-emerald-500 mt-0.5 shrink-0" />
-                )}
-                {event.type === "error" && (
-                  <AlertCircle className="w-3 h-3 text-red-500 mt-0.5 shrink-0" />
-                )}
-                {event.type === "agent_message" && (
-                  <Cpu className="w-3 h-3 text-purple-500 mt-0.5 shrink-0" />
-                )}
-                {(event.type === "text" ||
-                  event.type === "plan_update" ||
-                  event.type === "tool_call" ||
-                  event.type === "tool_result") && (
-                  <ChevronRight className="w-3 h-3 text-amber-400 mt-0.5 shrink-0" />
-                )}
-                <div className="flex-1 min-w-0">
-                  {event.sender && (
-                    <span className="font-bold text-purple-700">
-                      [{event.sender}]{' '}
-                    </span>
-                  )}
-                  <span className="text-amber-900">{event.text}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Agent Activity */}
+      <AgentActivityBar
+        events={orchestrationEvents}
+        active={orchestrating}
+        onStop={handleStopOrchestration}
+      />
 
       {/* Input area */}
       <form
@@ -437,12 +447,13 @@ export function ChatPanel() {
           e.preventDefault();
           handleSend();
         }}
-        className="border-t border-amber-200/60 bg-amber-50/20 p-3 flex flex-col gap-2"
+        className="border-t border-zinc-800 bg-[#18181c]/80 p-3 flex flex-col gap-2"
       >
         <div className="relative flex flex-col gap-1">
           <Textarea
+            ref={textareaRef}
             value={chatInput}
-            onChange={(e) => setChatInput(e.target.value)}
+            onChange={handleTextareaChange}
             onPaste={handlePaste}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -450,12 +461,17 @@ export function ChatPanel() {
                 handleSend();
               }
             }}
-            placeholder="Send instructions to agent..."
-            className="min-h-[70px] pr-12 pl-2 resize-none bg-white border-amber-200 focus-visible:ring-amber-500 text-amber-950 text-xs rounded-xl"
+            placeholder={
+              composerMode === "ask" ? "Ask a question about the project... (type @ for files)" :
+              composerMode === "edit" ? "Instruct modifications... (type @ for files)" :
+              composerMode === "agent" ? "Describe a complex goal... (type @ for files)" :
+              "Design high-level architecture... (type @ for files)"
+            }
+            className="min-h-[70px] pr-14 pl-2 resize-none bg-[#141416] border-zinc-800 focus-visible:ring-amber-500/30 text-zinc-200 text-xs rounded shadow-inner"
             disabled={isLoading || orchestrating}
           />
 
-          <div className="absolute bottom-2 right-2 flex items-center gap-1.5">
+          <div className="absolute bottom-2 right-2 flex items-center gap-1">
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -463,14 +479,14 @@ export function ChatPanel() {
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 text-amber-700 hover:bg-amber-100 rounded-lg"
+                    className="h-7 w-7 text-zinc-400 hover:bg-zinc-800 rounded transition-colors"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isLoading || orchestrating}
                   >
                     <Paperclip className="w-3.5 h-3.5" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent className="bg-slate-900 text-white border-none text-[9px]">
+                <TooltipContent className="bg-zinc-900 border border-zinc-800 text-white text-[9px]">
                   Attach Screenshot
                 </TooltipContent>
               </Tooltip>
@@ -479,7 +495,7 @@ export function ChatPanel() {
             <Button
               type="submit"
               size="icon"
-              className="h-7 w-7 bg-amber-600 hover:bg-amber-700 text-white rounded-lg shadow-sm"
+              className="h-7 w-7 bg-amber-500 hover:bg-amber-400 text-zinc-950 rounded transition-colors"
               disabled={
                 (!chatInput.trim() && attachments.length === 0) ||
                 isLoading ||
@@ -508,15 +524,11 @@ function ChatHistoryBar() {
     deleteChat,
     selectChat,
     messages,
-    setMessages,
-    chatInput,
-    setChatInput,
   } = useWorkspace();
 
   const [open, setOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown on click outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
@@ -528,7 +540,7 @@ function ChatHistoryBar() {
   }, []);
 
   const currentChat = chats.find((c: any) => c.id === currentChatId);
-  const chatTitle = currentChat?.title || "Select or create a chat";
+  const chatTitle = currentChat?.title || "Active Conversation";
 
   const handleNewChat = async () => {
     setOpen(false);
@@ -559,11 +571,9 @@ function ChatHistoryBar() {
         model: "default",
       });
       const newChat = data.chat;
-      // Save the current messages to the new chat
       await sendJson(`/api/chats/${newChat.id}`, "PATCH", {
         messages: messages,
       });
-      // Refresh and select
       await loadChats();
       await selectChat(newChat.id);
       toast.success("Chat saved");
@@ -573,19 +583,19 @@ function ChatHistoryBar() {
   };
 
   return (
-    <div ref={dropdownRef} className="relative border-b border-amber-200/40">
+    <div ref={dropdownRef} className="relative border-b border-zinc-800/80">
       <div
-        className="flex items-center justify-between px-3 py-1.5 bg-amber-50/10 hover:bg-amber-50/30 cursor-pointer transition-colors select-none"
+        className="flex items-center justify-between px-3 py-1.5 bg-[#18181c] hover:bg-zinc-800/20 cursor-pointer transition-colors select-none"
         onClick={() => setOpen(!open)}
       >
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          <History className="w-3 h-3 text-amber-500 shrink-0" />
-          <span className="text-[11px] font-bold text-amber-900 truncate max-w-[180px]">
+          <History className="w-3 h-3 text-[#dcb45c] shrink-0" />
+          <span className="text-[11px] font-bold text-zinc-300 truncate max-w-[180px]">
             {chatTitle}
           </span>
           <ChevronRight
             className={cn(
-              "w-3 h-3 text-amber-400 shrink-0 transition-transform",
+              "w-3 h-3 text-zinc-500 shrink-0 transition-transform",
               open && "rotate-90"
             )}
           />
@@ -593,7 +603,7 @@ function ChatHistoryBar() {
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
           <button
             onClick={handleNewChat}
-            className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold text-amber-700 hover:text-amber-900 hover:bg-amber-100/60 rounded-lg transition-colors"
+            className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded transition-colors"
             title="New chat"
           >
             <Plus className="w-3 h-3" />
@@ -609,17 +619,16 @@ function ChatHistoryBar() {
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            className="absolute left-0 right-0 z-40 bg-white border-x border-b border-amber-200/60 shadow-lg rounded-b-xl overflow-hidden"
+            className="absolute left-0 right-0 z-40 bg-[#1e1e24] border-x border-b border-zinc-800 shadow-2xl rounded-b overflow-hidden"
             style={{ top: "100%" }}
           >
             <div className="max-h-[260px] overflow-y-auto p-1.5 space-y-0.5">
-              {/* Unsaved messages prompt */}
               {!currentChatId && messages.length > 0 && (
                 <button
                   onClick={handleSaveCurrentAsChat}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-amber-800 hover:bg-amber-100/60 rounded-lg transition-colors"
+                  className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-zinc-300 hover:bg-zinc-800 rounded transition-colors"
                 >
-                  <Plus className="w-3.5 h-3.5 text-emerald-500" />
+                  <Plus className="w-3.5 h-3.5 text-emerald-400" />
                   <span className="font-medium">Save current conversation</span>
                 </button>
               )}
@@ -629,10 +638,10 @@ function ChatHistoryBar() {
                   <ListSkeleton count={3} />
                 </div>
               ) : chats.length === 0 ? (
-                <div className="text-center py-4 text-[11px] text-amber-600/60">
-                  <MessageSquare className="w-5 h-5 mx-auto mb-1.5 text-amber-400/50" />
+                <div className="text-center py-6 text-[11px] text-zinc-500">
+                  <MessageSquare className="w-5 h-5 mx-auto mb-2 text-zinc-650" />
                   <p>No saved chats yet.</p>
-                  <p className="text-[10px]">Start a conversation and it will auto-save.</p>
+                  <p className="text-[10px] text-zinc-600 mt-0.5">Your conversations will auto-save here.</p>
                 </div>
               ) : (
                 chats.map((chat: any) => {
@@ -651,20 +660,20 @@ function ChatHistoryBar() {
                     <div
                       key={chat.id}
                       className={cn(
-                        "group flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors",
+                        "group flex items-center justify-between px-3 py-1.5 rounded cursor-pointer transition-colors",
                         isActive
-                          ? "bg-amber-200/40 text-amber-950"
-                          : "hover:bg-amber-50/80 text-amber-800"
+                          ? "bg-zinc-800 text-white"
+                          : "hover:bg-zinc-800/40 text-zinc-400 hover:text-zinc-200"
                       )}
                       onClick={() => handleSelectChat(chat.id)}
                     >
                       <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <MessageSquare className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <MessageSquare className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
                         <div className="min-w-0">
                           <div className="text-[11px] font-medium truncate max-w-[160px]">
                             {chat.title || "Untitled"}
                           </div>
-                          <div className="text-[9px] text-amber-600/60">
+                          <div className="text-[9px] text-zinc-500">
                             {updatedAt}
                             {msgCount > 0 && ` · ${msgCount} msgs`}
                           </div>
@@ -672,10 +681,10 @@ function ChatHistoryBar() {
                       </div>
                       <button
                         onClick={(e) => handleDeleteChat(e, chat.id)}
-                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 rounded-md transition-all"
+                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-zinc-700 rounded transition-all ml-1 shrink-0"
                         title="Delete chat"
                       >
-                        <Trash2 className="w-3 h-3 text-red-500" />
+                        <Trash2 className="w-3 h-3 text-red-400" />
                       </button>
                     </div>
                   );
@@ -695,7 +704,6 @@ function ToolInvocationCard({ part }: { part: any }) {
     approvingToolId,
     handleApproveTool,
     handleDenyTool,
-    addToolResult,
     setOpenTabs,
     setActiveTabPath,
     setEditorOpen,
@@ -704,64 +712,63 @@ function ToolInvocationCard({ part }: { part: any }) {
   const toolCallId = part.toolCallId;
   const toolName = part.toolName || part.type;
   const state = part.state;
-  const hasResult =
-    state === "result" ||
-    state === "output-available" ||
-    state === "output-error";
+  const args = (part.input || part.args) as any;
+
+  if (toolName === "suggestEdit" && args?.path) {
+    return (
+      <FileDiffCard
+        filePath={args.path}
+        originalContent={args.originalContent}
+        newContent={args.newContent}
+        toolCallId={toolCallId}
+        toolName={toolName}
+        state={state}
+        approving={approvingToolId === toolCallId}
+        onApprove={handleApproveTool}
+        onDeny={handleDenyTool}
+        onReviewDiff={() => {
+          setOpenTabs((prev) => [
+            ...prev.filter((t) => t.path !== args.path),
+            {
+              path: args.path,
+              name: args.path.split(/[/\\]/).pop() || "Edit",
+              content: args.newContent,
+              originalContent: args.originalContent,
+              dirty: true,
+              isDiff: true,
+              toolCallId,
+            },
+          ]);
+          setActiveTabPath(args.path);
+          setEditorOpen(true);
+        }}
+      />
+    );
+  }
+
+  const hasResult = state === "result" || state === "output-available" || state === "output-error";
 
   return (
-    <div className="flex flex-col gap-1.5 p-2 bg-amber-100/50 border border-amber-200/70 rounded-xl text-[10px] font-mono text-amber-900">
+    <div className="flex flex-col gap-1.5 p-2.5 bg-[#18181c] border border-zinc-800/80 rounded text-[10px] font-mono text-zinc-350">
       <div className="flex items-center gap-2">
         {hasResult ? (
-          <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+          <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
         ) : (
-          <Loader2 className="w-3.5 h-3.5 text-amber-500 animate-spin" />
+          <Loader2 className="w-3.5 h-3.5 text-amber-500 animate-spin shrink-0" />
         )}
-        <span className="font-bold">{toolName}</span>
+        <span className="font-bold text-zinc-200">{toolName}</span>
         <span className="opacity-70 truncate max-w-[150px]">
-          {JSON.stringify(part.input || part.args)}
+          {JSON.stringify(args)}
         </span>
       </div>
 
-      {toolName === "suggestEdit" && !hasResult && (
-        <Button
-          size="sm"
-          className="w-full bg-amber-600 hover:bg-amber-700 text-white mt-1 h-7"
-          onClick={() => {
-            const args = (part.input || part.args) as any;
-            setOpenTabs((prev) => [
-              ...prev.filter((t) => t.path !== args.path),
-              {
-                path: args.path,
-                name: args.path.split(/[/\\]/).pop() || "Edit",
-                content: args.newContent,
-                originalContent: args.originalContent,
-                dirty: true,
-                isDiff: true,
-                toolCallId,
-              },
-            ]);
-            setActiveTabPath(args.path);
-            setEditorOpen(true);
-          }}
-        >
-          Review Code Diff
-        </Button>
-      )}
-
-      {toolName !== "suggestEdit" && !hasResult && (
+      {!hasResult && (
         <div className="flex gap-2 mt-1">
           <Button
             size="sm"
-            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] h-6 flex items-center justify-center gap-1"
+            className="flex-1 bg-[#dcb45c] hover:bg-amber-400 text-zinc-950 text-[9px] h-6 flex items-center justify-center gap-1 rounded transition-colors"
             disabled={approvingToolId === toolCallId}
-            onClick={() =>
-              handleApproveTool(
-                toolCallId,
-                toolName,
-                part.input || part.args
-              )
-            }
+            onClick={() => handleApproveTool(toolCallId, toolName, args)}
           >
             {approvingToolId === toolCallId ? (
               <Loader2 className="w-3 h-3 animate-spin" />
@@ -773,7 +780,7 @@ function ToolInvocationCard({ part }: { part: any }) {
           <Button
             size="sm"
             variant="outline"
-            className="flex-1 border-amber-300 text-amber-900 text-[9px] h-6 hover:bg-amber-100 flex items-center justify-center gap-1"
+            className="flex-1 border-zinc-800 bg-[#1e1e24] hover:bg-zinc-800 text-zinc-300 text-[9px] h-6 flex items-center justify-center gap-1 rounded transition-colors"
             disabled={approvingToolId === toolCallId}
             onClick={() => handleDenyTool(toolCallId)}
           >

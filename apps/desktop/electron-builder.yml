@@ -1,0 +1,94 @@
+appId: com.agentos.studio
+productName: AgentOS Studio
+copyright: Copyright © 2025 AgentOS Studio
+
+directories:
+  output: out
+  buildResources: resources
+
+npmRebuild: false
+
+files:
+  - dist/**/*
+  - "!dist/**/*.map"
+
+extraResources:
+  - from: ../web/.next/standalone
+    to: web
+    filter:
+      - "**/*"
+      - "!cache/**"
+  - from: ../web/.next/static
+    to: web/apps/web/.next/static
+  - from: ../web/public
+    to: web/apps/web/public
+
+asar: true
+asarUnpack:
+  - "node_modules/keytar/**"
+  - "node_modules/node-pty/**"
+
+win:
+  target:
+    - target: portable
+      arch: [x64]
+    - target: zip
+      arch: [x64]
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+  icon: resources/icon.png
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: resources/icon.png
+  uninstallerIcon: resources/icon.png
+  installerHeaderIcon: resources/icon.png
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: AgentOS Studio
+
+mac:
+  target:
+    - target: dmg
+      arch: [x64]
+    - target: zip
+      arch: [x64]
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+  icon: resources/icon.png
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.plist
+
+dmg:
+  title: "AgentOS Studio ${version}"
+  background: null
+  window:
+    width: 600
+    height: 400
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+  icon: resources/icon.png
+  category: Development
+  desktop:
+    Name: AgentOS Studio
+    Comment: Unified AI workspace for chat, coding, design, and automation
+    Categories: Development;Utility;
+    MimeType: x-scheme-handler/agentos;
+
+publish:
+  provider: generic
+  url: https://releases.agentos.studio
+  channel: latest
+
+protocols:
+  name: AgentOS Studio
+  schemes:
+    - agentos

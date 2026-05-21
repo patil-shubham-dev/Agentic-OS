@@ -1,7 +1,20 @@
 "use client";
 
 import React, { createContext, useContext, useState, useRef, useEffect, useCallback, type ReactNode } from "react";
-import { getJson, sendJson } from "@/lib/client-api";
+import { usePathname, useRouter } from "next/navigation";
+import {
+  getJson,
+  sendJson,
+  readFile,
+  writeFile,
+  deleteFile,
+  renameFile,
+  readDirectory,
+  createDirectory,
+  showOpenDialog,
+  isElectron
+} from "@/lib/client-api";
+import { useContextStore } from "@/stores/context-store";
 import { toast } from "sonner";
 import {
   ContextMenu,
@@ -10,6 +23,18 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
+import { 
+  FileCode, 
+  FileJson, 
+  FileText, 
+  FileImage, 
+  Globe, 
+  Terminal, 
+  Folder, 
+  FolderOpen,
+  ChevronRight,
+  ChevronDown
+} from "lucide-react";
 
 // ============================================================
 // Types
@@ -47,6 +72,7 @@ export interface TerminalSession {
   logs: TerminalLog[];
   running: boolean;
   abortController: AbortController | null;
+  cwd?: string;
 }
 
 export interface TerminalLog {
@@ -89,9 +115,11 @@ interface WorkspaceContextType {
   setRootPath: (path: string) => void;
   dirContents: Record<string, FileNode[]>;
   expandedPaths: Set<string>;
+  setExpandedPaths: React.Dispatch<React.SetStateAction<Set<string>>>;
   loadingPaths: Set<string>;
   loadFolderTree: (folderPath: string) => Promise<void>;
   handleToggleFolder: (folderPath: string) => void;
+  handleOpenFolder: () => Promise<void>;
 
   // Editor
   openTabs: OpenTab[];
@@ -224,10 +252,10 @@ export function WorkspaceProvider({
     addToolResult: (result: any) => void;
   };
 }) {
-  // Chat hook from parent
+  const pathname = usePathname();
+  const router = useRouter();
   const chat = useChatHook();
 
-  // Agents
   const [agents, setAgents] = useState<any[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState("coding");
 
@@ -424,9 +452,24 @@ export function WorkspaceProvider({
       })
       .catch(() => setAgents([]));
 
-    loadFolderTree("");
+    const savedRoot = localStorage.getItem("agentos_root_path");
+    if (savedRoot) {
+      setRootPath(savedRoot);
+      loadFolderTree(savedRoot);
+    } else {
+      loadFolderTree("");
+    }
     loadBridgeStatus();
-  }, []);
+  }, [loadFolderTree]);
+
+  // Auto-sync directory (cwd) of active and idle terminals when rootPath changes
+  useEffect(() => {
+    if (rootPath) {
+      setSessions((prev) =>
+        prev.map((s) => (s.cwd ? s : { ...s, cwd: rootPath }))
+      );
+    }
+  }, [rootPath]);
 
   // Auto-save
   useEffect(() => {
@@ -475,12 +518,28 @@ export function WorkspaceProvider({
   // Filesystem Operations
   // ============================================================
   const loadFolderTree = useCallback(async (folderPath: string) => {
-    const url = folderPath ? `/api/files/tree?path=${encodeURIComponent(folderPath)}` : "/api/files/tree";
     setLoadingPaths((prev) => new Set(prev).add(folderPath || "root"));
     try {
-      const data = await getJson<{ path: string; items: FileNode[] }>(url);
-      if (!rootPath && !folderPath) setRootPath(data.path);
-      setDirContents((prev) => ({ ...prev, [folderPath || data.path]: data.items }));
+      let activePath = folderPath;
+      if (!activePath) {
+        // Fallback or read from backend first
+        const rootRes = await getJson<{ path: string }>("/api/files/tree");
+        activePath = rootRes.path;
+      }
+
+      // Read using unified readDirectory helper (handles Electron native calls automatically!)
+      const result = await readDirectory(activePath);
+      const items: FileNode[] = result.map((item: any) => ({
+        name: item.name,
+        path: item.path,
+        relPath: item.relPath || item.path.replace(activePath, ""),
+        isDir: item.isDir,
+        size: item.size || 0,
+        updatedAt: item.modifiedAt || new Date().toISOString(),
+      }));
+
+      if (!rootPath && !folderPath) setRootPath(activePath);
+      setDirContents((prev) => ({ ...prev, [folderPath || activePath]: items }));
       if (folderPath) setExpandedPaths((prev) => new Set(prev).add(folderPath));
     } catch {
       toast.error(`Failed to load folder tree`);
@@ -492,6 +551,25 @@ export function WorkspaceProvider({
       });
     }
   }, [rootPath]);
+
+  const handleOpenFolder = useCallback(async () => {
+    try {
+      const res = await showOpenDialog({
+        properties: ["openDirectory"],
+      });
+      if (res.canceled || !res.filePaths || res.filePaths.length === 0) return;
+      const selectedPath = res.filePaths[0];
+      setRootPath(selectedPath);
+      setExpandedPaths(new Set());
+      setDirContents({});
+      await loadFolderTree(selectedPath);
+      useContextStore.getState().build(selectedPath);
+      localStorage.setItem("agentos_root_path", selectedPath);
+      toast.success(`Opened folder: ${selectedPath.split(/[/\\]/).pop()}`);
+    } catch {
+      toast.error("Failed to open folder");
+    }
+  }, [loadFolderTree]);
 
   const handleToggleFolder = useCallback((folderPath: string) => {
     if (expandedPaths.has(folderPath)) {
@@ -509,6 +587,9 @@ export function WorkspaceProvider({
   // Editor Operations
   // ============================================================
   const handleOpenFile = useCallback(async (file: FileNode) => {
+    if (pathname !== "/workspace") {
+      router.push("/workspace");
+    }
     const alreadyOpen = openTabs.find((t) => t.path === file.path);
     if (alreadyOpen) {
       if (focusedPane === "left" || !splitActive) {
@@ -520,8 +601,8 @@ export function WorkspaceProvider({
       return;
     }
     try {
-      const res = await getJson<{ content: string }>(`/api/files/read?path=${encodeURIComponent(file.path)}`);
-      setOpenTabs((prev) => [...prev, { path: file.path, name: file.name, content: res.content, dirty: false }]);
+      const content = await readFile(file.path);
+      setOpenTabs((prev) => [...prev, { path: file.path, name: file.name, content, dirty: false }]);
       if (focusedPane === "left" || !splitActive) {
         setActiveTabPath(file.path);
       } else {
@@ -537,7 +618,7 @@ export function WorkspaceProvider({
     } catch {
       toast.error(`Failed to read file: ${file.name}`);
     }
-  }, [openTabs, focusedPane, splitActive]);
+  }, [openTabs, focusedPane, splitActive, pathname, router]);
 
   const handleCloseTab = useCallback((tabPath: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -547,7 +628,7 @@ export function WorkspaceProvider({
       const shouldSave = window.confirm(`Save changes to "${tab.name}" before closing?`);
       if (shouldSave) {
         // Save then close
-        sendJson("/api/files/write", "POST", { path: tab.path, content: tab.content })
+        writeFile(tab.path, tab.content)
           .then(() => {
             toast.success(`Saved ${tab.name}`);
           })
@@ -568,7 +649,7 @@ export function WorkspaceProvider({
     const tabToSave = openTabs.find((t) => t.path === savePath);
     if (!tabToSave) return;
     try {
-      await sendJson("/api/files/write", "POST", { path: tabToSave.path, content: tabToSave.content });
+      await writeFile(tabToSave.path, tabToSave.content);
       setOpenTabs((prev) => prev.map((t) => (t.path === savePath ? { ...t, dirty: false } : t)));
       toast.success(`Saved changes to ${tabToSave.name}`);
     } catch {
@@ -592,9 +673,10 @@ export function WorkspaceProvider({
   const handleCreateFile = useCallback(async (parentFolder: string) => {
     const fileName = prompt("Enter new file name:");
     if (!fileName) return;
-    const fullPath = `${parentFolder}/${fileName}`;
+    const sep = parentFolder.includes("\\") ? "\\" : "/";
+    const fullPath = parentFolder.endsWith(sep) ? `${parentFolder}${fileName}` : `${parentFolder}${sep}${fileName}`;
     try {
-      await sendJson("/api/files/write", "POST", { path: fullPath, content: "" });
+      await writeFile(fullPath, "");
       toast.success(`File ${fileName} created.`);
       loadFolderTree(parentFolder);
     } catch {
@@ -605,9 +687,10 @@ export function WorkspaceProvider({
   const handleCreateFolder = useCallback(async (parentFolder: string) => {
     const folderName = prompt("Enter new folder name:");
     if (!folderName) return;
-    const fullPath = `${parentFolder}/${folderName}`;
+    const sep = parentFolder.includes("\\") ? "\\" : "/";
+    const fullPath = parentFolder.endsWith(sep) ? `${parentFolder}${folderName}` : `${parentFolder}${sep}${folderName}`;
     try {
-      await sendJson("/api/files/mkdir", "POST", { path: fullPath });
+      await createDirectory(fullPath);
       toast.success(`Folder ${folderName} created.`);
       loadFolderTree(parentFolder);
     } catch {
@@ -616,12 +699,14 @@ export function WorkspaceProvider({
   }, [loadFolderTree]);
 
   const handleRenameItem = useCallback(async (itemPath: string, parentFolder: string) => {
-    const newName = prompt("Enter new name:", itemPath.split("/").pop());
+    const originalName = itemPath.split(/[/\\]/).pop() || "";
+    const newName = prompt("Enter new name:", originalName);
     if (!newName) return;
-    const parentDir = itemPath.substring(0, itemPath.lastIndexOf("/"));
-    const newFullPath = `${parentDir}/${newName}`;
+    const sep = itemPath.includes("\\") ? "\\" : "/";
+    const parentDir = itemPath.substring(0, itemPath.lastIndexOf(sep));
+    const newFullPath = parentDir.endsWith(sep) ? `${parentDir}${newName}` : `${parentDir}${sep}${newName}`;
     try {
-      await sendJson("/api/files/rename", "POST", { oldPath: itemPath, newPath: newFullPath });
+      await renameFile(itemPath, newFullPath);
       toast.success("Renamed successfully.");
       loadFolderTree(parentFolder);
       setOpenTabs((prev) => prev.map((t) => (t.path === itemPath ? { ...t, path: newFullPath, name: newName } : t)));
@@ -632,9 +717,10 @@ export function WorkspaceProvider({
   }, [loadFolderTree, activeTabPath]);
 
   const handleDeleteItem = useCallback(async (itemPath: string, parentFolder: string) => {
-    if (!confirm(`Are you sure you want to delete ${itemPath.split("/").pop()}?`)) return;
+    const name = itemPath.split(/[/\\]/).pop() || "";
+    if (!confirm(`Are you sure you want to delete ${name}?`)) return;
     try {
-      await sendJson("/api/files/delete", "POST", { path: itemPath });
+      await deleteFile(itemPath);
       toast.success("Deleted successfully.");
       loadFolderTree(parentFolder);
       setOpenTabs((prev) => prev.filter((t) => t.path !== itemPath));
@@ -662,12 +748,14 @@ export function WorkspaceProvider({
     if (!sourcePath || sourcePath === targetFolder) return;
     const name = sourcePath.split(/[/\\]/).pop();
     if (!name) return;
-    const destinationPath = `${targetFolder}/${name}`;
+    const sep = targetFolder.includes("\\") ? "\\" : "/";
+    const destinationPath = targetFolder.endsWith(sep) ? `${targetFolder}${name}` : `${targetFolder}${sep}${name}`;
     if (sourcePath === destinationPath) return;
     try {
-      await sendJson("/api/files/rename", "POST", { oldPath: sourcePath, newPath: destinationPath });
+      await renameFile(sourcePath, destinationPath);
       toast.success(`Moved ${name} successfully.`);
-      const sourceParent = sourcePath.substring(0, sourcePath.lastIndexOf("/"));
+      const sourceSep = sourcePath.includes("\\") ? "\\" : "/";
+      const sourceParent = sourcePath.substring(0, sourcePath.lastIndexOf(sourceSep));
       if (sourceParent) loadFolderTree(sourceParent);
       else loadFolderTree(rootPath);
       loadFolderTree(targetFolder);
@@ -845,9 +933,9 @@ export function WorkspaceProvider({
   // Terminal
   const handleAddNewSession = useCallback(() => {
     const newId = `term_${Date.now()}`;
-    setSessions((prev) => [...prev, { id: newId, name: `bash-${prev.length + 1}`, logs: [], running: false, abortController: null }]);
+    setSessions((prev) => [...prev, { id: newId, name: `bash-${prev.length + 1}`, logs: [], running: false, abortController: null, cwd: rootPath || "." }]);
     setActiveSessionId(newId);
-  }, []);
+  }, [rootPath]);
 
   const handleCloseSession = useCallback((id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -937,14 +1025,53 @@ export function WorkspaceProvider({
   // ============================================================
   const renderTreeNodes = useCallback((dirPath: string, depth = 0) => {
     const items = dirContents[dirPath] || [];
+
+    const getFileIcon = (fileName: string) => {
+      const ext = fileName.split('.').pop()?.toLowerCase();
+      switch (ext) {
+        case 'js':
+        case 'jsx':
+          return <FileCode className="w-3.5 h-3.5 text-yellow-500/90 flex-shrink-0" />;
+        case 'ts':
+        case 'tsx':
+          return <FileCode className="w-3.5 h-3.5 text-sky-400/90 flex-shrink-0" />;
+        case 'json':
+          return <FileJson className="w-3.5 h-3.5 text-amber-500/90 flex-shrink-0" />;
+        case 'html':
+          return <Globe className="w-3.5 h-3.5 text-orange-500/90 flex-shrink-0" />;
+        case 'css':
+        case 'scss':
+        case 'less':
+          return <FileCode className="w-3.5 h-3.5 text-purple-400/90 flex-shrink-0" />;
+        case 'md':
+          return <FileText className="w-3.5 h-3.5 text-emerald-400/90 flex-shrink-0" />;
+        case 'png':
+        case 'jpg':
+        case 'jpeg':
+        case 'gif':
+        case 'svg':
+          return <FileImage className="w-3.5 h-3.5 text-teal-400/90 flex-shrink-0" />;
+        case 'sh':
+        case 'bash':
+        case 'bat':
+        case 'cmd':
+          return <Terminal className="w-3.5 h-3.5 text-stone-400/90 flex-shrink-0" />;
+        default:
+          return <FileText className="w-3.5 h-3.5 text-zinc-400/90 flex-shrink-0" />;
+      }
+    };
+
     return items.map((item) => {
       const isExpanded = expandedPaths.has(item.path);
       const isLoading = loadingPaths.has(item.path);
       const isContextSelected = contextPaths.has(item.path);
+      const isOpenTab = openTabs.find((t) => t.path === item.path);
+      const isDirty = isOpenTab?.dirty;
+
       return (
         <ContextMenu key={item.path}>
           <ContextMenuTrigger
-            style={{ paddingLeft: `${depth * 10}px` }}
+            style={{ paddingLeft: `${depth * 8}px` }}
             className="select-none block"
           >
             <div
@@ -952,54 +1079,68 @@ export function WorkspaceProvider({
               onDragStart={(e) => handleFileTreeDragStart(e, item.path)}
               onDragOver={(e) => handleFileTreeDragOver(e, item)}
               onDrop={(e) => handleFileTreeDrop(e, item.isDir ? item.path : dirPath)}
-              className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-amber-100/50 cursor-pointer text-xs transition-colors group"
+              className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-zinc-800/60 cursor-pointer text-xs transition-colors group text-zinc-300 hover:text-white"
               onClick={() => (item.isDir ? handleToggleFolder(item.path) : handleOpenFile(item))}
             >
               {item.isDir ? (
                 isLoading ? (
-                  <span className="w-3.5 h-3.5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
-                ) : isExpanded ? (
-                  <svg className="w-3.5 h-3.5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2V9a2 2 0 00-2-2H9l-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                  <span className="w-3.5 h-3.5 border border-amber-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
                 ) : (
-                  <svg className="w-3.5 h-3.5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
+                  <>
+                    <span className="text-zinc-500 mr-0.5 group-hover:text-zinc-300 flex-shrink-0">
+                      {isExpanded ? (
+                        <ChevronDown className="w-3 h-3" />
+                      ) : (
+                        <ChevronRight className="w-3 h-3" />
+                      )}
+                    </span>
+                    {isExpanded ? (
+                      <FolderOpen className="w-3.5 h-3.5 text-[#dcb45c] flex-shrink-0" />
+                    ) : (
+                      <Folder className="w-3.5 h-3.5 text-[#dcb45c] flex-shrink-0" />
+                    )}
+                  </>
                 )
               ) : (
-                <svg className="w-3.5 h-3.5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                getFileIcon(item.name)
               )}
-              <span className="truncate">{item.name}</span>
+              <span className="truncate flex-1">{item.name}</span>
+              {isDirty && (
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse mr-1 flex-shrink-0" title="Unsaved changes" />
+              )}
             </div>
           </ContextMenuTrigger>
-          <ContextMenuContent className="w-48 bg-white border-amber-200 shadow-lg rounded-xl p-1">
+          <ContextMenuContent className="w-48 bg-[#18181c] border border-zinc-800 shadow-xl rounded-lg p-1 text-zinc-300">
             {item.isDir ? (
               <>
                 <ContextMenuItem
-                  className="text-xs cursor-pointer rounded-lg px-3 py-1.5 focus:bg-amber-100 focus:text-amber-900"
+                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-zinc-800 focus:text-white"
                   onClick={() => handleToggleFolder(item.path)}
                 >
                   {isExpanded ? "Collapse" : "Expand"}
                 </ContextMenuItem>
-                <ContextMenuSeparator className="bg-amber-100 my-0.5" />
+                <ContextMenuSeparator className="bg-zinc-800 my-0.5" />
                 <ContextMenuItem
-                  className="text-xs cursor-pointer rounded-lg px-3 py-1.5 focus:bg-amber-100 focus:text-amber-900"
+                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-zinc-800 focus:text-white"
                   onClick={() => handleCreateFile(item.path)}
                 >
                   New File
                 </ContextMenuItem>
                 <ContextMenuItem
-                  className="text-xs cursor-pointer rounded-lg px-3 py-1.5 focus:bg-amber-100 focus:text-amber-900"
+                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-zinc-800 focus:text-white"
                   onClick={() => handleCreateFolder(item.path)}
                 >
                   New Folder
                 </ContextMenuItem>
-                <ContextMenuSeparator className="bg-amber-100 my-0.5" />
+                <ContextMenuSeparator className="bg-zinc-800 my-0.5" />
                 <ContextMenuItem
-                  className="text-xs cursor-pointer rounded-lg px-3 py-1.5 focus:bg-amber-100 focus:text-amber-900"
+                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-zinc-800 focus:text-white"
                   onClick={() => handleRenameItem(item.path, dirPath)}
                 >
                   Rename
                 </ContextMenuItem>
                 <ContextMenuItem
-                  className="text-xs cursor-pointer rounded-lg px-3 py-1.5 focus:bg-red-100 focus:text-red-700 text-red-600"
+                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-rose-950 focus:text-rose-200 text-rose-400"
                   onClick={() => handleDeleteItem(item.path, dirPath)}
                 >
                   Delete
@@ -1008,26 +1149,26 @@ export function WorkspaceProvider({
             ) : (
               <>
                 <ContextMenuItem
-                  className="text-xs cursor-pointer rounded-lg px-3 py-1.5 focus:bg-amber-100 focus:text-amber-900"
+                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-zinc-800 focus:text-white"
                   onClick={() => handleOpenFile(item)}
                 >
                   Open
                 </ContextMenuItem>
                 <ContextMenuItem
-                  className="text-xs cursor-pointer rounded-lg px-3 py-1.5 focus:bg-amber-100 focus:text-amber-900"
+                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-zinc-800 focus:text-white"
                   onClick={(e) => handleToggleContext(item.path, e as unknown as React.MouseEvent)}
                 >
                   {isContextSelected ? "Remove from Context" : "Add to Context"}
                 </ContextMenuItem>
-                <ContextMenuSeparator className="bg-amber-100 my-0.5" />
+                <ContextMenuSeparator className="bg-zinc-800 my-0.5" />
                 <ContextMenuItem
-                  className="text-xs cursor-pointer rounded-lg px-3 py-1.5 focus:bg-amber-100 focus:text-amber-900"
+                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-zinc-800 focus:text-white"
                   onClick={() => handleRenameItem(item.path, dirPath)}
                 >
                   Rename
                 </ContextMenuItem>
                 <ContextMenuItem
-                  className="text-xs cursor-pointer rounded-lg px-3 py-1.5 focus:bg-red-100 focus:text-red-700 text-red-600"
+                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-rose-950 focus:text-rose-200 text-rose-400"
                   onClick={() => handleDeleteItem(item.path, dirPath)}
                 >
                   Delete
@@ -1036,14 +1177,14 @@ export function WorkspaceProvider({
             )}
           </ContextMenuContent>
           {item.isDir && isExpanded && (
-            <div className="border-l border-amber-200/50 ml-3.5 pl-1.5 my-0.5">
+            <div className="border-l border-zinc-800 ml-2.5 pl-1.5 my-0.5">
               {renderTreeNodes(item.path, depth + 1)}
             </div>
           )}
         </ContextMenu>
       );
     });
-  }, [dirContents, expandedPaths, loadingPaths, contextPaths, handleFileTreeDragStart, handleFileTreeDragOver, handleFileTreeDrop, handleToggleFolder, handleOpenFile, handleCreateFile, handleCreateFolder, handleRenameItem, handleDeleteItem, handleToggleContext]);
+  }, [dirContents, expandedPaths, loadingPaths, contextPaths, openTabs, handleFileTreeDragStart, handleFileTreeDragOver, handleFileTreeDrop, handleToggleFolder, handleOpenFile, handleCreateFile, handleCreateFolder, handleRenameItem, handleDeleteItem, handleToggleContext]);
 
   // ============================================================
   // Context Value
@@ -1056,6 +1197,7 @@ export function WorkspaceProvider({
     setRootPath,
     dirContents,
     expandedPaths,
+    setExpandedPaths,
     loadingPaths,
     loadFolderTree,
     handleToggleFolder,

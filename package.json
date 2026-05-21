@@ -9,7 +9,14 @@
   ],
   "scripts": {
     "build": "turbo run build",
+    "generate:icons": "node scripts/generate-icons.js",
     "dev": "turbo run dev --parallel",
+    "dev:desktop": "pnpm --filter @agentos/desktop dev",
+    "build:desktop": "pnpm --filter @agentos/web build && pnpm --filter @agentos/desktop build",
+    "build:desktop:win": "pnpm --filter @agentos/desktop build:win",
+    "build:desktop:mac": "pnpm --filter @agentos/desktop build:mac",
+    "build:desktop:linux": "pnpm --filter @agentos/desktop build:linux",
+    "package": "pnpm --filter @agentos/desktop package",
     "lint": "turbo run lint",
     "test": "turbo run test",
     "clean": "turbo run clean",
@@ -18,6 +25,8 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "jimp": "^1.6.1",
+    "png2icons": "^2.0.1",
     "prettier": "^3.0.0",
     "turbo": "^2.0.0",
     "typescript": "^5.4.0"

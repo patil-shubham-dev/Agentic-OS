@@ -6,6 +6,7 @@ const nextConfig = {
   //   ppr: true,
   //   dynamicIO: true,
   // },
+  output: "standalone",
   outputFileTracingRoot: path.join(__dirname, "../.."),
   images: {
     remotePatterns: [

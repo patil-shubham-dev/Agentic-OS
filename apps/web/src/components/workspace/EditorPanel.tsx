@@ -3,7 +3,10 @@
 import dynamic from "next/dynamic";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Button } from "@/components/ui/button";
-import { Save, Layers, FileText, X, Code2, Loader2, CheckCircle2 } from "lucide-react";
+import { 
+  Save, Layers, FileText, X, Code2, CheckCircle2, ChevronRight,
+  FileCode, FileJson, FileImage, Globe, Terminal 
+} from "lucide-react";
 import { Skeleton } from "@/components/skeleton-loader";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -13,6 +16,41 @@ import { useCallback, useState } from "react";
 
 const Editor = dynamic(() => import("./MonacoEditor").then((m) => ({ default: m.LazyEditor })), { ssr: false });
 const DiffEditor = dynamic(() => import("./MonacoDiffEditor").then((m) => ({ default: m.LazyDiffEditor })), { ssr: false });
+
+const getFileIcon = (fileName: string) => {
+  const ext = fileName.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'js':
+    case 'jsx':
+      return <FileCode className="w-3.5 h-3.5 text-yellow-500/90" />;
+    case 'ts':
+    case 'tsx':
+      return <FileCode className="w-3.5 h-3.5 text-sky-400/90" />;
+    case 'json':
+      return <FileJson className="w-3.5 h-3.5 text-amber-500/90" />;
+    case 'html':
+      return <Globe className="w-3.5 h-3.5 text-orange-500/90" />;
+    case 'css':
+    case 'scss':
+    case 'less':
+      return <FileCode className="w-3.5 h-3.5 text-purple-400/90" />;
+    case 'md':
+      return <FileText className="w-3.5 h-3.5 text-emerald-400/90" />;
+    case 'png':
+    case 'jpg':
+    case 'jpeg':
+    case 'gif':
+    case 'svg':
+      return <FileImage className="w-3.5 h-3.5 text-teal-400/90" />;
+    case 'sh':
+    case 'bash':
+    case 'bat':
+    case 'cmd':
+      return <Terminal className="w-3.5 h-3.5 text-stone-400/90" />;
+    default:
+      return <FileText className="w-3.5 h-3.5 text-zinc-400/90" />;
+  }
+};
 
 export function EditorPanel() {
   const {
@@ -49,18 +87,16 @@ export function EditorPanel() {
 
   // Breadcrumb helper
   const renderBreadcrumb = useCallback((path: string) => {
-    const segments = path.split(/[/\\]/);
+    const segments = path.split(/[/\\]/).filter(Boolean);
     return (
-      <div className="flex items-center px-4 py-1.5 border-b border-amber-100 bg-amber-50/10 text-[11px] text-amber-700/80 font-medium">
+      <div className="flex items-center px-4 py-1.5 border-b border-zinc-800/40 bg-[#1e1e1e]/20 text-[11px] text-zinc-400 font-medium select-none overflow-x-auto whitespace-nowrap">
         {segments.map((segment, idx, arr) => (
-          <div key={idx} className="flex items-center">
-            <span className={idx === arr.length - 1 ? "text-amber-950 font-bold" : ""}>
+          <div key={idx} className="flex items-center flex-shrink-0">
+            <span className={idx === arr.length - 1 ? "text-zinc-200 font-bold" : ""}>
               {segment}
             </span>
             {idx < arr.length - 1 && (
-              <svg className="w-3 h-3 mx-1 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
+              <ChevronRight className="w-3 h-3 mx-1 text-zinc-600 flex-shrink-0" />
             )}
           </div>
         ))}
@@ -70,33 +106,39 @@ export function EditorPanel() {
 
   return (
     <ResizablePanel defaultSize={60} minSize={20}>
-      <div className="h-full flex flex-col bg-white border-b border-amber-200/60">
+      <div className="h-full flex flex-col bg-[#141416] border-b border-zinc-800">
         {/* Tabs bar */}
-        <div className="flex items-center justify-between border-b border-amber-200/60 bg-amber-50/20 px-2 py-1">
-          <div className="flex items-center gap-1 overflow-x-auto">
-            {openTabs.map((t) => (
-              <div
-                key={t.path}
-                onClick={() => setActiveTabPath(t.path)}
-                className={cn(
-                  "flex items-center gap-1.5 px-3 py-1.5 rounded-t-xl text-xs font-semibold cursor-pointer border-t-2 border-x border-transparent transition-all",
-                  activeTabPath === t.path
-                    ? "bg-white text-amber-900 border-t-amber-600 border-x-amber-200/70 shadow-sm"
-                    : "text-amber-700/75 hover:bg-amber-100/40"
-                )}
-              >
-                <FileText className="w-3.5 h-3.5 text-amber-600" />
-                <span>{t.name}</span>
-                {t.dirty && <span className="w-1.5 h-1.5 rounded-full bg-amber-600 animate-pulse" />}
-                <button
-                  onClick={(e) => handleCloseTab(t.path, e)}
-                  className="p-0.5 hover:bg-amber-100 rounded text-amber-600"
+        <div className="flex items-center justify-between border-b border-zinc-800 bg-[#18181c] px-2 h-9 select-none">
+          <div className="flex items-center gap-px h-full overflow-x-auto scrollbar-none max-w-[80%]">
+            {openTabs.map((t) => {
+              const isActive = activeTabPath === t.path;
+              return (
+                <div
+                  key={t.path}
+                  onClick={() => setActiveTabPath(t.path)}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 h-full cursor-pointer border-t-2 border-r border-r-zinc-800/30 transition-colors text-xs",
+                    isActive
+                      ? "bg-[#1e1e1e] text-zinc-100 border-t-amber-500/90 font-medium"
+                      : "bg-[#18181c]/70 text-zinc-400 border-t-transparent hover:bg-zinc-800/30 hover:text-zinc-200"
+                  )}
                 >
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
-            ))}
+                  {getFileIcon(t.name)}
+                  <span className="truncate max-w-[100px]">{t.name}</span>
+                  {t.dirty && !t.isDiff && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500/80 animate-pulse ml-0.5" />
+                  )}
+                  <button
+                    onClick={(e) => handleCloseTab(t.path, e)}
+                    className="p-0.5 hover:bg-zinc-800 rounded text-zinc-500 hover:text-white transition-colors ml-1"
+                  >
+                    <X className="w-2.5 h-2.5" />
+                  </button>
+                </div>
+              );
+            })}
           </div>
+          
           <div className="flex items-center gap-1.5">
             <Button
               size="sm"
@@ -111,29 +153,29 @@ export function EditorPanel() {
                 }
               }}
               className={cn(
-                "h-8 text-xs border-amber-200 rounded-xl px-3 flex items-center gap-1.5",
+                "h-6.5 text-[10px] border-zinc-800 px-2.5 flex items-center gap-1.5 rounded bg-[#1e1e1e] hover:bg-zinc-800",
                 splitActive
-                  ? "bg-amber-100 text-amber-900 border-amber-300"
-                  : "text-amber-700 hover:bg-amber-50"
+                  ? "bg-zinc-800 text-white border-zinc-700"
+                  : "text-zinc-400 hover:text-zinc-200"
               )}
             >
               <Layers className="w-3.5 h-3.5" />
-              {splitActive ? "Single View" : "Split View"}
+              {splitActive ? "Single" : "Split"}
             </Button>
-            {activeTab && (
+            {activeTab && !activeTab.isDiff && (
               <Button
                 size="sm"
                 onClick={handleSaveFile}
-                className="bg-amber-600 hover:bg-amber-700 text-white rounded-xl h-8"
+                className="bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 text-zinc-200 text-[10px] rounded px-2.5 h-6.5"
               >
-                <Save className="w-3.5 h-3.5 mr-1.5" /> Save
+                <Save className="w-3 h-3 mr-1" /> Save
               </Button>
             )}
           </div>
         </div>
 
         {/* Breadcrumb */}
-        {activeTabPath && renderBreadcrumb(activeTabPath)}
+        {activeTabPath && !splitActive && renderBreadcrumb(activeTabPath)}
 
         {/* Editor area */}
         <div className="flex-1 flex overflow-hidden">
@@ -154,7 +196,7 @@ export function EditorPanel() {
                       fontSize: 13,
                       minimap: { enabled: false },
                       scrollBeyondLastLine: false,
-                      padding: { top: 16 },
+                      padding: { top: 12 },
                     }}
                   />
                 </div>
@@ -176,7 +218,7 @@ function DiffView({ tab }: { tab: any }) {
   const [flashGreen, setFlashGreen] = useState(false);
 
   return (
-    <div className="flex-1 flex flex-col relative group">
+    <div className="flex-1 flex flex-col relative group h-full">
       {/* Green flash overlay */}
       {flashGreen && (
         <div className="absolute inset-0 z-20 bg-emerald-500/20 animate-flash-green pointer-events-none" />
@@ -185,7 +227,7 @@ function DiffView({ tab }: { tab: any }) {
       <div className="absolute top-2 right-6 z-10 flex gap-2">
         <Button
           size="sm"
-          className="bg-red-600 hover:bg-red-700 text-white h-7 shadow"
+          className="bg-red-650 hover:bg-red-750 text-white h-7 shadow text-xs rounded"
           onClick={() => {
             if (tab.toolCallId)
               addToolResult({ toolCallId: tab.toolCallId, state: "output-available" as const, output: "User rejected the edit.", tool: "reject_edit" });
@@ -196,7 +238,7 @@ function DiffView({ tab }: { tab: any }) {
         </Button>
         <Button
           size="sm"
-          className="bg-emerald-600 hover:bg-emerald-700 text-white h-7 shadow"
+          className="bg-emerald-650 hover:bg-emerald-750 text-white h-7 shadow text-xs rounded"
           onClick={async () => {
             try {
               await sendJson("/api/files/write", "POST", { path: tab.path, content: tab.content });
@@ -212,7 +254,7 @@ function DiffView({ tab }: { tab: any }) {
           }}
         >
           <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-          Accept and Apply
+          Accept
         </Button>
       </div>
       <DiffEditor
@@ -228,9 +270,9 @@ function DiffView({ tab }: { tab: any }) {
 
 function EmptyEditorState() {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center text-center text-xs text-amber-600/70 bg-amber-50/5 relative overflow-hidden">
+    <div className="flex-1 flex flex-col items-center justify-center text-center text-xs text-zinc-500 bg-[#141416] relative overflow-hidden select-none">
       {/* Background skeleton grid */}
-      <div className="absolute inset-0 p-6 space-y-4 opacity-25">
+      <div className="absolute inset-0 p-6 space-y-4 opacity-10 pointer-events-none">
         <div className="flex items-center gap-3">
           <Skeleton className="h-4 w-12 rounded" />
           <Skeleton className="h-4 w-24 rounded" />
@@ -240,19 +282,36 @@ function EmptyEditorState() {
         <Skeleton className="h-3 w-1/2 rounded" />
         <Skeleton className="h-3 w-5/6 rounded" />
         <Skeleton className="h-20 rounded-xl" />
-        <Skeleton className="h-3 w-2/3 rounded" />
-        <Skeleton className="h-3 w-4/5 rounded" />
       </div>
 
-      {/* Foreground prompt */}
+      {/* Keyboard Shortcuts Layout */}
       <div className="relative z-10 flex flex-col items-center">
-        <div className="w-10 h-10 rounded-2xl bg-amber-100/50 flex items-center justify-center mb-3">
-          <Code2 className="w-5 h-5 text-amber-600/50" />
+        <div className="w-12 h-12 rounded-2xl bg-zinc-800/40 border border-zinc-700/20 flex items-center justify-center mb-4">
+          <Code2 className="w-6 h-6 text-zinc-400" />
         </div>
-        <h4 className="font-bold text-amber-950">Code Canvas</h4>
-        <p className="max-w-xs mt-1">
-          Double-click a file in the sidebar explorer to open it in the editor.
+        <h4 className="font-bold text-zinc-200 text-sm tracking-wide">AgentOS Code Canvas</h4>
+        <p className="max-w-xs mt-1 text-zinc-500 text-[11px] leading-relaxed mb-6">
+          Open a file from the explorer or try one of the following operations:
         </p>
+        
+        <div className="grid grid-cols-2 gap-x-6 gap-y-2 max-w-[280px] text-zinc-400 text-[11px]">
+          <div className="flex items-center justify-between gap-4 py-0.5 border-b border-zinc-800/50">
+            <span>Quick Open</span>
+            <kbd className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 rounded font-mono text-[9px] border border-zinc-700">Ctrl P</kbd>
+          </div>
+          <div className="flex items-center justify-between gap-4 py-0.5 border-b border-zinc-800/50">
+            <span>AI Composer</span>
+            <kbd className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 rounded font-mono text-[9px] border border-zinc-700">Ctrl K</kbd>
+          </div>
+          <div className="flex items-center justify-between gap-4 py-0.5 border-b border-zinc-800/50">
+            <span>Toggle Sidebar</span>
+            <kbd className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 rounded font-mono text-[9px] border border-zinc-700">Ctrl B</kbd>
+          </div>
+          <div className="flex items-center justify-between gap-4 py-0.5 border-b border-zinc-800/50">
+            <span>Toggle Terminal</span>
+            <kbd className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 rounded font-mono text-[9px] border border-zinc-700">Ctrl J</kbd>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -270,9 +329,6 @@ function SplitEditorView() {
     setCursorPosition,
   } = useWorkspace();
 
-  // NOTE: No focusedPane guard — onMount fires only once per mount so the
-  // closure would capture a stale value. Both panes freely update the same
-  // cursorPosition state; the user only interacts with one pane at a time.
   const handleEditorMount = useCallback(
     (editor: any) => {
       editor.onDidChangeCursorPosition((e: any) => {
@@ -283,23 +339,22 @@ function SplitEditorView() {
   );
 
   const activeTab = openTabs.find((t) => t.path === activeTabPath);
+  const activeTabRight = openTabs.find((t) => t.path === activeTabPathRight);
 
   return (
     <ResizablePanelGroup direction="horizontal">
       <ResizablePanel defaultSize={50} minSize={20}>
         <div
           className={cn(
-            "h-full flex flex-col border-r border-amber-100",
-            focusedPane === "left" && "ring-1 ring-amber-500/40"
+            "h-full flex flex-col border-r border-zinc-800 relative transition-all",
+            focusedPane === "left" && "border-r-2 border-r-amber-500/60"
           )}
           onClick={() => setFocusedPane("left")}
         >
-          <div className="flex items-center justify-between px-3 py-1 bg-amber-50/15 border-b border-amber-250/20 text-[10px] font-bold text-amber-900 select-none">
-            <span>
-              L-PANE{" "}
-              {activeTabPath
-                ? `(${activeTabPath.split(/[/\\]/).pop()})`
-                : "(Empty)"}
+          <div className="flex items-center justify-between px-3 h-7 bg-[#18181c] border-b border-zinc-800 text-[10px] font-bold text-zinc-400 select-none flex-shrink-0">
+            <span className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-zinc-650 border border-zinc-500" />
+              L-PANE {activeTabPath ? `(${activeTabPath.split(/[/\\]/).pop()})` : "(Empty)"}
             </span>
             {focusedPane === "left" && (
               <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
@@ -321,44 +376,38 @@ function SplitEditorView() {
               }}
             />
           ) : (
-            <div className="flex-1 flex items-center justify-center text-center text-[11px] text-amber-600/60 bg-amber-50/5">
+            <div className="flex-1 flex items-center justify-center text-center text-[11px] text-zinc-500 bg-[#141416]">
               Left panel empty. Click a file.
             </div>
           )}
         </div>
       </ResizablePanel>
 
-      <ResizableHandle withHandle />
+      <ResizableHandle withHandle className="bg-zinc-800 hover:bg-amber-500/40" />
 
       <ResizablePanel defaultSize={50} minSize={20}>
         <div
           className={cn(
-            "h-full flex flex-col",
-            focusedPane === "right" && "ring-1 ring-amber-500/40"
+            "h-full flex flex-col relative transition-all",
+            focusedPane === "right" && "border-l-2 border-l-amber-500/60"
           )}
           onClick={() => setFocusedPane("right")}
         >
-          <div className="flex items-center justify-between px-3 py-1 bg-amber-50/15 border-b border-amber-250/20 text-[10px] font-bold text-amber-900 select-none">
-            <span>
-              R-PANE{" "}
-              {activeTabPathRight
-                ? `(${activeTabPathRight.split(/[/\\]/).pop()})`
-                : "(Empty)"}
+          <div className="flex items-center justify-between px-3 h-7 bg-[#18181c] border-b border-zinc-800 text-[10px] font-bold text-zinc-400 select-none flex-shrink-0">
+            <span className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-zinc-650 border border-zinc-500" />
+              R-PANE {activeTabPathRight ? `(${activeTabPathRight.split(/[/\\]/).pop()})` : "(Empty)"}
             </span>
             {focusedPane === "right" && (
               <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
             )}
           </div>
-          {activeTabPathRight &&
-          openTabs.find((t) => t.path === activeTabPathRight) ? (
+          {activeTabRight ? (
             <Editor
               height="100%"
               theme="vs-dark"
               path={`right-${activeTabPathRight}`}
-              value={
-                openTabs.find((t) => t.path === activeTabPathRight)
-                  ?.content || ""
-              }
+              value={activeTabRight.content}
               onChange={(val) => handleEditorChangeRight(val || "")}
               onMount={handleEditorMount}
               options={{
@@ -369,7 +418,7 @@ function SplitEditorView() {
               }}
             />
           ) : (
-            <div className="flex-1 flex items-center justify-center text-center text-[11px] text-amber-600/60 bg-amber-50/5">
+            <div className="flex-1 flex items-center justify-center text-center text-[11px] text-zinc-500 bg-[#141416]">
               Right panel empty. Focus and click a file to open.
             </div>
           )}

@@ -5,6 +5,7 @@ import { resolveModelForRole } from "@/lib/runtime/role-router";
 import { loadSecuritySettings, loadRoleMappings } from "@/lib/runtime/settings-loader";
 import { loadSystemPromptForRole } from "@/lib/runtime/system-prompt-loader";
 import { SecurityGuard } from "@/lib/runtime/security-guard";
+import { contextIndexer } from "@/lib/runtime/context-indexer";
 import type { StreamingChunk } from "@/lib/runtime/types";
 import { BaseUniversalProvider } from "@/lib/runtime/providers/base-provider";
 
@@ -54,12 +55,16 @@ function needsApproval(
   securityGuard: SecurityGuard,
   toolName: string,
   args: any,
+  autonomousMode = false,
 ): boolean {
+  if (autonomousMode) return false;
   const alwaysDestructive = [
     "write_file",
     "rename_path",
     "create_directory",
+    "create_file",
     "delete_path",
+    "stop_terminal",
   ];
   if (alwaysDestructive.includes(toolName)) {
     return securityGuard.checkApprovalRequired(toolName, true);
@@ -141,7 +146,7 @@ async function* executeWithToolLoop(
 // POST /api/chat — stream AI response with role routing & tools
 export async function POST(request: NextRequest) {
   try {
-    const { messages, attachments, projectId = DEFAULT_PROJECT_ID } =
+    const { messages, attachments, projectId = DEFAULT_PROJECT_ID, autonomous = false } =
       await request.json();
 
     const hasAttachments = attachments && attachments.length > 0;
@@ -150,6 +155,7 @@ export async function POST(request: NextRequest) {
     const roleMappings = await loadRoleMappings(projectId);
     const securitySettings = await loadSecuritySettings(projectId);
     const securityGuard = new SecurityGuard(securitySettings);
+    securityGuard.setSandbox(process.cwd());
 
     const resolved = await resolveModelForRole(assignedRole);
 
@@ -157,6 +163,24 @@ export async function POST(request: NextRequest) {
       assignedRole,
       securitySettings,
     );
+
+    // Inject indexed workspace context when available
+    let indexedContext = "";
+    if (contextIndexer.isBuilt()) {
+      const lastUserMsg = messages.filter((m: any) => m.role === "user").pop();
+      if (lastUserMsg?.content) {
+        indexedContext = contextIndexer.getRelevantContext(
+          typeof lastUserMsg.content === "string"
+            ? lastUserMsg.content
+            : JSON.stringify(lastUserMsg.content),
+          5
+        );
+      }
+    }
+
+    const finalSystemPrompt = indexedContext
+      ? `${systemPrompt}\n\n# Relevant Workspace Files (auto-indexed)\n${indexedContext}`
+      : systemPrompt;
 
     const lastMessage = messages[messages.length - 1];
     if (hasAttachments && lastMessage.role === "user") {
@@ -215,7 +239,7 @@ export async function POST(request: NextRequest) {
       execute: async ({ file_path, content }: { file_path: string; content: string }) => {
         const fsCheck = securityGuard.checkFilesystemPermission(file_path, false);
         if (!fsCheck.allowed) return toolResult(false, fsCheck.reason ?? "Permission denied");
-        if (needsApproval(securityGuard, "write_file", { file_path })) {
+        if (needsApproval(securityGuard, "write_file", { file_path }, autonomous)) {
           return toolResult(false, "Deferred: Writing files requires client-side approval.");
         }
         try {
@@ -240,7 +264,7 @@ export async function POST(request: NextRequest) {
       execute: async ({ dir_path }: { dir_path: string }) => {
         const fsCheck = securityGuard.checkFilesystemPermission(dir_path, false);
         if (!fsCheck.allowed) return toolResult(false, fsCheck.reason ?? "Permission denied");
-        if (needsApproval(securityGuard, "create_directory", { dir_path })) {
+        if (needsApproval(securityGuard, "create_directory", { dir_path }, autonomous)) {
           return toolResult(false, "Deferred: Creating directories requires client-side approval.");
         }
         try {
@@ -318,7 +342,7 @@ export async function POST(request: NextRequest) {
       execute: async ({ old_path, new_path }: { old_path: string; new_path: string }) => {
         const fsCheck = securityGuard.checkFilesystemPermission(new_path, false);
         if (!fsCheck.allowed) return toolResult(false, fsCheck.reason ?? "Permission denied");
-        if (needsApproval(securityGuard, "rename_path", { old_path, new_path })) {
+        if (needsApproval(securityGuard, "rename_path", { old_path, new_path }, autonomous)) {
           return toolResult(false, "Deferred: Renaming files/directories requires client-side approval.");
         }
         try {
@@ -344,7 +368,7 @@ export async function POST(request: NextRequest) {
       execute: async ({ path: delPath }: { path: string }) => {
         const fsCheck = securityGuard.checkFilesystemPermission(delPath, true);
         if (!fsCheck.allowed) return toolResult(false, fsCheck.reason ?? "Permission denied");
-        if (needsApproval(securityGuard, "delete_path", { path: delPath })) {
+        if (needsApproval(securityGuard, "delete_path", { path: delPath }, autonomous)) {
           return toolResult(false, "Deferred: This destructive operation requires client-side approval.");
         }
         try {
@@ -371,7 +395,7 @@ export async function POST(request: NextRequest) {
       execute: async ({ command }: { command: string; description?: string; process_id?: string }) => {
         const termCheck = securityGuard.checkTerminalPermission(command);
         if (!termCheck.allowed) return toolResult(false, termCheck.reason ?? "Terminal execution denied");
-        if (needsApproval(securityGuard, "execute_terminal", { command })) {
+        if (needsApproval(securityGuard, "execute_terminal", { command }, autonomous)) {
           return toolResult(false, "Deferred: Terminal execution requires client-side approval.");
         }
         try {
@@ -396,6 +420,8 @@ export async function POST(request: NextRequest) {
         url: z.string().url().describe("Target URL"),
       }),
       execute: async ({ url }: { url: string }) => {
+        const webCheck = securityGuard.checkWebPermission(url);
+        if (!webCheck.allowed) return toolResult(false, webCheck.reason ?? "Web access denied");
         try {
           const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
           const text = await res.text();
@@ -423,7 +449,7 @@ export async function POST(request: NextRequest) {
           resolved.provider,
           resolved.modelName,
           messages,
-          systemPrompt,
+          finalSystemPrompt,
           tools,
         );
 

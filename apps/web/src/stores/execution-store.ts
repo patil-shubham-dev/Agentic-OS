@@ -1,10 +1,21 @@
 import { create } from "zustand";
 import type { ExecutionState, StreamingChunk } from "@/lib/runtime/types";
 
+export interface PendingApproval {
+  taskId: string;
+  toolCallId: string;
+  toolName: string;
+  args: unknown;
+  status: "pending" | "approved" | "denied";
+  createdAt: string;
+  resolvedAt?: string;
+}
+
 interface ExecutionStoreState {
   executions: Record<string, ExecutionState>;
   activeExecutionId: string | null;
   streamingLogs: Record<string, StreamingChunk[]>;
+  pendingApprovals: PendingApproval[];
   executionGraph: Array<{
     taskId: string;
     role: string;
@@ -21,6 +32,8 @@ interface ExecutionStoreState {
   completeExecution: (taskId: string, summary?: string) => void;
   failExecution: (taskId: string, error: string) => void;
   setFallback: (taskId: string, fallbackChain: string[]) => void;
+  setAwaitingApproval: (taskId: string, approval: PendingApproval) => void;
+  resolveApproval: (toolCallId: string, approved: boolean) => void;
   clearExecution: (taskId: string) => void;
   clearAll: () => void;
   setActiveExecution: (id: string | null) => void;
@@ -30,6 +43,7 @@ export const useExecutionStore = create<ExecutionStoreState>()((set, get) => ({
   executions: {},
   activeExecutionId: null,
   streamingLogs: {},
+  pendingApprovals: [],
   executionGraph: [],
 
   startExecution: (taskId, role, modelId, providerId) => {
@@ -123,6 +137,33 @@ export const useExecutionStore = create<ExecutionStoreState>()((set, get) => ({
     });
   },
 
+  setAwaitingApproval: (taskId, approval) => {
+    set((state) => {
+      const existing = state.executions[taskId];
+      if (!existing) return state;
+      return {
+        executions: {
+          ...state.executions,
+          [taskId]: { ...existing, status: "pending" as const },
+        },
+        pendingApprovals: [...state.pendingApprovals, approval],
+        executionGraph: state.executionGraph.map((g) =>
+          g.taskId === taskId ? { ...g, status: "pending_approval" } : g
+        ),
+      };
+    });
+  },
+
+  resolveApproval: (toolCallId, approved) => {
+    set((state) => ({
+      pendingApprovals: state.pendingApprovals.map((a) =>
+        a.toolCallId === toolCallId
+          ? { ...a, status: approved ? ("approved" as const) : ("denied" as const), resolvedAt: new Date().toISOString() }
+          : a
+      ),
+    }));
+  },
+
   clearExecution: (taskId) => {
     set((state) => {
       const { [taskId]: _, ...rest } = state.executions;
@@ -130,13 +171,14 @@ export const useExecutionStore = create<ExecutionStoreState>()((set, get) => ({
       return {
         executions: rest,
         streamingLogs: logs,
+        pendingApprovals: state.pendingApprovals.filter((a) => a.taskId !== taskId),
         executionGraph: state.executionGraph.filter((g) => g.taskId !== taskId),
         activeExecutionId: state.activeExecutionId === taskId ? null : state.activeExecutionId,
       };
     });
   },
 
-  clearAll: () => set({ executions: {}, streamingLogs: {}, executionGraph: [], activeExecutionId: null }),
+  clearAll: () => set({ executions: {}, streamingLogs: {}, pendingApprovals: [], executionGraph: [], activeExecutionId: null }),
 
   setActiveExecution: (id) => set({ activeExecutionId: id }),
 }));

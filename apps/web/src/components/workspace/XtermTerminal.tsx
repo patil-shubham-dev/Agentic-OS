@@ -11,6 +11,8 @@ interface XtermTerminalProps {
   onExit?: (code: number) => void;
 }
 
+const isElectron = typeof window !== "undefined" && window.electronAPI?.isElectron;
+
 export default function XtermTerminal({ id, cwd, onExit }: XtermTerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
@@ -74,130 +76,146 @@ export default function XtermTerminal({ id, cwd, onExit }: XtermTerminalProps) {
       xtermRef.current = term;
       fitAddonRef.current = fitAddon;
 
-      // Connect to PTY EventSource endpoint for reading
-      const es = new EventSource(`/api/terminal/pty/read?id=${id}&cwd=${encodeURIComponent(cwd)}`);
-      eventSourceRef.current = es;
-
+      const cols = term.cols;
+      const rows = term.rows;
       let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+      let resizeTimer: ReturnType<typeof setTimeout> | null = null;
 
-      es.onopen = () => {
-        if (!mountedRef.current) return;
+      // Shared resize handler (assigned by each mode branch)
+      let handleResize: () => void = () => {};
+
+      if (isElectron && window.electronAPI?.ptySpawn) {
         setIsConnected(true);
-        term.writeln("\x1b[32m[AgentOS PTY Connected]\x1b[0m");
+        term.writeln("\x1b[32m[AgentOS PTY Connected (Electron IPC)]\x1b[0m");
 
-        // Start heartbeat: send empty data ping every 15s so the SSE stream stays alive
-        if (heartbeatRef.current) clearInterval(heartbeatRef.current);
-        heartbeatRef.current = setInterval(() => {
-          if (eventSourceRef.current && eventSourceRef.current.readyState === EventSource.OPEN) {
+        window.electronAPI.ptySpawn(id, cwd, cols, rows);
+
+        window.electronAPI.onPtyData?.((payload) => {
+          if (!mountedRef.current) return;
+          if (payload.id === id) term.write(payload.data);
+        });
+
+        window.electronAPI.onPtyExit?.((payload) => {
+          if (!mountedRef.current) return;
+          if (payload.id === id) {
+            term.writeln(`\r\n\x1b[31m[Process exited with code ${payload.code}]\x1b[0m`);
+            setIsConnected(false);
+            if (onExit) onExit(payload.code);
+          }
+        });
+
+        term.onData((data) => {
+          window.electronAPI?.ptyWrite?.(id, data);
+        });
+
+        handleResize = () => {
+          if (!fitAddonRef.current || !xtermRef.current) return;
+          const r = terminalRef.current?.getBoundingClientRect();
+          if (!r || r.width === 0 || r.height === 0) return;
+          try { fitAddonRef.current.fit(); } catch { }
+          window.electronAPI?.ptyResize?.(id, xtermRef.current.cols, xtermRef.current.rows);
+        };
+      } else {
+        const es = new EventSource(`/api/terminal/pty/read?id=${id}&cwd=${encodeURIComponent(cwd)}`);
+        eventSourceRef.current = es;
+
+        es.onopen = () => {
+          if (!mountedRef.current) return;
+          setIsConnected(true);
+          term.writeln("\x1b[32m[AgentOS PTY Connected (HTTP)]\x1b[0m");
+
+          if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+          heartbeatRef.current = setInterval(() => {
+            if (eventSourceRef.current?.readyState === EventSource.OPEN) {
+              fetch("/api/terminal/pty/write", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id, data: "" })
+              }).catch(() => {});
+            }
+          }, 15_000);
+        };
+
+        es.onmessage = (event) => {
+          if (!mountedRef.current) return;
+          try {
+            const payload = JSON.parse(event.data);
+            if (payload.type === "data") term.write(payload.data);
+            else if (payload.type === "exit") {
+              term.writeln(`\r\n\x1b[31m[Process exited with code ${payload.exitCode.exitCode}]\x1b[0m`);
+              if (onExit) onExit(payload.exitCode.exitCode);
+              setIsConnected(false);
+            }
+          } catch {
+            term.write(event.data);
+          }
+        };
+
+        es.onerror = () => {
+          if (!mountedRef.current) return;
+          setIsConnected(false);
+          term.writeln("\r\n\x1b[31m[AgentOS PTY Disconnected — will retry]\x1b[0m");
+          es.close();
+          if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
+          reconnectTimer = setTimeout(() => {
+            if (mountedRef.current) {
+              eventSourceRef.current = new EventSource(`/api/terminal/pty/read?id=${id}&cwd=${encodeURIComponent(cwd)}`);
+            }
+          }, 2000);
+        };
+
+        term.onData((data) => {
+          if (eventSourceRef.current?.readyState === EventSource.OPEN) {
             fetch("/api/terminal/pty/write", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ id, data: "" })
+              body: JSON.stringify({ id, data })
             }).catch(() => {});
           }
-        }, 15_000);
-      };
+        });
 
-      es.onmessage = (event) => {
-        if (!mountedRef.current) return;
-        try {
-          const payload = JSON.parse(event.data);
-          if (payload.type === "data") {
-            term.write(payload.data);
-          } else if (payload.type === "exit") {
-            term.writeln(`\r\n\x1b[31m[Process exited with code ${payload.exitCode.exitCode}]\x1b[0m`);
-            if (onExit) onExit(payload.exitCode.exitCode);
-            // Keep the terminal visible but don't reconnect
-            setIsConnected(false);
-          } else if (payload.type === "heartbeat") {
-            // SSE keepalive — ignore, just confirms connection is alive
+        handleResize = () => {
+          if (!fitAddonRef.current || !xtermRef.current) return;
+          const r = terminalRef.current?.getBoundingClientRect();
+          if (!r || r.width === 0 || r.height === 0) return;
+          try { fitAddonRef.current.fit(); } catch { }
+          if (eventSourceRef.current?.readyState === EventSource.OPEN) {
+            fetch("/api/terminal/pty/resize", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id, cols: xtermRef.current.cols, rows: xtermRef.current.rows })
+            }).catch(() => {});
           }
-        } catch (e) {
-          term.write(event.data);
-        }
-      };
+        };
+      }
 
-      es.onerror = () => {
-        if (!mountedRef.current) return;
-        setIsConnected(false);
-        term.writeln("\r\n\x1b[31m[AgentOS PTY Disconnected — will retry]\x1b[0m");
-        es.close();
-        if (heartbeatRef.current) {
-          clearInterval(heartbeatRef.current);
-          heartbeatRef.current = null;
-        }
-        // Auto-reconnect after 2s
-        reconnectTimer = setTimeout(() => {
-          if (mountedRef.current && eventSourceRef.current) {
-            const newEs = new EventSource(`/api/terminal/pty/read?id=${id}&cwd=${encodeURIComponent(cwd)}`);
-            eventSourceRef.current = newEs;
-          }
-        }, 2000);
-      };
-
-      term.onData((data) => {
-        if (eventSourceRef.current && eventSourceRef.current.readyState === EventSource.OPEN) {
-          fetch("/api/terminal/pty/write", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id, data })
-          }).catch(() => {});
-        }
-      });
-
-      // Resize handling — debounced with size check guard
-      const handleResize = () => {
-        if (!fitAddonRef.current || !xtermRef.current) return;
-        const r = terminalRef.current?.getBoundingClientRect();
-        if (!r || r.width === 0 || r.height === 0) return;
-        try {
-          fitAddonRef.current.fit();
-        } catch (e) {
-          console.error("xterm resize fit failed:", e);
-        }
-        const t = xtermRef.current;
-        if (eventSourceRef.current && eventSourceRef.current.readyState === EventSource.OPEN) {
-          fetch("/api/terminal/pty/resize", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id, cols: t.cols, rows: t.rows })
-          }).catch(() => {});
-        }
-      };
-
-      // Debounced resize to avoid rapid-fire calls
-      let resizeTimer: ReturnType<typeof setTimeout> | null = null;
       const debouncedResize = () => {
         if (resizeTimer) clearTimeout(resizeTimer);
         resizeTimer = setTimeout(handleResize, 150);
       };
 
-      const resizeObserver = new ResizeObserver(() => {
-        debouncedResize();
-      });
+      const resizeObserver = new ResizeObserver(() => debouncedResize());
       resizeObserver.observe(terminalRef.current);
-
       window.addEventListener("resize", debouncedResize);
 
-      // Cleanup
       const cleanup = () => {
-        if (heartbeatRef.current) {
-          clearInterval(heartbeatRef.current);
-          heartbeatRef.current = null;
-        }
-        if (reconnectTimer) clearTimeout(reconnectTimer);
+        if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
         if (resizeTimer) clearTimeout(resizeTimer);
+        if (reconnectTimer) clearTimeout(reconnectTimer);
         resizeObserver.disconnect();
         window.removeEventListener("resize", debouncedResize);
-        es.close();
         term.dispose();
-        eventSourceRef.current = null;
-        // Tell server to clean up PTY session
-        fetch("/api/terminal/pty/cleanup", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id })
-        }).catch(() => {});
+        if (isElectron) {
+          window.electronAPI?.ptyKill?.(id);
+        } else {
+          eventSourceRef.current?.close();
+          eventSourceRef.current = null;
+          fetch("/api/terminal/pty/cleanup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id })
+          }).catch(() => {});
+        }
       };
 
       // Store cleanup on container

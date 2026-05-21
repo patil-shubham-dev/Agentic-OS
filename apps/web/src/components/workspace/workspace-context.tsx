@@ -452,15 +452,8 @@ export function WorkspaceProvider({
       })
       .catch(() => setAgents([]));
 
-    const savedRoot = localStorage.getItem("agentos_root_path");
-    if (savedRoot) {
-      setRootPath(savedRoot);
-      loadFolderTree(savedRoot);
-    } else {
-      loadFolderTree("");
-    }
     loadBridgeStatus();
-  }, [loadFolderTree]);
+  }, []);
 
   // Auto-sync directory (cwd) of active and idle terminals when rootPath changes
   useEffect(() => {
@@ -489,6 +482,10 @@ export function WorkspaceProvider({
   // Global keybindings
   useEffect(() => {
     const handleKeydown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+        e.preventDefault();
+        setSearchOpen((prev) => !prev);
+      }
       if ((e.ctrlKey || e.metaKey) && e.key === "p") {
         e.preventDefault();
         setSearchOpen((prev) => !prev);
@@ -499,7 +496,7 @@ export function WorkspaceProvider({
       }
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
-        // handleSaveFile is defined below
+        handleSaveFile?.();
       }
       if ((e.ctrlKey || e.metaKey) && e.key === "b") {
         e.preventDefault();
@@ -551,6 +548,17 @@ export function WorkspaceProvider({
       });
     }
   }, [rootPath]);
+
+  // Load saved root path on mount
+  useEffect(() => {
+    const savedRoot = localStorage.getItem("agentos_root_path");
+    if (savedRoot) {
+      setRootPath(savedRoot);
+      loadFolderTree(savedRoot);
+    } else {
+      loadFolderTree("");
+    }
+  }, [loadFolderTree]);
 
   const handleOpenFolder = useCallback(async () => {
     try {
@@ -1201,6 +1209,7 @@ export function WorkspaceProvider({
     loadingPaths,
     loadFolderTree,
     handleToggleFolder,
+    handleOpenFolder,
     openTabs,
     setOpenTabs,
     activeTabPath,

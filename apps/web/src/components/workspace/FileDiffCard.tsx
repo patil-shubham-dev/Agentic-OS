@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -7,6 +7,10 @@ import {
   Loader2,
   FileCode,
   CheckCircle,
+  ChevronDown,
+  ChevronRight,
+  Plus,
+  Minus,
 } from "lucide-react";
 
 export interface FileDiffCardProps {
@@ -21,6 +25,57 @@ export interface FileDiffCardProps {
   onReviewDiff?: (args: any) => void;
   approving?: boolean;
   className?: string;
+}
+
+interface DiffLine {
+  type: "equal" | "add" | "remove";
+  content: string;
+  oldLineNum?: number;
+  newLineNum?: number;
+}
+
+function computeDiff(original: string, modified: string): DiffLine[] {
+  const origLines = original.split("\n");
+  const modLines = modified.split("\n");
+
+  // LCS-based diff for simple line-by-line comparison
+  const m = origLines.length;
+  const n = modLines.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (origLines[i - 1] === modLines[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+
+  const result: DiffLine[] = [];
+  let i = m, j = n;
+  const temp: DiffLine[] = [];
+
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && origLines[i - 1] === modLines[j - 1]) {
+      temp.push({ type: "equal", content: origLines[i - 1], oldLineNum: i, newLineNum: j });
+      i--; j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      temp.push({ type: "add", content: modLines[j - 1], newLineNum: j });
+      j--;
+    } else {
+      temp.push({ type: "remove", content: origLines[i - 1], oldLineNum: i });
+      i--;
+    }
+  }
+
+  // Group consecutive same-type lines into hunks
+  for (let k = temp.length - 1; k >= 0; k--) {
+    result.push(temp[k]);
+  }
+
+  return result;
 }
 
 export function FileDiffCard({
@@ -42,6 +97,14 @@ export function FileDiffCard({
 
   const args = { path: filePath, originalContent, newContent };
 
+  const diffLines = useMemo(() => {
+    if (!originalContent || !newContent) return [];
+    return computeDiff(originalContent, newContent);
+  }, [originalContent, newContent]);
+
+  const addCount = diffLines.filter((l) => l.type === "add").length;
+  const removeCount = diffLines.filter((l) => l.type === "remove").length;
+
   return (
     <div
       className={cn(
@@ -58,21 +121,67 @@ export function FileDiffCard({
         <FileCode className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
         <span className="font-bold text-zinc-200 truncate max-w-[160px]">{fileName}</span>
         <span className="opacity-70 truncate max-w-[100px] text-[9px] text-zinc-400">{toolName}</span>
+        {originalContent && newContent && (
+          <span className="ml-auto text-[9px] text-zinc-500 shrink-0">
+            <span className="text-emerald-400">+{addCount}</span>{" "}
+            <span className="text-red-400">-{removeCount}</span>
+          </span>
+        )}
       </div>
-
-      {expanded && newContent && (
-        <div className="mt-1 p-2 bg-zinc-950 rounded border border-zinc-800 max-h-[200px] overflow-auto">
-          <pre className="text-[9px] text-zinc-300 whitespace-pre-wrap">{newContent}</pre>
-        </div>
-      )}
 
       {originalContent && newContent && (
         <button
           onClick={() => setExpanded(!expanded)}
-          className="text-[9px] text-zinc-500 hover:text-zinc-300 transition-colors self-start"
+          className="flex items-center gap-1 text-[9px] text-zinc-500 hover:text-zinc-300 transition-colors self-start"
         >
+          {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
           {expanded ? "Hide diff" : "Show diff"}
         </button>
+      )}
+
+      {expanded && diffLines.length > 0 && (
+        <div className="mt-1 bg-zinc-950 rounded border border-zinc-800 max-h-[300px] overflow-auto">
+          <table className="w-full text-[9px] leading-[1.4] border-collapse">
+            <tbody>
+              {diffLines.map((line, idx) => (
+                <tr
+                  key={idx}
+                  className={cn(
+                    "hover:bg-white/5 transition-colors",
+                    line.type === "add" && "bg-emerald-950/30",
+                    line.type === "remove" && "bg-red-950/30",
+                  )}
+                >
+                  <td className="w-8 text-right text-zinc-600 select-none px-1 py-0 border-r border-zinc-800">
+                    {line.type === "remove" ? line.oldLineNum : ""}
+                  </td>
+                  <td className="w-8 text-right text-zinc-600 select-none px-1 py-0 border-r border-zinc-800">
+                    {line.type === "add" ? line.newLineNum : ""}
+                  </td>
+                  <td className="w-4 text-center select-none px-1 py-0">
+                    {line.type === "add" ? (
+                      <Plus className="w-2.5 h-2.5 text-emerald-400 inline" />
+                    ) : line.type === "remove" ? (
+                      <Minus className="w-2.5 h-2.5 text-red-400 inline" />
+                    ) : (
+                      <span className="text-zinc-600">&nbsp;</span>
+                    )}
+                  </td>
+                  <td
+                    className={cn(
+                      "px-2 py-0 whitespace-pre",
+                      line.type === "add" && "text-emerald-300",
+                      line.type === "remove" && "text-red-300",
+                      line.type === "equal" && "text-zinc-400",
+                    )}
+                  >
+                    {line.content || " "}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {!hasResult && onReviewDiff && (

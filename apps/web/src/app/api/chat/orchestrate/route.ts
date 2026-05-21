@@ -19,7 +19,7 @@ export const runtime = "nodejs";
  */
 export async function POST(request: NextRequest) {
   try {
-    const { task, projectId, workspaceRoot } = await request.json();
+    const { task, projectId, workspaceRoot, autonomous = false } = await request.json();
 
     if (!task || typeof task !== "string") {
       return NextResponse.json({ error: "task (string) is required" }, { status: 400 });
@@ -39,7 +39,8 @@ export async function POST(request: NextRequest) {
       (event: OrchestratorEvent) => {
         const sseData = JSON.stringify(event);
         writer.write(encoder.encode(`data: ${sseData}\n\n`));
-      }
+      },
+      autonomous
     );
 
     // Run orchestration in the background

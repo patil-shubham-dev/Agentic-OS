@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import { resolveSafePath } from "@/lib/server/path-security";
 
 export async function POST(request: NextRequest) {
   try {
@@ -11,7 +12,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Path is required" }, { status: 400 });
     }
 
-    const resolvedPath = path.resolve(targetPath);
+    const resolvedPath = resolveSafePath(targetPath);
 
     if (fs.existsSync(resolvedPath)) {
       return NextResponse.json({ error: "Directory or file already exists" }, { status: 400 });
@@ -25,9 +26,8 @@ export async function POST(request: NextRequest) {
       name: path.basename(resolvedPath),
     });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to create directory" },
-      { status: 500 }
-    );
+    const message = error instanceof Error ? error.message : "Failed to create directory";
+    const status = message.includes("Path traversal") ? 403 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

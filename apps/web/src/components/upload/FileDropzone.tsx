@@ -32,19 +32,19 @@ function FileDropzoneInner({ onDrop: onDropCallback }: FileDropzoneProps) {
       className={cn(
         "cursor-pointer rounded-2xl border-2 border-dashed p-10 text-center transition-all duration-200",
         isDragActive
-          ? "border-amber-400 bg-amber-50/60 shadow-inner"
-          : "border-amber-200/70 hover:border-amber-300 bg-amber-50/20 hover:bg-amber-50/40"
+          ? "border-[--accent-primary] bg-[--accent-primary]/5 shadow-[inset_0_0_40px_var(--glow-soft)]"
+          : "border-[--border-primary] hover:border-[--border-hover] bg-[--bg-tertiary]/20 hover:bg-[--bg-tertiary]/40"
       )}
     >
       <input {...getInputProps()} />
       <motion.div animate={isDragActive ? { y: -4 } : { y: 0 }} className="space-y-3">
-        <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center mx-auto shadow-lg shadow-amber-200/50">
-          <Upload className="w-7 h-7 text-white" />
+        <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[--accent-primary] to-[--accent-hover] flex items-center justify-center mx-auto shadow-lg shadow-[--glow-soft]">
+          <Upload className="w-7 h-7 text-black" />
         </div>
-        <p className="font-bold text-amber-950 text-sm">
+        <p className="font-bold text-[--text-primary] text-sm">
           {isDragActive ? "Release to upload" : "Drag & drop files here"}
         </p>
-        <p className="text-xs text-amber-600/70">or click to browse — PDF, MD, TXT, JSON, code files (max 10MB)</p>
+        <p className="text-xs text-[--text-muted]">or click to browse — PDF, MD, TXT, JSON, code files (max 10MB)</p>
       </motion.div>
     </div>
   );

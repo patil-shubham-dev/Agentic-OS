@@ -12,7 +12,7 @@ import hljs from "highlight.js";
  */
 export function MarkdownInner({ content }: { content: string }) {
   return (
-    <div className="text-xs text-amber-950 prose prose-sm leading-relaxed">
+    <div className="text-xs text-[--text-secondary] leading-relaxed">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -22,7 +22,7 @@ export function MarkdownInner({ content }: { content: string }) {
             if (isInline) {
               return (
                 <code
-                  className="bg-amber-100/70 text-amber-900 px-1 py-0.5 rounded text-[10px] font-mono"
+                  className="bg-[--accent-primary]/10 text-[--accent-soft] px-1.5 py-0.5 rounded text-[10px] font-mono border border-[--border-secondary]/30"
                   {...props}
                 >
                   {children}
@@ -65,15 +65,15 @@ function CodeBlock({ language, children }: { language: string; children: React.R
   }, [codeString]);
 
   return (
-    <div className="relative group my-3 rounded-xl overflow-hidden border border-amber-200/60 bg-slate-900">
+    <div className="relative group my-3 rounded-xl overflow-hidden border border-[--terminal-border] bg-[--terminal-bg] shadow-sm shadow-black/30">
       {/* Header bar */}
-      <div className="flex items-center justify-between px-3 py-1.5 bg-slate-800 border-b border-slate-700">
-        <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-[--terminal-panel] border-b border-[--terminal-border]">
+        <span className="text-[10px] font-mono text-[--text-muted] uppercase tracking-wider">
           {language || "code"}
         </span>
         <button
           onClick={handleCopy}
-          className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-slate-400 hover:text-white hover:bg-slate-700/60 rounded-md transition-colors"
+          className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-[--text-muted] hover:text-[--text-primary] hover:bg-[--bg-elevated] rounded-md transition-all"
         >
           {copied ? (
             <>
@@ -98,11 +98,10 @@ function CodeBlock({ language, children }: { language: string; children: React.R
               dangerouslySetInnerHTML={{ __html: highlighted }}
             />
           ) : (
-            <code className="text-slate-200">{codeString}</code>
+            <code className="text-[--text-secondary]">{codeString}</code>
           )}
         </pre>
       </div>
     </div>
   );
 }
-

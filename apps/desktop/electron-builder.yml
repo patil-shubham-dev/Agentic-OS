@@ -1,6 +1,8 @@
 appId: com.agentos.studio
 productName: AgentOS Studio
-copyright: Copyright © 2025 AgentOS Studio
+copyright: Copyright © 2026 AgentOS Studio
+compression: maximum
+removePackageScripts: true
 
 directories:
   output: out
@@ -11,6 +13,7 @@ npmRebuild: false
 files:
   - dist/**/*
   - "!dist/**/*.map"
+  - "!dist/**/*.tsbuildinfo"
 
 extraResources:
   - from: ../web/.next/standalone
@@ -18,6 +21,13 @@ extraResources:
     filter:
       - "**/*"
       - "!cache/**"
+      - "!**/*.map"
+      - "!**/*.tsbuildinfo"
+      - "!**/*.test.*"
+      - "!**/*.spec.*"
+      - "!**/test/**"
+      - "!**/tests/**"
+      - "!**/__tests__/**"
   - from: ../web/.next/static
     to: web/apps/web/.next/static
   - from: ../web/public

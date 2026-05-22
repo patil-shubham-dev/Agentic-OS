@@ -1,17 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import dynamic from "next/dynamic";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -42,18 +38,17 @@ import {
   Trash2,
   Edit3,
   Copy,
-  MoreHorizontal,
   CheckCircle2,
   XCircle,
   AlertCircle,
-  Timer,
-  Calendar,
   Bot,
   ArrowRight,
   Settings,
   Bell,
-  Mail,
-  Slack,
+  Workflow,
+  Sparkles,
+  Layers,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getJson } from "@/lib/client-api";
@@ -75,6 +70,20 @@ const initialEdges = [
   { id: "e4", source: "approval", target: "notify" },
 ];
 
+const TRIGGER_CONFIG: Record<string, { icon: any; label: string }> = {
+  schedule: { icon: Clock, label: "Schedule" },
+  webhook: { icon: Webhook, label: "Webhook" },
+  manual: { icon: Zap, label: "Manual" },
+  file_change: { icon: FileText, label: "File Change" },
+  git_commit: { icon: GitCommit, label: "Git Commit" },
+};
+
+const STEP_ICONS: Record<string, any> = {
+  agent: Bot,
+  tool: Zap,
+  approval: CheckCircle2,
+  notification: Bell,
+};
 
 const container = {
   hidden: { opacity: 0 },
@@ -125,327 +134,381 @@ export default function AutomationsPage() {
     };
   }, []);
 
+  const statusConfig = (status: string) => {
+    switch (status) {
+      case "active":
+        return { bg: "bg-emerald-950/30", text: "text-emerald-400", dot: "bg-emerald-400" };
+      case "paused":
+        return { bg: "bg-amber-950/30", text: "text-amber-400", dot: "bg-amber-400" };
+      case "error":
+        return { bg: "bg-red-950/30", text: "text-red-400", dot: "bg-red-400" };
+      default:
+        return { bg: "bg-[--bg-elevated]", text: "text-[--text-muted]", dot: "bg-[--text-disabled]" };
+    }
+  };
+
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Automations</h1>
-          <p className="text-muted-foreground">Build trigger-based workflows with AI agents</p>
+    <div className="h-full overflow-hidden flex flex-col agentos-shell">
+      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="w-11 h-11 rounded-xl bg-[--accent-primary]/10 border border-[--border-secondary] flex items-center justify-center">
+              <Workflow className="w-5 h-5 text-[--accent-primary]" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold text-[--text-primary]">Automations</h1>
+              <p className="text-[13px] text-[--text-muted]">Build trigger-based workflows with AI agents</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as any)}>
+              <TabsList className="bg-[--bg-tertiary] border border-[--border-primary]">
+                <TabsTrigger value="list" className="text-xs data-[state=active]:bg-[--bg-elevated] data-[state=active]:text-[--text-primary] data-[state=active]:shadow-none">List</TabsTrigger>
+                <TabsTrigger value="builder" className="text-xs data-[state=active]:bg-[--bg-elevated] data-[state=active]:text-[--text-primary] data-[state=active]:shadow-none">Builder</TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button className="h-9 gap-2 bg-[--accent-primary] text-[--accent-soft] hover:bg-[--accent-hover] shadow-[0_0_20px_var(--glow-soft)]">
+                  <Plus className="w-4 h-4" /> New Automation
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-2xl agentos-glass-elevated border-[--border-primary]">
+                <DialogHeader>
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-9 h-9 rounded-lg bg-[--accent-primary]/10 border border-[--border-secondary] flex items-center justify-center">
+                      <Sparkles className="w-4 h-4 text-[--accent-primary]" />
+                    </div>
+                    <div>
+                      <DialogTitle className="text-[--text-primary]">Create Automation</DialogTitle>
+                      <DialogDescription className="text-[--text-muted] text-[13px]">Build a workflow that runs automatically</DialogDescription>
+                    </div>
+                  </div>
+                </DialogHeader>
+                <div className="space-y-5 py-2">
+                  <div className="space-y-2">
+                    <Label className="text-[13px] text-[--text-secondary] font-medium">Name</Label>
+                    <Input
+                      placeholder="e.g., Daily Report Generation"
+                      className="bg-[--bg-tertiary] border-[--border-primary] text-[--text-primary] placeholder:text-[--text-disabled] focus-visible:ring-[--accent-primary] focus-visible:ring-1 focus-visible:border-[--accent-primary]"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[13px] text-[--text-secondary] font-medium">Trigger Type</Label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { type: "schedule", icon: Clock, label: "Schedule" },
+                        { type: "webhook", icon: Webhook, label: "Webhook" },
+                        { type: "manual", icon: Zap, label: "Manual" },
+                        { type: "file_change", icon: FileText, label: "File Change" },
+                        { type: "git_commit", icon: GitCommit, label: "Git Commit" },
+                      ].map((t) => (
+                        <button
+                          key={t.type}
+                          type="button"
+                          className="flex flex-col items-center gap-2 p-4 rounded-xl bg-[--bg-tertiary] border border-[--border-primary] hover:border-[--accent-primary]/40 hover:bg-[--accent-primary]/5 transition-all text-[--text-primary]"
+                        >
+                          <t.icon className="w-5 h-5 text-[--accent-primary]" />
+                          <span className="text-[12px] font-medium">{t.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[13px] text-[--text-secondary] font-medium">Agent</Label>
+                    <Select>
+                      <SelectTrigger className="bg-[--bg-tertiary] border-[--border-primary] text-[--text-primary]">
+                        <SelectValue placeholder="Select agent" className="text-[--text-disabled]" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-[--bg-secondary] border-[--border-primary]">
+                        <SelectItem value="research" className="text-[--text-primary] focus:bg-[--bg-elevated]">Research Agent</SelectItem>
+                        <SelectItem value="coding" className="text-[--text-primary] focus:bg-[--bg-elevated]">Coding Agent</SelectItem>
+                        <SelectItem value="design" className="text-[--text-primary] focus:bg-[--bg-elevated]">Design Agent</SelectItem>
+                        <SelectItem value="qa" className="text-[--text-primary] focus:bg-[--bg-elevated]">QA Agent</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <DialogFooter className="border-t border-[--border-primary] pt-4">
+                  <Button variant="outline" className="border-[--border-primary] text-[--text-secondary] hover:bg-[--bg-elevated]">Cancel</Button>
+                  <Button className="bg-[--accent-primary] text-[--accent-soft] hover:bg-[--accent-hover]">Create Automation</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as any)}>
-            <TabsList>
-              <TabsTrigger value="list">List</TabsTrigger>
-              <TabsTrigger value="builder">Builder</TabsTrigger>
-            </TabsList>
-          </Tabs>
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button className="gap-2">
-                <Plus className="w-4 h-4" /> New Automation
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl">
-              <DialogHeader>
-                <DialogTitle>Create Automation</DialogTitle>
-                <DialogDescription>Build a workflow that runs automatically</DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label>Name</Label>
-                  <Input placeholder="e.g., Daily Report Generation" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Trigger Type</Label>
-                  <Select>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select trigger" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="schedule">
-                        <div className="flex items-center gap-2">
-                          <Clock className="w-4 h-4" /> Schedule (Cron)
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="webhook">
-                        <div className="flex items-center gap-2">
-                          <Webhook className="w-4 h-4" /> Webhook
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="manual">
-                        <div className="flex items-center gap-2">
-                          <Zap className="w-4 h-4" /> Manual
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="file">
-                        <div className="flex items-center gap-2">
-                          <FileText className="w-4 h-4" /> File Change
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="git">
-                        <div className="flex items-center gap-2">
-                          <GitCommit className="w-4 h-4" /> Git Commit
-                        </div>
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Agent</Label>
-                  <Select>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select agent" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="research">Research Agent</SelectItem>
-                      <SelectItem value="coding">Coding Agent</SelectItem>
-                      <SelectItem value="design">Design Agent</SelectItem>
-                      <SelectItem value="qa">QA Agent</SelectItem>
-                    </SelectContent>
-                  </Select>
+
+        {viewMode === "list" ? (
+          <>
+            {/* Loading / Error states */}
+            {loading && (
+              <div className="flex items-center justify-center py-16">
+                <div className="flex flex-col items-center gap-3">
+                  <Loader2 className="w-6 h-6 animate-spin text-[--accent-primary]" />
+                  <p className="text-[13px] text-[--text-muted]">Loading automations...</p>
                 </div>
               </div>
-              <DialogFooter>
-                <Button variant="outline">Cancel</Button>
-                <Button>Create Automation</Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        </div>
-      </div>
+            )}
+            {error && !loading && (
+              <div className="flex items-center gap-3 p-4 rounded-xl bg-red-950/20 border border-red-900/30 text-red-400 text-sm">
+                <AlertCircle className="w-5 h-5 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
 
-      {viewMode === "list" ? (
-        <>
-          {loading && <p className="text-sm text-muted-foreground">Loading automations...</p>}
-          {error && <p className="text-sm text-destructive">{error}</p>}
-          {/* Stats */}
-          <div className="grid grid-cols-4 gap-4">
-            {[
-              { label: "Active", value: String(automations.filter((item) => item.status === "active").length), icon: CheckCircle2, color: "text-emerald-600" },
-              { label: "Paused", value: String(automations.filter((item) => item.status === "paused").length), icon: Pause, color: "text-amber-600" },
-              { label: "Error", value: String(automations.filter((item) => item.status === "error").length), icon: XCircle, color: "text-red-500" },
-              { label: "Total Runs", value: String(automations.reduce((sum, item) => sum + item.runs, 0)), icon: Zap, color: "text-amber-500" },
-            ].map((stat) => (
-              <Card key={stat.label} className="agentos-card agentos-border-glow border-none">
-                <CardContent className="p-4 flex items-center gap-3">
-                  <stat.icon className={cn("w-5 h-5", stat.color)} />
-                  <div>
-                    <p className="text-2xl font-bold text-amber-900">{stat.value}</p>
-                    <p className="text-xs text-amber-600/60">{stat.label}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+            {/* Stats */}
+            {!loading && !error && (
+              <div className="grid grid-cols-4 gap-4">
+                {[
+                  { label: "Active", value: String(automations.filter((item) => item.status === "active").length), icon: CheckCircle2, accent: "emerald" },
+                  { label: "Paused", value: String(automations.filter((item) => item.status === "paused").length), icon: Pause, accent: "amber" },
+                  { label: "Error", value: String(automations.filter((item) => item.status === "error").length), icon: XCircle, accent: "red" },
+                  { label: "Total Runs", value: String(automations.reduce((sum, item) => sum + item.runs, 0)), icon: Zap, accent: "amber" },
+                ].map((stat) => {
+                  const accentColors: Record<string, string> = {
+                    emerald: "text-emerald-400",
+                    amber: "text-[--accent-primary]",
+                    red: "text-red-400",
+                  };
+                  return (
+                    <div key={stat.label} className="agentos-card p-4 flex items-center gap-3">
+                      <stat.icon className={cn("w-5 h-5", accentColors[stat.accent])} />
+                      <div>
+                        <p className="text-2xl font-bold text-[--text-primary]">{stat.value}</p>
+                        <p className="text-[12px] text-[--text-muted]">{stat.label}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
-          {/* Automations List */}
-          {!loading && automations.length === 0 ? (
-            <EmptyState
-              title="No automations configured."
-              description="Create your first automated trigger-based workflow to run specialist agents."
-              icon={Zap}
-            />
-          ) : (
-            <motion.div variants={container} initial="hidden" animate="show" className="space-y-3">
-              {automations.map((auto) => (
-                <motion.div key={auto.id} variants={item}>
-                  <Card
-                    className="agentos-card agentos-border-glow border-none cursor-pointer hover:shadow-md transition-all"
-                    onClick={() => setSelectedAutomation(auto)}
-                  >
-                    <CardContent className="p-5">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-start gap-4">
-                          <div
-                            className={cn(
-                              "w-10 h-10 rounded-lg flex items-center justify-center",
-                              auto.status === "active" && "bg-green-500/10",
-                              auto.status === "paused" && "bg-yellow-500/10",
-                              auto.status === "error" && "bg-destructive/10",
-                              auto.status === "draft" && "bg-muted"
-                            )}
-                          >
-                            {auto.trigger.type === "schedule" && <Clock className={cn("w-5 h-5", auto.status === "active" ? "text-green-500" : auto.status === "error" ? "text-destructive" : "text-yellow-500")} />}
-                            {auto.trigger.type === "webhook" && <Webhook className={cn("w-5 h-5", auto.status === "active" ? "text-green-500" : auto.status === "error" ? "text-destructive" : "text-yellow-500")} />}
-                            {auto.trigger.type === "file_change" && <FileText className={cn("w-5 h-5", auto.status === "active" ? "text-green-500" : auto.status === "error" ? "text-destructive" : "text-yellow-500")} />}
-                            {auto.trigger.type === "git_commit" && <GitCommit className={cn("w-5 h-5", auto.status === "active" ? "text-green-500" : auto.status === "error" ? "text-destructive" : "text-yellow-500")} />}
-                          </div>
-                          <div>
-                            <h3 className="font-semibold">{auto.name}</h3>
-                            <p className="text-sm text-muted-foreground">{auto.description}</p>
-                            <div className="flex items-center gap-3 mt-2">
-                              <Badge variant="outline" className="text-[10px]">
-                                {auto.trigger.type}
-                              </Badge>
-                              <span className="text-xs text-muted-foreground">
-                                {auto.steps.length} steps
-                              </span>
-                              <span className="text-xs text-muted-foreground">
-                                {auto.runs} runs
-                              </span>
-                              <span className="text-xs text-muted-foreground">
-                                {auto.successRate}% success
-                              </span>
+            {/* Automations List */}
+            {!loading && automations.length === 0 ? (
+              <EmptyState
+                title="No automations configured."
+                description="Create your first automated trigger-based workflow to run specialist agents."
+                icon={Zap}
+              />
+            ) : (
+              <motion.div variants={container} initial="hidden" animate="show" className="space-y-3">
+                <AnimatePresence mode="popLayout">
+                  {automations.map((auto) => {
+                    const sc = statusConfig(auto.status);
+                    const TriggerIcon = TRIGGER_CONFIG[auto.trigger.type]?.icon || Zap;
+                    return (
+                      <motion.div
+                        key={auto.id}
+                        layout
+                        variants={item}
+                        exit={{ opacity: 0, scale: 0.95 }}
+                      >
+                        <div
+                          className="agentos-card p-5 cursor-pointer hover:border-[--border-hover] transition-all"
+                          onClick={() => setSelectedAutomation(auto)}
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="flex items-start gap-4">
+                              <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center", sc.bg)}>
+                                <TriggerIcon className={cn("w-5 h-5", sc.text)} />
+                              </div>
+                              <div>
+                                <h3 className="font-semibold text-[--text-primary]">{auto.name}</h3>
+                                <p className="text-[13px] text-[--text-muted] mt-0.5">{auto.description}</p>
+                                <div className="flex items-center gap-3 mt-2.5">
+                                  <Badge variant="outline" className="text-[10px] uppercase tracking-wider border-[--border-secondary] text-[--text-secondary]">
+                                    {auto.trigger.type.replace("_", " ")}
+                                  </Badge>
+                                  <span className="text-[12px] text-[--text-muted] flex items-center gap-1">
+                                    <Layers className="w-3 h-3" /> {auto.steps.length} steps
+                                  </span>
+                                  <span className="text-[12px] text-[--text-muted]">{auto.runs} runs</span>
+                                  <span className={cn(
+                                    "text-[12px]",
+                                    auto.successRate >= 80 ? "text-emerald-400" : auto.successRate >= 50 ? "text-amber-400" : "text-red-400"
+                                  )}>
+                                    {auto.successRate}% success
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-start gap-4">
+                              <div className="text-right">
+                                <div className={cn("inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium", sc.bg, sc.text)}>
+                                  <span className={cn("w-1.5 h-1.5 rounded-full", sc.dot)} />
+                                  {auto.status}
+                                </div>
+                                <p className="text-[11px] text-[--text-muted] mt-2">Last: {auto.lastRun}</p>
+                                <p className="text-[11px] text-[--text-muted]">Next: {auto.nextRun}</p>
+                              </div>
+                              <div className="w-5 h-5 flex items-center justify-center text-[--text-disabled] transition-colors mt-1">
+                                <ArrowRight className="w-4 h-4" />
+                              </div>
                             </div>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <Badge
-                            className={cn(
-                              auto.status === "active" && "bg-green-500/10 text-green-500 hover:bg-green-500/20",
-                              auto.status === "paused" && "bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500/20",
-                              auto.status === "error" && "bg-destructive/10 text-destructive hover:bg-destructive/20",
-                              auto.status === "draft" && "bg-muted text-muted-foreground"
-                            )}
-                          >
-                            {auto.status}
-                          </Badge>
-                          <p className="text-xs text-muted-foreground mt-2">Last: {auto.lastRun}</p>
-                          <p className="text-xs text-muted-foreground">Next: {auto.nextRun}</p>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </motion.div>
-              ))}
-            </motion.div>
-          )}
-        </>
-      ) : (
-        /* Workflow Builder */          <Card className="h-[calc(100vh-16rem)]">
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
+                      </motion.div>
+                    );
+                  })}
+                </AnimatePresence>
+              </motion.div>
+            )}
+          </>
+        ) : (
+          /* Workflow Builder */
+          <div className="h-[calc(100vh-14rem)] agentos-card overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-[--border-primary]">
               <div>
-                <CardTitle>Workflow Builder</CardTitle>
-                <CardDescription>Drag and drop nodes to build automations</CardDescription>
+                <h2 className="text-sm font-semibold text-[--text-primary]">Workflow Builder</h2>
+                <p className="text-[12px] text-[--text-muted]">Drag and drop nodes to build automations</p>
               </div>
               <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" className="gap-2">
+                <Button variant="outline" size="sm" className="gap-2 border-[--border-primary] text-[--text-secondary] hover:bg-[--bg-elevated]">
                   <Bot className="w-4 h-4" /> Add Agent
                 </Button>
-                <Button variant="outline" size="sm" className="gap-2">
+                <Button variant="outline" size="sm" className="gap-2 border-[--border-primary] text-[--text-secondary] hover:bg-[--bg-elevated]">
                   <Zap className="w-4 h-4" /> Add Tool
                 </Button>
-                <Button variant="outline" size="sm" className="gap-2">
+                <Button variant="outline" size="sm" className="gap-2 border-[--border-primary] text-[--text-secondary] hover:bg-[--bg-elevated]">
                   <Bell className="w-4 h-4" /> Add Notification
                 </Button>
               </div>
             </div>
-          </CardHeader>
-          <CardContent className="p-0 h-[calc(100%-5rem)]">
-            <LazyFlowBuilder
-              initialNodes={initialNodes}
-              initialEdges={initialEdges}
-              className="h-full"
-            />
-          </CardContent>
-        </Card>
-      )}
+            <div className="flex-1">
+              <LazyFlowBuilder
+                initialNodes={initialNodes}
+                initialEdges={initialEdges}
+                className="h-full"
+              />
+            </div>
+          </div>
+        )}
 
-      {/* Detail Dialog */}
-      <Dialog open={!!selectedAutomation} onOpenChange={() => setSelectedAutomation(null)}>
-        <DialogContent className="max-w-3xl">
-          {selectedAutomation && (
-            <>
-              <DialogHeader>
-                <div className="flex items-center justify-between">
-                  <DialogTitle>{selectedAutomation.name}</DialogTitle>
-                  <Badge
-                    className={cn(
-                      selectedAutomation.status === "active" && "bg-green-500/10 text-green-500",
-                      selectedAutomation.status === "paused" && "bg-yellow-500/10 text-yellow-500",
-                      selectedAutomation.status === "error" && "bg-destructive/10 text-destructive",
-                    )}
-                  >
-                    {selectedAutomation.status}
-                  </Badge>
-                </div>
-                <DialogDescription>{selectedAutomation.description}</DialogDescription>
-              </DialogHeader>
-
-              <div className="space-y-4">
-                <div>
-                  <h4 className="text-sm font-medium mb-2">Trigger</h4>
-                  <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/50">
-                    {selectedAutomation.trigger.type === "schedule" && <Clock className="w-4 h-4" />}
-                    {selectedAutomation.trigger.type === "webhook" && <Webhook className="w-4 h-4" />}
-                    {selectedAutomation.trigger.type === "file_change" && <FileText className="w-4 h-4" />}
-                    {selectedAutomation.trigger.type === "git_commit" && <GitCommit className="w-4 h-4" />}
-                    <span className="text-sm capitalize">{selectedAutomation.trigger.type}</span>
-                    <code className="ml-auto text-xs bg-muted px-2 py-1 rounded">
-                      {JSON.stringify(selectedAutomation.trigger.config)}
-                    </code>
-                  </div>
-                </div>
-
-                <div>
-                  <h4 className="text-sm font-medium mb-2">Steps</h4>
-                  <div className="space-y-2">
-                    {selectedAutomation.steps.map((step, i) => (
-                      <div key={step.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
-                        <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-xs font-medium">
-                          {i + 1}
+        {/* Detail Dialog */}
+        <Dialog open={!!selectedAutomation} onOpenChange={() => setSelectedAutomation(null)}>
+          <DialogContent className="max-w-3xl agentos-glass-elevated border-[--border-primary]">
+            {selectedAutomation && (() => {
+              const sc = statusConfig(selectedAutomation.status);
+              const TriggerIcon = TRIGGER_CONFIG[selectedAutomation.trigger.type]?.icon || Zap;
+              return (
+                <>
+                  <DialogHeader>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center", sc.bg)}>
+                          <TriggerIcon className={cn("w-4 h-4", sc.text)} />
                         </div>
-                        <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                          {step.type === "agent" && <Bot className="w-4 h-4 text-primary" />}
-                          {step.type === "tool" && <Zap className="w-4 h-4 text-primary" />}
-                          {step.type === "approval" && <CheckCircle2 className="w-4 h-4 text-primary" />}
-                          {step.type === "notification" && <Bell className="w-4 h-4 text-primary" />}
+                        <div>
+                          <DialogTitle className="text-[--text-primary]">{selectedAutomation.name}</DialogTitle>
+                          <DialogDescription className="text-[--text-muted] text-[13px]">{selectedAutomation.description}</DialogDescription>
                         </div>
-                        <div className="flex-1">
-                          <p className="text-sm font-medium">{step.name}</p>
-                          <p className="text-xs text-muted-foreground">{step.type}</p>
-                        </div>
-                        <ArrowRight className="w-4 h-4 text-muted-foreground" />
                       </div>
-                    ))}
-                  </div>
-                </div>
+                      <div className={cn("inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium", sc.bg, sc.text)}>
+                        <span className={cn("w-1.5 h-1.5 rounded-full", sc.dot)} />
+                        {selectedAutomation.status}
+                      </div>
+                    </div>
+                  </DialogHeader>
 
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="p-3 rounded-lg bg-muted/50 text-center">
-                    <p className="text-2xl font-bold">{selectedAutomation.runs}</p>
-                    <p className="text-xs text-muted-foreground">Total Runs</p>
-                  </div>
-                  <div className="p-3 rounded-lg bg-muted/50 text-center">
-                    <p className="text-2xl font-bold">{selectedAutomation.successRate}%</p>
-                    <p className="text-xs text-muted-foreground">Success Rate</p>
-                  </div>
-                  <div className="p-3 rounded-lg bg-muted/50 text-center">
-                    <p className="text-2xl font-bold">{selectedAutomation.steps.length}</p>
-                    <p className="text-xs text-muted-foreground">Steps</p>
-                  </div>
-                </div>
-              </div>
+                  <div className="space-y-5">
+                    {/* Trigger Section */}
+                    <div>
+                      <h4 className="text-[13px] font-medium text-[--text-secondary] mb-2.5 flex items-center gap-2">
+                        <Settings className="w-3.5 h-3.5" /> Trigger
+                      </h4>
+                      <div className="flex items-center gap-3 p-3.5 rounded-xl bg-[--bg-tertiary] border border-[--border-primary]">
+                        <TriggerIcon className="w-4 h-4 text-[--accent-primary]" />
+                        <span className="text-sm text-[--text-primary] capitalize">{selectedAutomation.trigger.type.replace("_", " ")}</span>
+                        <code className="ml-auto text-[11px] bg-[--bg-elevated] text-[--text-muted] px-2.5 py-1 rounded-lg border border-[--border-primary]">
+                          {JSON.stringify(selectedAutomation.trigger.config)}
+                        </code>
+                      </div>
+                    </div>
 
-              <DialogFooter className="gap-2">
-                <Button variant="outline" className="gap-2">
-                  <Edit3 className="w-4 h-4" /> Edit
-                </Button>
-                <Button variant="outline" className="gap-2">
-                  <Copy className="w-4 h-4" /> Duplicate
-                </Button>
-                <Button variant="outline" className="gap-2 text-destructive">
-                  <Trash2 className="w-4 h-4" /> Delete
-                </Button>
-                {selectedAutomation.status === "active" ? (
-                  <Button variant="outline" className="gap-2">
-                    <Pause className="w-4 h-4" /> Pause
-                  </Button>
-                ) : (
-                  <Button className="gap-2">
-                    <Play className="w-4 h-4" /> Activate
-                  </Button>
-                )}
-                <Button className="gap-2">
-                  <Play className="w-4 h-4" /> Run Now
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
+                    {/* Steps Timeline */}
+                    <div>
+                      <h4 className="text-[13px] font-medium text-[--text-secondary] mb-2.5 flex items-center gap-2">
+                        <Layers className="w-3.5 h-3.5" /> Steps ({selectedAutomation.steps.length})
+                      </h4>
+                      <div className="space-y-2">
+                        {selectedAutomation.steps.map((step, i) => {
+                          const StepIcon = STEP_ICONS[step.type] || Bot;
+                          return (
+                            <div key={step.id} className="flex items-start gap-3 p-3.5 rounded-xl bg-[--bg-tertiary] border border-[--border-primary]">
+                              {/* Step number bubble */}
+                              <div className="flex flex-col items-center gap-1">
+                                <div className="w-7 h-7 rounded-full bg-[--accent-primary]/10 border border-[--border-secondary] flex items-center justify-center text-[11px] font-bold text-[--accent-primary]">
+                                  {i + 1}
+                                </div>
+                                {i < selectedAutomation.steps.length - 1 && (
+                                  <div className="w-px flex-1 min-h-[8px] bg-[--border-primary]" />
+                                )}
+                              </div>
+                              {/* Step icon */}
+                              <div className="w-8 h-8 rounded-lg bg-[--accent-primary]/10 flex items-center justify-center shrink-0 mt-0.5">
+                                <StepIcon className="w-4 h-4 text-[--accent-primary]" />
+                              </div>
+                              {/* Step details */}
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-[--text-primary]">{step.name}</p>
+                                <p className="text-[12px] text-[--text-muted] capitalize">{step.type}</p>
+                              </div>
+                              <ArrowRight className="w-4 h-4 text-[--text-disabled] mt-1.5 shrink-0" />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Stats Grid */}
+                    <div className="grid grid-cols-3 gap-3">
+                      {[
+                        { label: "Total Runs", value: selectedAutomation.runs, accent: "text-[--accent-primary]" },
+                        { label: "Success Rate", value: `${selectedAutomation.successRate}%`, accent: selectedAutomation.successRate >= 80 ? "text-emerald-400" : selectedAutomation.successRate >= 50 ? "text-amber-400" : "text-red-400" },
+                        { label: "Steps", value: selectedAutomation.steps.length, accent: "text-[--accent-primary]" },
+                      ].map((s) => (
+                        <div key={s.label} className="p-3.5 rounded-xl bg-[--bg-tertiary] border border-[--border-primary] text-center">
+                          <p className={cn("text-xl font-bold", s.accent)}>{s.value}</p>
+                          <p className="text-[11px] text-[--text-muted] mt-0.5">{s.label}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <DialogFooter className="border-t border-[--border-primary] pt-4 gap-2">
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="sm" className="gap-2 border-[--border-primary] text-[--text-secondary] hover:bg-[--bg-elevated]">
+                        <Edit3 className="w-3.5 h-3.5" /> Edit
+                      </Button>
+                      <Button variant="outline" size="sm" className="gap-2 border-[--border-primary] text-[--text-secondary] hover:bg-[--bg-elevated]">
+                        <Copy className="w-3.5 h-3.5" /> Duplicate
+                      </Button>
+                      <Button variant="outline" size="sm" className="gap-2 border-[--border-primary] text-red-400 hover:bg-red-950/20 hover:text-red-400">
+                        <Trash2 className="w-3.5 h-3.5" /> Delete
+                      </Button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {selectedAutomation.status === "active" ? (
+                        <Button variant="outline" size="sm" className="gap-2 border-[--border-primary] text-[--text-secondary] hover:bg-[--bg-elevated]">
+                          <Pause className="w-3.5 h-3.5" /> Pause
+                        </Button>
+                      ) : (
+                        <Button size="sm" className="gap-2 bg-[--accent-primary] text-[--accent-soft] hover:bg-[--accent-hover]">
+                          <Play className="w-3.5 h-3.5" /> Activate
+                        </Button>
+                      )}
+                      <Button size="sm" className="gap-2 bg-[--accent-primary] text-[--accent-soft] hover:bg-[--accent-hover]">
+                        <Play className="w-3.5 h-3.5" /> Run Now
+                      </Button>
+                    </div>
+                  </DialogFooter>
+                </>
+              );
+            })()}
+          </DialogContent>
+        </Dialog>
+      </div>
     </div>
   );
 }

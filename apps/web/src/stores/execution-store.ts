@@ -25,6 +25,7 @@ interface ExecutionStoreState {
     runtime?: number;
     tokensUsed?: number;
   }>;
+  _startTimes: Record<string, number>;
 
   startExecution: (taskId: string, role: string, modelId: string, providerId: string) => void;
   updateExecution: (taskId: string, updates: Partial<ExecutionState>) => void;
@@ -37,6 +38,7 @@ interface ExecutionStoreState {
   clearExecution: (taskId: string) => void;
   clearAll: () => void;
   setActiveExecution: (id: string | null) => void;
+  getStartTime: (taskId: string) => number | undefined;
 }
 
 export const useExecutionStore = create<ExecutionStoreState>()((set, get) => ({
@@ -45,8 +47,10 @@ export const useExecutionStore = create<ExecutionStoreState>()((set, get) => ({
   streamingLogs: {},
   pendingApprovals: [],
   executionGraph: [],
+  _startTimes: {},
 
   startExecution: (taskId, role, modelId, providerId) => {
+    const startTime = Date.now();
     const execution: ExecutionState = {
       taskId,
       role,
@@ -66,6 +70,7 @@ export const useExecutionStore = create<ExecutionStoreState>()((set, get) => ({
         { taskId, role, modelId, providerId, status: "running" },
         ...state.executionGraph,
       ],
+      _startTimes: { ...state._startTimes, [taskId]: startTime },
     }));
   },
 
@@ -95,10 +100,12 @@ export const useExecutionStore = create<ExecutionStoreState>()((set, get) => ({
     set((state) => {
       const existing = state.executions[taskId];
       if (!existing) return state;
+      const startTime = state._startTimes?.[taskId] || Date.now();
+      const runtime = Date.now() - startTime;
       return {
         executions: {
           ...state.executions,
-          [taskId]: { ...existing, status: "completed", runtime: Date.now() - (existing.runtime ? Date.now() - existing.runtime : 0) },
+          [taskId]: { ...existing, status: "completed", runtime },
         },
         executionGraph: state.executionGraph.map((g) =>
           g.taskId === taskId ? { ...g, status: "completed" } : g
@@ -178,7 +185,9 @@ export const useExecutionStore = create<ExecutionStoreState>()((set, get) => ({
     });
   },
 
-  clearAll: () => set({ executions: {}, streamingLogs: {}, pendingApprovals: [], executionGraph: [], activeExecutionId: null }),
+  clearAll: () => set({ executions: {}, streamingLogs: {}, pendingApprovals: [], executionGraph: [], activeExecutionId: null, _startTimes: {} }),
 
   setActiveExecution: (id) => set({ activeExecutionId: id }),
+
+  getStartTime: (taskId) => get()._startTimes?.[taskId],
 }));

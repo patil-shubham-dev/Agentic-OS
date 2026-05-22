@@ -7,7 +7,7 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Diagnostic reports (https://nodejs.org/api/report.html)
+# Diagnostic reports
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # Runtime data
@@ -16,51 +16,30 @@ pids
 *.seed
 *.pid.lock
 
-# Directory for instrumenter libs
-lib-cov
-
-# Coverage directory used by tools
+# Coverage
 coverage
 *.lcov
-
-# nyc test coverage
 .nyc_output
 
-# Grunt intermediate storage (https://gruntjs.com/)
-.grunt
-
-# Bower dependency directory (https://bower.io/)
-bower_components
-
-# node-modules (dependencies)
+# Dependencies
 node_modules/
 **/node_modules/
 
 # TypeScript cache
 *.tsbuildinfo
 
-# Optional npm cache directory
+# npm / pnpm / yarn
 .npm
-
-# Optional eslint cache
 .eslintcache
-
-# Optional stylelint cache
 .stylelintcache
-
-# Microbundle cache
 .rpt2_cache/
 .rts2_cache_cjs/
 .rts2_cache_es/
 .rts2_cache_umd/
-
-# Output of 'npm pack'
 *.tgz
-
-# Yarn Integrity file
 .yarn-integrity
 
-# dotenv environment variables files
+# Environment files (actual secrets, not .example)
 .env
 .env.local
 .env.development.local
@@ -72,50 +51,40 @@ node_modules/
 **/.env.test.local
 **/.env.production.local
 
-# parcel-cache
+# Cache
 .cache
 .parcel-cache
 
-# Next.js build output
+# Build output — Next.js
 .next/
 **/.next/
 
-# Turbo cache and config
+# Build output — Turbo
 .turbo/
 **/.turbo/
 
-# Nuxt.js build output
+# Build output — general
+dist/
+build/
 .nuxt
-dist
+**/dist/
+**/build/
 
-# Gatsby files
-.cache/
+# Gatsby / VuePress / Serverless
 public/
-
-# vuepress build output
 .vuepress/dist
-
-# Serverless Webpack directories
 .serverless/
-
-# FuseBox cache
 .fusebox/
-
-# DynamoDB Local Codegen
 .dynamodb/
-
-# TernJS port file
 .tern-port
 
-# Python files
+# Python
 __pycache__/
 **/__pycache__/
 *.py[cod]
 *$py.class
 .Python
-build/
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
@@ -144,6 +113,7 @@ Thumbs.db:encryptable
 ehthumbs.db
 Desktop.ini
 .DS_Store
+nul
 
 # IDE and Editor configs
 .vscode/
@@ -153,8 +123,20 @@ Desktop.ini
 *.njsproj
 *.sln
 *.sw?
-nul
+*.swp
+*.swo
+*~
 
 # Temporary cloned reference repos
 tmp_repos/
 **/tmp_repos/
+
+# Test / CI artifacts
+playwright-report/
+**/playwright-report/
+test-results/
+**/test-results/
+*.last-run.json
+
+# Vercel
+.vercel/

@@ -9,16 +9,17 @@ import {
   Loader2,
   Terminal,
   PanelLeft,
-  PanelRight,
-  Code2,
-  GitBranch,
-  TestTube,
+  Layers,
   Save,
   Settings,
-  Component,
-  Layers,
-  Zap,
+  GitBranch,
+  TestTube,
+  Sparkles,
+  Command as CommandIcon,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface CommandItem {
   id: string;
@@ -51,12 +52,18 @@ export function QuickSearchDialog() {
   const [activeCategory, setActiveCategory] = useState<string>("all");
   const inputRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    if (searchOpen) {
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
+  }, [searchOpen]);
+
   const commandItems: CommandItem[] = [
     {
       id: "toggle-terminal",
       label: "Toggle Terminal",
       description: "Open or close the terminal panel",
-      icon: <Terminal className="w-4 h-4" />,
+      icon: <Terminal className="w-3.5 h-3.5" />,
       category: "View",
       shortcut: "Ctrl+J",
       action: () => { setTerminalOpen(!terminalOpen); setSearchOpen(false); },
@@ -65,7 +72,7 @@ export function QuickSearchDialog() {
       id: "toggle-sidebar",
       label: "Toggle Sidebar",
       description: "Show or hide the file explorer sidebar",
-      icon: <PanelLeft className="w-4 h-4" />,
+      icon: <PanelLeft className="w-3.5 h-3.5" />,
       category: "View",
       shortcut: "Ctrl+B",
       action: () => { setSidebarOpen(!sidebarOpen); setSearchOpen(false); },
@@ -74,7 +81,7 @@ export function QuickSearchDialog() {
       id: "toggle-split",
       label: "Toggle Split Editor",
       description: "Switch between single and split editor view",
-      icon: <Layers className="w-4 h-4" />,
+      icon: <Layers className="w-3.5 h-3.5" />,
       category: "View",
       action: () => { setSplitActive(!splitActive); setSearchOpen(false); },
     },
@@ -82,7 +89,7 @@ export function QuickSearchDialog() {
       id: "save-file",
       label: "Save File",
       description: "Save the currently active file",
-      icon: <Save className="w-4 h-4" />,
+      icon: <Save className="w-3.5 h-3.5" />,
       category: "File",
       shortcut: "Ctrl+S",
       action: () => { handleSaveFile(); setSearchOpen(false); },
@@ -91,7 +98,7 @@ export function QuickSearchDialog() {
       id: "open-file",
       label: "Quick Open File",
       description: "Search and open a file in the workspace",
-      icon: <FileText className="w-4 h-4" />,
+      icon: <FileText className="w-3.5 h-3.5" />,
       category: "File",
       shortcut: "Ctrl+P",
       action: () => { setSearchOpen(false); },
@@ -100,7 +107,7 @@ export function QuickSearchDialog() {
       id: "search-code",
       label: "Search Codebase",
       description: "Search for text across all files",
-      icon: <Search className="w-4 h-4" />,
+      icon: <Search className="w-3.5 h-3.5" />,
       category: "File",
       shortcut: "Ctrl+Shift+P",
       action: () => { setSearchOpen(false); },
@@ -109,7 +116,7 @@ export function QuickSearchDialog() {
       id: "git-status",
       label: "Git Status",
       description: "View current git status and changes",
-      icon: <GitBranch className="w-4 h-4" />,
+      icon: <GitBranch className="w-3.5 h-3.5" />,
       category: "Git",
       action: () => { setSearchOpen(false); window.dispatchEvent(new CustomEvent("command:git-status")); },
     },
@@ -117,7 +124,7 @@ export function QuickSearchDialog() {
       id: "run-tests",
       label: "Run Tests",
       description: "Execute test suite for the current project",
-      icon: <TestTube className="w-4 h-4" />,
+      icon: <TestTube className="w-3.5 h-3.5" />,
       category: "Dev",
       action: () => { setSearchOpen(false); window.dispatchEvent(new CustomEvent("command:run-tests")); },
     },
@@ -125,7 +132,7 @@ export function QuickSearchDialog() {
       id: "open-settings",
       label: "Open Settings",
       description: "Configure providers, roles, and security",
-      icon: <Settings className="w-4 h-4" />,
+      icon: <Settings className="w-3.5 h-3.5" />,
       category: "Settings",
       action: () => { setSearchOpen(false); window.location.href = "/settings"; },
     },
@@ -135,33 +142,21 @@ export function QuickSearchDialog() {
     if (activeCategory !== "all" && cmd.category.toLowerCase() !== activeCategory) return false;
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
-    return (
-      cmd.label.toLowerCase().includes(q) ||
-      cmd.description.toLowerCase().includes(q) ||
-      cmd.category.toLowerCase().includes(q)
-    );
+    return cmd.label.toLowerCase().includes(q) || cmd.description.toLowerCase().includes(q) || cmd.category.toLowerCase().includes(q);
   });
 
   const filteredFileResults = searchQuery
     ? searchResults.filter((res) => {
         const q = searchQuery.toLowerCase();
-        return (
-          res.name.toLowerCase().includes(q) ||
-          res.relPath.toLowerCase().includes(q)
-        );
+        return res.name.toLowerCase().includes(q) || res.relPath.toLowerCase().includes(q);
       })
     : [];
-
-  const showCommandsSection = !searchQuery || filteredCommands.length > 0;
-  const showFilesSection = filteredFileResults.length > 0;
 
   const categories = ["all", ...new Set(commandItems.map((c) => c.category.toLowerCase()))];
 
   const handleSelect = useCallback((value: string) => {
     const cmd = commandItems.find((c) => c.id === value);
-    if (cmd) {
-      cmd.action();
-    }
+    if (cmd) cmd.action();
   }, [commandItems, setSearchOpen]);
 
   const handleFileSelect = useCallback((path: string) => {
@@ -171,101 +166,97 @@ export function QuickSearchDialog() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]"
+      className="fixed inset-0 z-50 flex items-start justify-center pt-[12vh]"
       onClick={() => setSearchOpen(false)}
     >
+      {/* Blurred backdrop */}
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" aria-hidden />
+
+      {/* Raycast-inspired overlay */}
       <div
-        className="fixed inset-0 bg-black/60 backdrop-blur-sm"
-        aria-hidden
-      />
-      <div
-        className="relative w-full max-w-[580px] bg-[#0f1117] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden"
+        className="relative w-full max-w-[580px] bg-[--bg-primary] border border-[--border-primary] rounded-xl shadow-2xl shadow-black/40 overflow-hidden animate-fade-in"
         onClick={(e) => e.stopPropagation()}
       >
-        <Command label="Command Palette" shouldFilter={false}>
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-zinc-800">
-            <Search className="w-4 h-4 text-zinc-500 shrink-0" />
+        <Command label="Command Palette" shouldFilter={false} loop>
+          {/* Search input — Raycast-style */}
+          <div className="flex items-center gap-3 px-4 py-3.5 border-b border-[--border-primary]">
+            <Search className="w-4 h-4 text-[--text-muted] shrink-0" />
             <Command.Input
               ref={inputRef}
               value={searchQuery}
               onValueChange={handleSearchChange}
               placeholder="Search commands, files, settings..."
-              className="flex-1 bg-transparent text-sm text-zinc-200 placeholder-zinc-500 outline-none border-none"
+              className="flex-1 bg-transparent text-sm text-[--text-primary] placeholder:text-[--text-disabled] outline-none border-none"
               autoFocus
             />
-            <kbd className="hidden sm:inline-flex h-5 items-center gap-0.5 rounded border border-zinc-700 bg-zinc-800/50 px-1.5 font-mono text-[9px] text-zinc-500">
+            <kbd className="hidden sm:inline-flex h-5 items-center rounded border border-[--border-primary] bg-[--bg-elevated]/60 px-1.5 font-mono text-[9px] text-[--text-muted]">
               ESC
             </kbd>
           </div>
 
-          <Command.List className="max-h-[350px] overflow-y-auto p-2">
+          <Command.List className="max-h-[320px] overflow-y-auto p-1.5">
             {searching && (
-              <div className="flex items-center justify-center py-8 text-xs text-zinc-400">
-                <Loader2 className="w-4 h-4 animate-spin mr-2 text-zinc-500" />
+              <div className="flex items-center justify-center py-8 text-xs text-[--text-secondary]">
+                <Loader2 className="w-4 h-4 animate-spin mr-2 text-[--accent-primary]" />
                 Searching...
               </div>
             )}
 
-            {/* Category pills */}
-            {searchQuery && categories.length > 1 && (
-              <div className="flex gap-1.5 px-1 py-2 overflow-x-auto">
+            {/* Category filter chips */}
+            {searchQuery && (
+              <div className="flex gap-1.5 px-1 py-1.5 overflow-x-auto border-b border-[--border-primary]/50">
                 {categories.map((cat) => (
                   <button
                     key={cat}
                     onClick={() => setActiveCategory(cat)}
-                    className={`px-2.5 py-1 text-[10px] rounded-full border transition-colors ${
+                    className={cn(
+                      "px-2 py-0.5 text-[9px] font-medium rounded-full border transition-all",
                       activeCategory === cat
-                        ? "bg-amber-500/20 text-amber-400 border-amber-500/40"
-                        : "bg-zinc-900 text-zinc-400 border-zinc-800 hover:border-zinc-700"
-                    }`}
+                        ? "bg-[--accent-primary]/15 text-[--accent-primary] border-[--accent-primary]/30"
+                        : "bg-[--bg-tertiary] text-[--text-muted] border-[--border-primary] hover:text-[--text-secondary] hover:border-[--border-hover]"
+                    )}
                   >
-                    {cat === "all" ? "All" : cat}
+                    {cat === "all" ? "All" : cat.charAt(0).toUpperCase() + cat.slice(1)}
                   </button>
                 ))}
               </div>
             )}
 
-            {/* Commands section */}
-            {showCommandsSection && (
+            {/* Commands */}
+            {filteredCommands.length > 0 && (
               <Command.Group heading={
-                <div className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider px-2 py-1.5">
+                <div className="px-2 py-1.5 text-[9px] font-semibold text-[--text-disabled] uppercase tracking-[0.1em]">
                   Commands
                 </div>
               }>
-                {filteredCommands.length === 0 ? (
-                  <div className="px-2 py-4 text-xs text-zinc-500 text-center">
-                    No matching commands
-                  </div>
-                ) : (
-                  filteredCommands.map((cmd) => (
-                    <Command.Item
-                      key={cmd.id}
-                      value={cmd.id}
-                      onSelect={() => handleSelect(cmd.id)}
-                      className="flex items-center gap-3 px-3 py-2.5 text-sm text-zinc-300 rounded-lg cursor-pointer aria-selected:bg-zinc-800/80 aria-selected:text-zinc-100 transition-colors group"
-                    >
-                      <span className="text-zinc-500 group-aria-selected:text-zinc-300 transition-colors">
-                        {cmd.icon}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-xs truncate">{cmd.label}</div>
-                        <div className="text-[10px] text-zinc-500 truncate">{cmd.description}</div>
-                      </div>
-                      {cmd.shortcut && (
-                        <kbd className="hidden sm:inline-flex h-5 items-center gap-0.5 rounded border border-zinc-700 bg-zinc-800/50 px-1.5 font-mono text-[9px] text-zinc-500 shrink-0">
-                          {cmd.shortcut}
-                        </kbd>
-                      )}
-                    </Command.Item>
-                  ))
-                )}
+                {filteredCommands.map((cmd) => (
+                  <Command.Item
+                    key={cmd.id}
+                    value={cmd.id}
+                    onSelect={() => handleSelect(cmd.id)}
+                    className="flex items-center gap-3 px-3 py-2.5 text-[12px] text-[--text-primary] rounded-lg cursor-pointer aria-selected:bg-[--bg-elevated]/60 aria-selected:text-[--text-primary] transition-colors group"
+                  >
+                    <span className="text-[--text-muted] group-aria-selected:text-[--accent-primary] transition-colors shrink-0">
+                      {cmd.icon}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium truncate">{cmd.label}</div>
+                      <div className="text-[10px] text-[--text-muted] truncate">{cmd.description}</div>
+                    </div>
+                    {cmd.shortcut && (
+                      <kbd className="hidden sm:inline-flex h-5 items-center rounded border border-[--border-primary] bg-[--bg-elevated]/50 px-1.5 font-mono text-[9px] text-[--text-disabled] shrink-0">
+                        {cmd.shortcut}
+                      </kbd>
+                    )}
+                  </Command.Item>
+                ))}
               </Command.Group>
             )}
 
-            {/* File results section */}
-            {showFilesSection && (
+            {/* File results */}
+            {filteredFileResults.length > 0 && (
               <Command.Group heading={
-                <div className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider px-2 py-1.5">
+                <div className="px-2 py-1.5 text-[9px] font-semibold text-[--text-disabled] uppercase tracking-[0.1em]">
                   Files
                 </div>
               }>
@@ -274,36 +265,49 @@ export function QuickSearchDialog() {
                     key={res.path}
                     value={res.path}
                     onSelect={() => handleFileSelect(res.path)}
-                    className="flex items-center gap-3 px-3 py-2.5 text-sm text-zinc-300 rounded-lg cursor-pointer aria-selected:bg-zinc-800/80 aria-selected:text-zinc-100 transition-colors group"
+                    className="flex items-center gap-3 px-3 py-2.5 text-[12px] text-[--text-primary] rounded-lg cursor-pointer aria-selected:bg-[--bg-elevated]/60 aria-selected:text-[--text-primary] transition-colors group"
                   >
-                    <FileText className="w-4 h-4 text-zinc-500 shrink-0" />
+                    <FileText className="w-3.5 h-3.5 text-[--text-muted] group-aria-selected:text-[--accent-primary] shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium text-xs truncate">{res.name}</div>
-                      <div className="text-[10px] text-zinc-500 truncate">{res.relPath}</div>
+                      <div className="font-medium truncate">{res.name}</div>
+                      <div className="text-[10px] text-[--text-muted] truncate">{res.relPath}</div>
                     </div>
-                    <span className="text-[9px] text-zinc-600 font-mono">{res.path.split(".").pop()}</span>
+                    <span className="text-[9px] text-[--text-disabled] font-mono shrink-0">
+                      .{res.path.split(".").pop()}
+                    </span>
                   </Command.Item>
                 ))}
               </Command.Group>
             )}
 
             {/* Empty state */}
-            {!searching && !showCommandsSection && !showFilesSection && searchQuery && (
-              <div className="flex flex-col items-center py-10 text-zinc-500">
-                <Search className="w-8 h-8 mb-2 opacity-30" />
+            {!searching && searchQuery && filteredCommands.length === 0 && filteredFileResults.length === 0 && (
+              <div className="flex flex-col items-center py-8 text-[--text-muted]">
+                <Search className="w-6 h-6 mb-2 opacity-30" />
                 <div className="text-xs">No results for &ldquo;{searchQuery}&rdquo;</div>
-                <div className="text-[10px] text-zinc-600 mt-1">Try a different search term</div>
+                <div className="text-[10px] text-[--text-disabled] mt-1">Try a different search term</div>
               </div>
             )}
           </Command.List>
 
-          <div className="flex items-center justify-between px-4 py-2 border-t border-zinc-800 bg-zinc-900/50">
-            <div className="flex items-center gap-3 text-[10px] text-zinc-500">
-              <span><kbd className="text-zinc-400">↑↓</kbd> Navigate</span>
-              <span><kbd className="text-zinc-400">↵</kbd> Open</span>
-              <span><kbd className="text-zinc-400">Esc</kbd> Close</span>
+          {/* Footer — Raycast-style key hints */}
+          <div className="flex items-center justify-between px-4 py-2 border-t border-[--border-primary] bg-[--bg-secondary]/40">
+            <div className="flex items-center gap-3 text-[10px] text-[--text-disabled]">
+              <span className="flex items-center gap-1">
+                <ArrowUp className="w-2.5 h-2.5" />
+                <ArrowDown className="w-2.5 h-2.5" />
+                <span className="ml-0.5">Navigate</span>
+              </span>
+              <span className="flex items-center gap-1">
+                <kbd className="px-1 py-0.5 bg-[--bg-elevated]/60 rounded text-[9px] font-mono text-[--text-muted]">↵</kbd>
+                <span>Open</span>
+              </span>
+              <span className="flex items-center gap-1">
+                <kbd className="px-1 py-0.5 bg-[--bg-elevated]/60 rounded text-[9px] font-mono text-[--text-muted]">Esc</kbd>
+                <span>Close</span>
+              </span>
             </div>
-            <div className="text-[9px] text-zinc-600">
+            <div className="text-[9px] text-[--text-disabled]">
               {searchQuery ? `${filteredCommands.length + filteredFileResults.length} results` : `${commandItems.length} commands`}
             </div>
           </div>

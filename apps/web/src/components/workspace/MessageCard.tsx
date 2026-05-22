@@ -1,6 +1,7 @@
+import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle, Loader2, Zap, Clock, Cpu, BrainCircuit, FileCode, Layers, BookOpen, Eye } from "lucide-react";
+import { Zap, Clock, Cpu, BrainCircuit, FileCode, Layers, BookOpen, Eye } from "lucide-react";
 
 export interface MessageCardProps {
   id: string;
@@ -12,21 +13,101 @@ export interface MessageCardProps {
   tokensPerSecond?: number;
   runtime?: number;
   modelUsed?: string;
+  createdAt?: string | Date;
+  isStreaming?: boolean;
   className?: string;
 }
 
-const roleConfig: Record<string, { label: string; color: string; icon: React.ElementType }> = {
-  user: { label: "USER", color: "bg-sky-400", icon: Zap },
-  Manager: { label: "Manager", color: "bg-purple-400", icon: BrainCircuit },
-  Coding: { label: "Coding", color: "bg-blue-400", icon: FileCode },
-  Design: { label: "Design", color: "bg-pink-400", icon: Layers },
-  Research: { label: "Research", color: "bg-cyan-400", icon: BookOpen },
-  "Fast Inference": { label: "Fast", color: "bg-amber-400", icon: Zap },
-  Vision: { label: "Vision", color: "bg-emerald-400", icon: Eye },
+// ── Relative timestamp ──
+function formatRelativeTime(date: string | Date): string {
+  const ts = typeof date === "string" ? Date.parse(date) : date.getTime();
+  if (Number.isNaN(ts)) return "";
+  const diff = Date.now() - ts;
+  if (diff < 5_000) return "just now";
+  if (diff < 60_000) return `${Math.floor(diff / 1_000)}s ago`;
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function RelativeTime({ date }: { date: string | Date }) {
+  const [label, setLabel] = useState(() => formatRelativeTime(date));
+
+  useEffect(() => {
+    const update = () => setLabel(formatRelativeTime(date));
+    update();
+    const interval = setInterval(update, 30_000);
+    return () => clearInterval(interval);
+  }, [date]);
+
+  return <>{label}</>;
+}
+
+// ── Blinking streaming cursor ──
+const StreamingCursor = () => (
+  <span className="inline-block w-[2px] h-[14px] bg-[--accent-primary] align-text-bottom ml-0.5 animate-pulse" />
+);
+
+const roleConfig: Record<string, { label: string; dotColor: string; borderAccent: string; icon: React.ElementType; bgGlow: string }> = {
+  user: {
+    label: "YOU",
+    dotColor: "bg-[--accent-primary]",
+    borderAccent: "border-[--border-secondary]/60",
+    icon: Zap,
+    bgGlow: "shadow-[inset_0_1px_0_var(--border-secondary)]",
+  },
+  Manager: {
+    label: "Manager",
+    dotColor: "bg-purple-400",
+    borderAccent: "border-purple-500/20",
+    icon: BrainCircuit,
+    bgGlow: "shadow-[inset_0_1px_0_rgba(168,85,247,0.08)]",
+  },
+  Coding: {
+    label: "Coding",
+    dotColor: "bg-blue-400",
+    borderAccent: "border-blue-500/20",
+    icon: FileCode,
+    bgGlow: "shadow-[inset_0_1px_0_rgba(59,130,246,0.08)]",
+  },
+  Design: {
+    label: "Design",
+    dotColor: "bg-pink-400",
+    borderAccent: "border-pink-500/20",
+    icon: Layers,
+    bgGlow: "shadow-[inset_0_1px_0_rgba(236,72,153,0.08)]",
+  },
+  Research: {
+    label: "Research",
+    dotColor: "bg-cyan-400",
+    borderAccent: "border-cyan-500/20",
+    icon: BookOpen,
+    bgGlow: "shadow-[inset_0_1px_0_rgba(34,211,238,0.08)]",
+  },
+  "Fast Inference": {
+    label: "Fast",
+    dotColor: "bg-amber-400",
+    borderAccent: "border-amber-500/20",
+    icon: Zap,
+    bgGlow: "shadow-[inset_0_1px_0_var(--border-secondary)]",
+  },
+  Vision: {
+    label: "Vision",
+    dotColor: "bg-emerald-400",
+    borderAccent: "border-emerald-500/20",
+    icon: Eye,
+    bgGlow: "shadow-[inset_0_1px_0_rgba(52,211,153,0.08)]",
+  },
 };
 
 function getRoleConfig(role: string) {
-  return roleConfig[role] || { label: role || "Agent", color: "bg-amber-500", icon: Cpu };
+  return roleConfig[role] || {
+    label: role || "Agent",
+    dotColor: "bg-[--accent-primary]",
+    borderAccent: "border-[--border-secondary]/40",
+    icon: Cpu,
+    bgGlow: "shadow-[inset_0_1px_0_var(--border-secondary)]",
+  };
 }
 
 export function MessageCard({
@@ -39,41 +120,55 @@ export function MessageCard({
   tokensPerSecond,
   runtime,
   modelUsed,
+  createdAt,
+  isStreaming,
   className,
 }: MessageCardProps) {
   const config = getRoleConfig(role);
   const Icon = config.icon;
+  const isUser = role === "user";
 
   return (
     <div
       className={cn(
-        "px-4 py-3.5 border-b border-zinc-900/50",
-        role === "user" ? "bg-[#141416]" : "bg-[#18181c]/40",
+        "px-4 py-3.5 border-b border-[--border-primary] transition-colors",
+        isUser
+          ? "bg-[--bg-primary]"
+          : "bg-[--bg-secondary]/30",
+        !isUser && config.bgGlow,
         className
       )}
     >
       <div className="flex items-center justify-between mb-2">
-        <span className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-400">
-          <span className={cn("w-1.5 h-1.5 rounded-full", config.color)} />
-          <Icon className="w-3 h-3" />
-          {config.label}
-          {modelUsed && (
-            <span className="text-[9px] text-zinc-500 font-normal ml-1">
-              via {modelUsed}
+        <span className="flex items-center gap-1.5 text-[10px] font-bold text-[--text-muted]">
+          <span className={cn("w-1.5 h-1.5 rounded-full shadow-sm", config.dotColor)} />
+          <Icon className="w-3 h-3 text-[--text-secondary]" />
+          <span className="text-[--text-secondary]">{config.label}</span>
+          {createdAt && (
+            <span className="text-[9px] font-normal text-[--text-disabled] ml-1.5" title={new Date(createdAt).toLocaleString()}>
+              <RelativeTime date={createdAt} />
             </span>
+          )}
+          {modelUsed && (
+            <Badge
+              variant="outline"
+              className="text-[9px] border-[--border-primary] bg-[--bg-tertiary] text-[--text-disabled] font-medium px-1.5 py-0 h-4 ml-0.5 rounded"
+            >
+              {modelUsed}
+            </Badge>
           )}
         </span>
         {(tokensPerSecond || runtime) && (
-          <span className="flex items-center gap-2 text-[9px] text-zinc-500">
+          <span className="flex items-center gap-2 text-[9px] text-[--text-disabled]">
             {tokensPerSecond && (
               <span className="flex items-center gap-0.5" title="Tokens/sec">
-                <Zap className="w-2.5 h-2.5" />
+                <Zap className="w-2.5 h-2.5 text-[--accent-primary]" />
                 {tokensPerSecond}/s
               </span>
             )}
             {runtime && (
               <span className="flex items-center gap-0.5" title="Runtime">
-                <Clock className="w-2.5 h-2.5" />
+                <Clock className="w-2.5 h-2.5 text-[--text-disabled]" />
                 {(runtime / 1000).toFixed(1)}s
               </span>
             )}
@@ -89,8 +184,9 @@ export function MessageCard({
         </div>
       )}
 
-      <div className="text-xs leading-relaxed text-zinc-300">
+      <div className="text-xs leading-relaxed text-[--text-secondary]">
         {renderMessageContent ? renderMessageContent({ id, role, content }) : content}
+        {isStreaming && <StreamingCursor />}
       </div>
     </div>
   );

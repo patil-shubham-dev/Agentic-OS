@@ -14,10 +14,14 @@ const DEFAULT_SECURITY = {
 
 export async function POST(request: NextRequest) {
   try {
-    const { toolName, args, projectId = DEFAULT_PROJECT_ID } = await request.json();
+    const { toolName, args, workspaceRoot, projectId = DEFAULT_PROJECT_ID } = await request.json();
 
     if (!toolName) {
       return NextResponse.json({ error: "toolName is required" }, { status: 400 });
+    }
+
+    if (!workspaceRoot || typeof workspaceRoot !== "string") {
+      return NextResponse.json({ error: "workspaceRoot is required — open a workspace folder first" }, { status: 400 });
     }
 
     // 1. Fetch Security settings from DB
@@ -47,7 +51,7 @@ export async function POST(request: NextRequest) {
 
     // 4. Execute tool
     const config = {
-      workspaceRoot: process.cwd(),
+      workspaceRoot,
       osType: process.platform,
       homeDir: process.env.USERPROFILE || process.env.HOME || process.cwd(),
       securitySettings: {

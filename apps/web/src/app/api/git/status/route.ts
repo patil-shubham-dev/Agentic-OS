@@ -45,15 +45,9 @@ export async function GET() {
       hasUnpushed: changes.some((c) => c.status === "??" || c.status.includes("M")),
     });
   } catch {
-    return NextResponse.json({
-      branch: "unknown",
-      changes: 0,
-      changesList: [],
-      log: [],
-      ahead: 0,
-      behind: 0,
-      hasUnpushed: false,
-      error: "Not a git repository or git not available",
-    });
+    return NextResponse.json(
+      { error: "Not a git repository or git not available" },
+      { status: 503 }
+    );
   }
 }

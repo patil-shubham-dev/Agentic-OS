@@ -4,7 +4,7 @@ function Skeleton({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "animate-pulse rounded-md bg-amber-200/50",
+        "animate-pulse rounded-md bg-[--bg-elevated]/60",
         className
       )}
     />
@@ -41,7 +41,7 @@ export function PageSkeleton({ children }: { children?: React.ReactNode }) {
 
 export function CardSkeleton({ className }: { className?: string }) {
   return (
-    <div className={cn("p-5 border border-amber-200/60 rounded-2xl bg-white", className)}>
+    <div className={cn("p-5 border border-[--border-primary] rounded-2xl bg-[--bg-tertiary]", className)}>
       <div className="flex items-start gap-3">
         <Skeleton className="h-10 w-10 rounded-xl shrink-0" />
         <div className="flex-1 space-y-2">

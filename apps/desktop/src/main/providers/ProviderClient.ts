@@ -1,22 +1,17 @@
 /**
- * ProviderClient — universal LLM provider client.
+ * ProviderClient — wraps API calls to a model provider.
+ * Handles authentication, streaming, and connection stabilization
+ * (retry with exponential backoff, timeout, and error classification).
  *
- * All providers normalise to OpenAI /v1/chat/completions format internally.
- * Anthropic has its own adapter; everything else speaks OpenAI-compatible.
- *
- * Lives exclusively in the main process — never instantiated in the renderer.
+ * ARCHITECTURE: One ProviderClient instance = one provider + one model.
  */
-
-import * as https from "https";
-import * as http from "http";
-import * as url from "url";
 
 export interface ProviderConfig {
   id: string;
-  gatewayType: "openai" | "anthropic" | "gemini" | "ollama" | "lmstudio" | "custom";
+  gatewayType: "openai" | "anthropic" | "google" | "groq" | "nvidia" | "openrouter" | "deepseek" | "mistral" | "ollama" | "lmstudio" | "custom";
   displayName: string;
-  apiKey: string;
   defaultModel: string;
+  apiKey: string;
   baseUrl?: string;
 }
 
@@ -25,296 +20,368 @@ export interface ChatMessage {
   content: string;
 }
 
-const BASE_URL_MAP: Record<string, string> = {
-  openai: "https://api.openai.com/v1",
-  anthropic: "https://api.anthropic.com",
-  gemini: "https://generativelanguage.googleapis.com/v1beta/openai",
-  ollama: "http://localhost:11434/v1",
-  lmstudio: "http://localhost:1234/v1",
+interface StreamChunk {
+  type: "text" | "tool_call" | "error" | "done";
+  content?: string;
+  toolCall?: {
+    name: string;
+    arguments: string;
+  };
+  error?: string;
+}
+
+interface RetryConfig {
+  maxRetries: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+  timeoutMs: number;
+}
+
+const DEFAULT_RETRY: RetryConfig = {
+  maxRetries: 2,
+  baseDelayMs: 500,
+  maxDelayMs: 4000,
+  timeoutMs: 15_000,
 };
 
-// =============================================================================
-// Retry helper
-// =============================================================================
-async function withRetry<T>(
-  fn: () => Promise<T>,
-  attempts = 3,
-  baseDelay = 500
-): Promise<T> {
-  for (let i = 0; i < attempts; i++) {
-    try {
-      return await fn();
-    } catch (err) {
-      if (i === attempts - 1) throw err;
-      await new Promise((r) => setTimeout(r, baseDelay * Math.pow(2, i)));
-    }
-  }
-  throw new Error("unreachable");
-}
-
-// =============================================================================
-// HTTP fetch with streaming support
-// =============================================================================
-function fetchStream(
-  requestUrl: string,
-  options: http.RequestOptions,
-  body: string
-): Promise<http.IncomingMessage> {
-  return new Promise((resolve, reject) => {
-    const isHttps = requestUrl.startsWith("https");
-    const mod = isHttps ? https : http;
-    const req = mod.request(requestUrl, options, (res) => {
-      resolve(res);
-    });
-    req.on("error", reject);
-    req.write(body);
-    req.end();
-  });
-}
-
-// =============================================================================
-// Anthropic adapter — transforms messages to/from Anthropic format
-// =============================================================================
-function toAnthropicMessages(messages: ChatMessage[]) {
-  return messages.map((m) => ({
-    role: m.role === "system" ? "system" : m.role === "assistant" ? "assistant" : "user",
-    content: m.content,
-  }));
-}
-
-// =============================================================================
-// ProviderClient class
-// =============================================================================
 export class ProviderClient {
-  public readonly id: string;
-  public readonly gatewayType: string;
-  public readonly displayName: string;
-  private apiKey: string;
-  public readonly defaultModel: string;
-  private baseUrl: string;
+  private config: ProviderConfig;
+  /** Track the active stream controller for cancellation. Does NOT interfere with ping/discovery. */
+  private streamController: AbortController | null = null;
 
   constructor(config: ProviderConfig) {
-    this.id = config.id;
-    this.gatewayType = config.gatewayType;
-    this.displayName = config.displayName;
-    this.apiKey = config.apiKey;
-    this.defaultModel = config.defaultModel;
-
-    this.baseUrl = config.baseUrl || BASE_URL_MAP[config.gatewayType] || "";
-    if (!this.baseUrl) {
-      throw new Error(`Unknown gateway type "${config.gatewayType}" and no baseUrl provided`);
-    }
-    this.baseUrl = this.baseUrl.replace(/\/+$/, "");
+    this.config = config;
   }
 
-  // ---------------------------------------------------------------------------
-  // Public API
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Stream a chat completion. Yields text chunks as they arrive.
-   * Emits [STREAM_ERROR: <message>] on mid-stream failures.
-   */
-  async *streamChat(
-    messages: ChatMessage[],
-    model: string,
-    signal?: AbortSignal
-  ): AsyncGenerator<string> {
-    if (this.gatewayType === "anthropic") {
-      yield* this.anthropicStream(messages, model, signal);
-    } else {
-      yield* this.openaiStream(messages, model, signal);
-    }
+  get id(): string {
+    return this.config.id;
   }
 
-  /**
-   * Fire-and-forget health check. Returns true if provider responds.
-   */
-  async ping(): Promise<boolean> {
-    try {
-      return await withRetry(async () => {
-        const targetUrl = `${this.baseUrl}/models`;
-        const parsed = new url.URL(targetUrl);
-        const isHttps = targetUrl.startsWith("https");
-        const mod = isHttps ? https : http;
+  get model(): string {
+    return this.config.defaultModel;
+  }
 
-        return new Promise<boolean>((resolve) => {
-          const req = mod.get(
-            targetUrl,
-            { headers: this.getHeaders(), timeout: 5000 },
-            (res) => {
-              resolve(res.statusCode !== undefined && res.statusCode < 500);
-            }
-          );
-          req.on("error", () => resolve(false));
-          req.on("timeout", () => {
-            req.destroy();
-            resolve(false);
-          });
+  get baseUrl(): string {
+    return this.config.baseUrl || "";
+  }
+
+  // ── Connection stabilization ─────────────────────
+
+  private async fetchWithRetry(
+    url: string,
+    options: RequestInit & { retryConfig?: Partial<RetryConfig> } = {}
+  ): Promise<Response> {
+    const retryConfig = { ...DEFAULT_RETRY, ...options.retryConfig };
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= retryConfig.maxRetries; attempt++) {
+      // Each attempt gets its own controller — no shared state race condition
+      const controller = new AbortController();
+      try {
+        const timeoutId = setTimeout(() => controller.abort(), retryConfig.timeoutMs);
+
+        const response = await fetch(url, {
+          ...options,
+          signal: controller.signal,
         });
-      }, 2, 300);
+
+        clearTimeout(timeoutId);
+        return response;
+      } catch (err: any) {
+        lastError = err;
+
+        // Don't retry on abort/timeout or auth errors
+        if (err.name === "AbortError") {
+          throw new Error(`Connection timed out after ${retryConfig.timeoutMs}ms`);
+        }
+
+        if (err.message?.includes("401") || err.message?.includes("403")) {
+          throw err; // Auth errors are not retryable
+        }
+
+        if (attempt < retryConfig.maxRetries) {
+          const delay = Math.min(
+            retryConfig.baseDelayMs * Math.pow(2, attempt) + Math.random() * 100,
+            retryConfig.maxDelayMs
+          );
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    throw lastError || new Error("Request failed after retries");
+  }
+
+  private buildHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+
+    const { gatewayType, apiKey, baseUrl } = this.config;
+
+    switch (gatewayType) {
+      case "anthropic":
+        headers["x-api-key"] = apiKey;
+        headers["anthropic-version"] = "2023-06-01";
+        break;
+      case "google":
+        headers["x-goog-api-key"] = apiKey;
+        break;
+      case "nvidia":
+        // NVCF API uses NVCF-API-KEY header, integrate.api.nvidia.com uses Bearer
+        if (baseUrl?.includes("nvcf.nvidia.com")) {
+          headers["NVCF-API-KEY"] = apiKey;
+        } else {
+          headers["Authorization"] = `Bearer ${apiKey}`;
+        }
+        break;
+      default:
+        // Standard OpenAI-compatible bearer auth
+        headers["Authorization"] = `Bearer ${apiKey}`;
+        break;
+    }
+
+    return headers;
+  }
+
+  // ── Ping / Health Check ──────────────────────────
+
+  async ping(): Promise<boolean> {
+    const { gatewayType, baseUrl, apiKey } = this.config;
+    const trimmed = (baseUrl || "").replace(/\/+$/, "");
+
+    if (!trimmed) return false;
+
+    try {
+      const isAnthropic = gatewayType === "anthropic";
+      const isOllama = gatewayType === "ollama";
+
+      let pingUrl: string;
+      let pingOptions: RequestInit;
+
+      if (isAnthropic) {
+        pingUrl = `${trimmed}/messages`;
+        pingOptions = {
+          method: "POST",
+          headers: this.buildHeaders(),
+          body: JSON.stringify({
+            model: "claude-3-haiku-20240307",
+            max_tokens: 1,
+            messages: [{ role: "user", content: "Hi" }],
+          }),
+          retryConfig: { maxRetries: 1, timeoutMs: 10_000 },
+        };
+      } else if (isOllama) {
+        pingUrl = `${trimmed}/api/tags`;
+        pingOptions = {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+          retryConfig: { maxRetries: 1, timeoutMs: 5_000 },
+        };
+      } else {
+        pingUrl = `${trimmed}/models`;
+        pingOptions = {
+          method: "GET",
+          headers: this.buildHeaders(),
+          retryConfig: { maxRetries: 1, timeoutMs: 10_000 },
+        };
+      }
+
+      const response = await this.fetchWithRetry(pingUrl, pingOptions);
+      return response.status >= 200 && response.status < 500;
     } catch {
       return false;
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // OpenAI-compatible streaming
-  // ---------------------------------------------------------------------------
-  private async *openaiStream(
-    messages: ChatMessage[],
-    model: string,
-    signal?: AbortSignal
-  ): AsyncGenerator<string> {
-    const body = JSON.stringify({
-      model,
-      messages,
-      stream: true,
-      max_tokens: 4096,
-    });
+  // ── Model Discovery ──────────────────────────────
+
+  async discoverModels(): Promise<string[]> {
+    const { gatewayType, baseUrl } = this.config;
+    const trimmed = (baseUrl || "").replace(/\/+$/, "");
+
+    if (!trimmed) return [];
+
+    const isOllama = gatewayType === "ollama";
 
     try {
-      const res = await withRetry(async () => {
-        const parsed = new url.URL(`${this.baseUrl}/chat/completions`);
-        const options: http.RequestOptions = {
-          hostname: parsed.hostname,
-          port: parsed.port,
-          path: parsed.pathname + parsed.search,
-          method: "POST",
-          headers: {
-            ...this.getHeaders(),
-            "Content-Type": "application/json",
-            "Content-Length": Buffer.byteLength(body).toString(),
-          },
-          signal,
+      let modelsUrl: string;
+      let modelsOptions: RequestInit;
+
+      if (isOllama) {
+        modelsUrl = `${trimmed}/api/tags`;
+        modelsOptions = {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+          retryConfig: { timeoutMs: 5_000 },
         };
-
-        return fetchStream(
-          `${this.baseUrl}/chat/completions`,
-          options,
-          body
-        );
-      });
-
-      const reader = res as unknown as NodeJS.ReadableStream;
-      let buffer = "";
-
-      for await (const chunk of reader) {
-        const text = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : (chunk as string);
-        buffer += text;
-
-        while (buffer.includes("\n")) {
-          const lineEnd = buffer.indexOf("\n");
-          const line = buffer.slice(0, lineEnd).trim();
-          buffer = buffer.slice(lineEnd + 1);
-
-          if (!line || !line.startsWith("data: ")) continue;
-
-          const data = line.slice(6);
-          if (data === "[DONE]") return;
-
-          try {
-            const parsed = JSON.parse(data);
-            const content = parsed.choices?.[0]?.delta?.content;
-            if (content) {
-              yield content;
-            }
-          } catch {
-            // skip malformed JSON lines
-          }
-        }
+      } else {
+        modelsUrl = `${trimmed}/models`;
+        modelsOptions = {
+          method: "GET",
+          headers: this.buildHeaders(),
+          retryConfig: { timeoutMs: 10_000 },
+        };
       }
-    } catch (err: any) {
-      if (err.name === "AbortError") return;
-      yield `[STREAM_ERROR: ${err.message || "Unknown stream error"}]`;
+
+      const response = await this.fetchWithRetry(modelsUrl, modelsOptions);
+
+      if (!response.ok) return [];
+
+      const data = await response.json();
+
+      if (isOllama && data.models) {
+        return data.models.map((m: any) => m.name || m.model || "");
+      }
+
+      if (data.data && Array.isArray(data.data)) {
+        return data.data.map((m: any) => m.id || "");
+      }
+
+      if (Array.isArray(data)) {
+        return data.map((m: any) => m.id || m.name || "");
+      }
+
+      return [];
+    } catch {
+      return [];
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Anthropic streaming (adapter)
-  // ---------------------------------------------------------------------------
-  private async *anthropicStream(
+  // ── Streaming Chat ───────────────────────────────
+
+  async *streamChat(
     messages: ChatMessage[],
-    model: string,
-    signal?: AbortSignal
-  ): AsyncGenerator<string> {
-    const systemMessages = messages.filter((m) => m.role === "system");
-    const nonSystem = messages.filter((m) => m.role !== "system");
+    model?: string,
+    tools?: Array<{ function: { name: string; description?: string; parameters?: Record<string, unknown> }; type: string }>
+  ): AsyncGenerator<StreamChunk> {
+    const { gatewayType, baseUrl, defaultModel } = this.config;
+    const modelName = model || defaultModel;
+    const trimmed = (baseUrl || "").replace(/\/+$/, "");
 
-    const body: Record<string, unknown> = {
-      model,
-      messages: toAnthropicMessages(nonSystem),
-      max_tokens: 4096,
-      stream: true,
-    };
-
-    if (systemMessages.length > 0) {
-      body.system = systemMessages.map((m) => m.content).join("\n");
+    if (!trimmed || !modelName) {
+      yield { type: "error", error: "Provider not configured" };
+      return;
     }
 
-    const bodyStr = JSON.stringify(body);
+    const isAnthropic = gatewayType === "anthropic";
 
     try {
-      const res = await withRetry(async () => {
-        const targetUrl = `${this.baseUrl}/v1/messages`;
-        const parsed = new url.URL(targetUrl);
-        const options: http.RequestOptions = {
-          hostname: parsed.hostname,
-          port: parsed.port,
-          path: parsed.pathname + parsed.search,
-          method: "POST",
-          headers: {
-            "x-api-key": this.apiKey,
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json",
-            "Content-Length": Buffer.byteLength(bodyStr).toString(),
-          },
-          signal,
-        };
+      const chatUrl = `${trimmed}${isAnthropic ? "/messages" : "/chat/completions"}`;
 
-        return fetchStream(targetUrl, options, bodyStr);
+      const body: Record<string, unknown> = isAnthropic
+        ? {
+            model: modelName,
+            max_tokens: 4096,
+            messages: messages.map((m) => ({
+              role: m.role === "assistant" ? "assistant" : "user",
+              content: m.content,
+            })),
+          }
+        : {
+            model: modelName,
+            messages,
+            stream: true,
+            max_tokens: 4096,
+          };
+
+      if (tools && tools.length > 0 && !isAnthropic) {
+        body.tools = tools;
+      }
+
+      this.streamController = new AbortController();
+      const timeoutId = setTimeout(() => this.streamController!.abort(), 60_000);
+
+      const response = await fetch(chatUrl, {
+        method: "POST",
+        headers: this.buildHeaders(),
+        body: JSON.stringify(body),
+        signal: this.streamController.signal,
       });
 
-      const reader = res as unknown as NodeJS.ReadableStream;
-      let buffer = "";
+      clearTimeout(timeoutId);
 
-      for await (const chunk of reader) {
-        const text = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : (chunk as string);
-        buffer += text;
+      if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        yield {
+          type: "error",
+          error: `HTTP ${response.status}: ${errText.slice(0, 200)}`,
+        };
+        return;
+      }
 
-        while (buffer.includes("\n")) {
-          const lineEnd = buffer.indexOf("\n");
-          const line = buffer.slice(0, lineEnd).trim();
-          buffer = buffer.slice(lineEnd + 1);
+      if (isAnthropic) {
+        // Anthropic uses a different streaming format
+        const data = await response.json();
+        const text = data.content?.[0]?.text || "";
+        yield { type: "text", content: text };
+      } else {
+        // Standard SSE streaming
+        const reader = response.body?.getReader();
+        if (!reader) {
+          yield { type: "error", error: "No response body" };
+          return;
+        }
 
-          if (!line || !line.startsWith("data: ")) continue;
+        const decoder = new TextDecoder();
+        let buffer = "";
 
-          const data = line.slice(6);
-          if (data === "[DONE]") return;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-          try {
-            const parsed = JSON.parse(data);
-            if (parsed.type === "content_block_delta" && parsed.delta?.text) {
-              yield parsed.delta.text;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || !trimmed.startsWith("data: ")) continue;
+
+            const data = trimmed.slice(6);
+            if (data === "[DONE]") {
+              yield { type: "done" };
+              return;
             }
-            if (parsed.type === "message_stop") return;
-          } catch {
-            // skip
+
+            try {
+              const parsed = JSON.parse(data);
+              const delta = parsed.choices?.[0]?.delta;
+              if (delta?.content) {
+                yield { type: "text", content: delta.content };
+              }
+              if (delta?.tool_calls) {
+                for (const tc of delta.tool_calls) {
+                  yield {
+                    type: "tool_call",
+                    toolCall: {
+                      name: tc.function?.name || "",
+                      arguments: tc.function?.arguments || "",
+                    },
+                  };
+                }
+              }
+            } catch {
+              // Skip malformed JSON lines
+            }
           }
         }
       }
+
+      yield { type: "done" };
     } catch (err: any) {
-      if (err.name === "AbortError") return;
-      yield `[STREAM_ERROR: ${err.message || "Unknown stream error"}]`;
+      if (err.name === "AbortError") {
+        yield { type: "error", error: "Stream timed out after 60s" };
+      } else {
+        yield { type: "error", error: err.message || "Stream failed" };
+      }
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Helpers
-  // ---------------------------------------------------------------------------
-  private getHeaders(): Record<string, string> {
-    return {
-      Authorization: `Bearer ${this.apiKey}`,
-    };
+  cancelStream(): void {
+    if (this.streamController) {
+      this.streamController.abort();
+      this.streamController = null;
+    }
   }
 }

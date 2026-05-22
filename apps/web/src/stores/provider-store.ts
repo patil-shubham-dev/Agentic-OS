@@ -3,21 +3,31 @@ import { persist } from "zustand/middleware";
 import type { UniversalProviderConfig, ProviderHealthStatus } from "@/lib/runtime/types";
 import { BaseUniversalProvider } from "@/lib/runtime/providers/base-provider";
 import { createUniversalProvider, checkProviderHealth } from "@/lib/runtime/providers/provider-factory";
+import { getJson } from "@/lib/client-api";
+import {
+  getCurrentSchemaVersion,
+  validateProviderStore,
+} from "@/lib/runtime/state-validator";
+
+const STORE_NAME = "agentos-provider-store";
+const CURRENT_VERSION = getCurrentSchemaVersion(STORE_NAME);
 
 interface ProviderState {
   providers: UniversalProviderConfig[];
   providerInstances: Record<string, BaseUniversalProvider>;
   loading: boolean;
   error: string | null;
-
   setProviders: (providers: UniversalProviderConfig[]) => void;
   addProvider: (config: UniversalProviderConfig) => void;
   updateProvider: (id: string, updates: Partial<UniversalProviderConfig>) => void;
   removeProvider: (id: string) => void;
+  setSelectedModel: (providerId: string, modelName: string) => void;
+  getSelectedModel: (providerId: string) => string;
   setProviderHealth: (id: string, status: ProviderHealthStatus, latency: number) => void;
   refreshHealth: () => Promise<void>;
   getInstance: (id: string) => BaseUniversalProvider | undefined;
   hydrate: () => Promise<void>;
+  reset: () => void;
 }
 
 export const useProviderStore = create<ProviderState>()(
@@ -28,50 +38,76 @@ export const useProviderStore = create<ProviderState>()(
       loading: false,
       error: null,
 
-      setProviders: (providers) => {
+      setProviders: (providers: UniversalProviderConfig[]) => {
         const instances: Record<string, BaseUniversalProvider> = {};
         for (const p of providers) {
           if (p.enabled) {
-            instances[p.id] = createUniversalProvider(p);
+            try {
+              instances[p.id] = createUniversalProvider(p);
+            } catch {
+              console.warn(`[ProviderStore] Failed to create instance for "${p.name}"`);
+            }
           }
         }
         set({ providers, providerInstances: instances });
       },
 
-      addProvider: (config) => {
+      addProvider: (config: UniversalProviderConfig) => {
         const providers = [...get().providers, config];
         const instances = { ...get().providerInstances };
         if (config.enabled) {
-          instances[config.id] = createUniversalProvider(config);
+          try {
+            instances[config.id] = createUniversalProvider(config);
+          } catch {
+            console.warn(`[ProviderStore] Failed to create instance for "${config.name}"`);
+          }
         }
         set({ providers, providerInstances: instances });
       },
 
-      updateProvider: (id, updates) => {
+      updateProvider: (id: string, updates: Partial<UniversalProviderConfig>) => {
         const providers = get().providers.map((p) =>
           p.id === id ? { ...p, ...updates } : p
         );
         const instances = { ...get().providerInstances };
         const updated = providers.find((p) => p.id === id);
         if (updated?.enabled) {
-          instances[id] = createUniversalProvider(updated);
-        } else if (!updated?.enabled) {
+          try {
+            instances[id] = createUniversalProvider(updated);
+          } catch {
+            delete instances[id];
+          }
+        } else {
           delete instances[id];
         }
         set({ providers, providerInstances: instances });
       },
 
-      removeProvider: (id) => {
+      setSelectedModel: (providerId: string, modelName: string) => {
+        const providers = get().providers.map((p) =>
+          p.id === providerId ? { ...p, selectedModel: modelName } : p
+        );
+        set({ providers });
+      },
+
+      getSelectedModel: (providerId: string) => {
+        const provider = get().providers.find((p) => p.id === providerId);
+        return provider?.selectedModel ?? "";
+      },
+
+      removeProvider: (id: string) => {
         const providers = get().providers.filter((p) => p.id !== id);
         const instances = { ...get().providerInstances };
         delete instances[id];
         set({ providers, providerInstances: instances });
       },
 
-      setProviderHealth: (id, status, latency) => {
+      setProviderHealth: (id: string, status: ProviderHealthStatus, latency: number) => {
         set({
           providers: get().providers.map((p) =>
-            p.id === id ? { ...p, health: status, latency, lastChecked: new Date().toISOString() } : p
+            p.id === id
+              ? { ...p, health: status, latency, lastChecked: new Date().toISOString() }
+              : p
           ),
         });
       },
@@ -90,42 +126,128 @@ export const useProviderStore = create<ProviderState>()(
         }
       },
 
-      getInstance: (id) => get().providerInstances[id],
+      getInstance: (id: string) => get().providerInstances[id],
 
       hydrate: async () => {
-        set({ loading: true });
+        set({ loading: true, error: null });
         try {
-          const res = await fetch("/api/settings/providers");
-          const data = await res.json();
+          const data = await getJson<{ providers: any[] }>("/api/settings/providers");
           const rawProviders = data.providers || data || [];
-          const mapped: UniversalProviderConfig[] = rawProviders.map((p: any) => ({
-            id: p.provider || p.id,
-            name: p.label || p.name,
-            type: (p.metadata?.compatibilityMode === "anthropic-compatible" ? "cloud" :
-                   p.id === "ollama" || p.id === "lm-studio" ? "local" : "openai-compatible") as any,
-            baseUrl: p.base_url || p.baseUrl || "",
-            apiKey: undefined,
-            defaultModel: p.default_model || p.defaultModel || "",
-            enabled: Boolean(p.enabled),
-            metadata: p.metadata || {},
-            health: "unknown" as ProviderHealthStatus,
-            latency: 0,
-          }));
+          const mapped: UniversalProviderConfig[] = rawProviders.map((p: any) => {
+            let health: ProviderHealthStatus = "unknown";
+            if (p.validation_status === "valid") health = "healthy";
+            else if (p.validation_status === "invalid") health = "offline";
+
+            const meta = p.metadata || {};
+            // Migrate from old configuredModels array to new selectedModel
+            const serverConfiguredModels = meta.configured_models || meta.configuredModels || p.configured_models || p.configuredModels || [];
+            const legacyConfiguredModels = Array.isArray(serverConfiguredModels) ? serverConfiguredModels : [];
+            let selectedModel = p.selected_model || p.selectedModel || meta.selected_model || "";
+            // Fallback: take first configured model if selectedModel is empty
+            if (!selectedModel && legacyConfiguredModels.length > 0) {
+              selectedModel = legacyConfiguredModels[0];
+            }
+            // Fallback: use defaultModel if still empty
+            if (!selectedModel) {
+              selectedModel = p.default_model || p.defaultModel || "";
+            }
+            return {
+              id: p.provider || p.id,
+              name: p.label || p.name,
+              type:
+                p.metadata?.compatibilityMode === "anthropic-compatible"
+                  ? ("cloud" as const)
+                  : p.id === "ollama" || p.id === "lm-studio"
+                    ? ("local" as const)
+                    : ("openai-compatible" as const),
+              baseUrl: p.base_url || p.baseUrl || "",
+              apiKey: undefined,
+              defaultModel: p.default_model || p.defaultModel || "",
+              enabled: Boolean(p.enabled),
+              selectedModel,
+              metadata: p.metadata || {},
+              health,
+              latency: 0,
+            };
+          });
           get().setProviders(mapped);
+          set({ error: null });
         } catch {
-          set({ error: "Failed to load providers" });
+          if (get().providers.length === 0) {
+            set({ error: "Failed to load providers" });
+          }
         } finally {
           set({ loading: false });
         }
       },
+
+      reset: () => {
+        set({
+          providers: [],
+          providerInstances: {},
+          loading: false,
+          error: null,
+        });
+      },
     }),
     {
-      name: "agentos-provider-store",
-      partialize: (state) => ({
+      name: STORE_NAME,
+      version: CURRENT_VERSION,
+      migrate: (persistedState: any, version: number) => {
+        let state = persistedState;
+        if (version < CURRENT_VERSION) {
+          // Migrate configuredModels → selectedModel
+          state = {
+            ...state,
+            providerInstances: {},
+            providers: Array.isArray(state.providers)
+              ? state.providers.map((p: any) => {
+                  const oldConfigured = p.configuredModels ?? [];
+                  let selectedModel = p.selectedModel || "";
+                  // Fallback: use first configured model
+                  if (!selectedModel && Array.isArray(oldConfigured) && oldConfigured.length > 0) {
+                    selectedModel = oldConfigured[0];
+                  }
+                  // Fallback: use defaultModel
+                  if (!selectedModel) {
+                    selectedModel = p.defaultModel || "";
+                  }
+                  const { configuredModels: _, ...rest } = p;
+                  return { ...rest, selectedModel };
+                }).filter((p: any) => p && typeof p === "object" && p.id)
+              : [],
+          };
+        }
+        const { sanitized } = validateProviderStore(state);
+        // Ensure all providers have selectedModel
+        const providers = (sanitized?.providers ?? []).map((p: any) => {
+          const oldConfigured = p.configuredModels ?? [];
+          let selectedModel = p.selectedModel || "";
+          if (!selectedModel && Array.isArray(oldConfigured) && oldConfigured.length > 0) {
+            selectedModel = oldConfigured[0];
+          }
+          const { configuredModels: _, ...rest } = p;
+          return { ...rest, selectedModel: selectedModel || "" };
+        });
+        return {
+          providers,
+          providerInstances: {},
+          loading: false,
+          error: null,
+        };
+      },
+      partialize: (state: ProviderState) => ({
         providers: state.providers.map((p) => ({
-          ...p,
-          apiKey: undefined,
+          id: p.id,
+          name: p.name,
+          type: p.type,
+          baseUrl: p.baseUrl,
+          defaultModel: p.defaultModel,
+          enabled: p.enabled,
+          selectedModel: p.selectedModel ?? "",
+          metadata: p.metadata,
           health: "unknown" as ProviderHealthStatus,
+          latency: 0,
         })),
       }),
     }

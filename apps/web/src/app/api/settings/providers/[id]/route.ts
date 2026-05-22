@@ -25,23 +25,41 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
 
     const apiKey: string | undefined = typeof body.apiKey === "string" && body.apiKey.length > 0 ? body.apiKey : undefined;
+
+    // Merge selected_model and legacy configured_models into metadata JSONB
+    // (there is no dedicated DB column for selected_model)
+    let metadata = { ...(existing.metadata || {}) };
+    if (body.metadata !== undefined) {
+      metadata = { ...metadata, ...(body.metadata ?? {}) };
+    }
+    const selectedModel = body.selectedModel ?? body.selected_model ?? null;
+    if (selectedModel) {
+      metadata.selected_model = selectedModel;
+    }
+    if (body.configured_models !== undefined) {
+      metadata.configured_models = body.configured_models;
+    }
+
+    // Preserve existing API key unless explicitly overwritten
+    let apiKeyCiphertext = existing.api_key_ciphertext;
+    let apiKeyLast4 = existing.api_key_last4;
+    if (apiKey) {
+      apiKeyCiphertext = encryptSecret(apiKey);
+      apiKeyLast4 = apiKey.slice(-4);
+    }
+
     const updates: Partial<ProviderConfigRecord> = {
       provider: id,
       label: body.label !== undefined ? body.label : existing.label,
       base_url: body.baseUrl !== undefined ? body.baseUrl : existing.base_url,
       default_model: body.defaultModel !== undefined ? body.defaultModel : existing.default_model,
       enabled: body.enabled !== undefined ? Boolean(body.enabled) : existing.enabled,
-      metadata: body.metadata !== undefined ? { ...(body.metadata ?? {}) } : existing.metadata,
+      metadata,
+      api_key_ciphertext: apiKeyCiphertext,
+      api_key_last4: apiKeyLast4,
+      validation_status: "pending",
+      last_validated_at: null,
     };
-
-    if (apiKey) {
-      updates.api_key_ciphertext = encryptSecret(apiKey);
-      updates.api_key_last4 = apiKey.slice(-4);
-    }
-
-    // Reset validation status whenever config is edited (URL, model, etc. may have changed)
-    updates.validation_status = "pending";
-    updates.last_validated_at = null;
 
     const provider = await upsertProviderConfig(updates as ProviderConfigRecord);
     return NextResponse.json({ provider: sanitize(provider) });

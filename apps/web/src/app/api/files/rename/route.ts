@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import { resolveSafePath } from "@/lib/server/path-security";
 
 export async function POST(request: NextRequest) {
   try {
@@ -12,8 +13,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "oldPath and newPath are required" }, { status: 400 });
     }
 
-    const oldResolved = path.resolve(oldPath);
-    const newResolved = path.resolve(newPath);
+    const oldResolved = resolveSafePath(oldPath);
+    const newResolved = resolveSafePath(newPath);
 
     if (!fs.existsSync(oldResolved)) {
       return NextResponse.json({ error: "Source path does not exist" }, { status: 404 });
@@ -34,9 +35,8 @@ export async function POST(request: NextRequest) {
       name: path.basename(newResolved),
     });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to rename / move target" },
-      { status: 500 }
-    );
+    const message = error instanceof Error ? error.message : "Failed to rename / move target";
+    const status = message.includes("Path traversal") ? 403 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

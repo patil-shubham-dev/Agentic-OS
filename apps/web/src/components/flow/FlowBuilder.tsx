@@ -49,10 +49,10 @@ function FlowBuilderInner({ initialNodes, initialEdges, className }: FlowBuilder
 
 function FlowFallback() {
   return (
-    <div className="flex h-full w-full items-center justify-center bg-amber-50/20">
+    <div className="flex h-full w-full items-center justify-center bg-[--bg-secondary]">
       <div className="flex flex-col items-center gap-2">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
-        <span className="text-xs text-amber-600/70">Loading workflow builder...</span>
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-[--accent-primary] border-t-transparent" />
+        <span className="text-xs text-[--text-muted]">Loading workflow builder...</span>
       </div>
     </div>
   );

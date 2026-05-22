@@ -33,13 +33,21 @@ export async function POST(request: NextRequest) {
     }
 
     const apiKey: string | undefined = typeof body.apiKey === "string" && body.apiKey.length > 0 ? body.apiKey : undefined;
+
+    // Persist selected_model in metadata JSONB (no dedicated DB column)
+    const selectedModel = body.selectedModel ?? body.selected_model ?? null;
+    const metadata = {
+      ...(body.metadata ?? {}),
+      ...(selectedModel ? { selected_model: selectedModel } : {}),
+    };
+
     const updates: Partial<ProviderConfigRecord> = {
       provider: body.provider,
       label: body.label,
       base_url: body.baseUrl ?? null,
       default_model: body.defaultModel ?? null,
       enabled: Boolean(body.enabled ?? true),
-      metadata: body.metadata ?? {},
+      metadata,
     };
 
     if (apiKey) {

@@ -6,12 +6,12 @@ import { randomUUID } from "crypto";
 export const dynamic = "force-dynamic";
 
 const DEFAULT_ROLES = {
-  Manager: "claude-3-5-sonnet-20241022",
-  Coding: "gpt-4o",
-  Design: "gemini-1.5-pro",
-  Research: "gpt-4o",
-  "Fast Inference": "gpt-4o",
-  Vision: "gpt-4o",
+  Manager: "",
+  Coding: "",
+  Design: "",
+  Research: "",
+  "Fast Inference": "",
+  Vision: "",
 };
 
 export async function GET(request: NextRequest) {
@@ -26,6 +26,8 @@ export async function GET(request: NextRequest) {
     const roles = rows.length > 0 ? JSON.parse(rows[0].value) : DEFAULT_ROLES;
     return NextResponse.json({ roles });
   } catch (error) {
+    // Supabase unavailable — return empty defaults so the app still works
+    console.warn("[roles] Supabase unavailable, returning defaults:", error);
     return NextResponse.json({ roles: DEFAULT_ROLES });
   }
 }

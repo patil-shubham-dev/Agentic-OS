@@ -1,20 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import {
+  resolveSafePath,
+  loadGitIgnorePatterns,
+  shouldSkipEntry,
+} from "@/lib/server/path-security";
 
 export const dynamic = "force-dynamic";
-
-const SKIPPED_FOLDERS = new Set([".git", "node_modules", ".next", ".turbo", "dist", "build"]);
 
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
-    let targetPath = searchParams.get("path") || process.cwd();
+    const pathParam = searchParams.get("path") || process.cwd();
 
-    // Resolve path absolutely
-    targetPath = path.resolve(targetPath);
+    const targetPath = resolveSafePath(pathParam);
 
-    // Verify it exists
     if (!fs.existsSync(targetPath)) {
       return NextResponse.json({ error: "Path does not exist" }, { status: 404 });
     }
@@ -24,11 +25,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Path is not a directory" }, { status: 400 });
     }
 
+    const skipSet = loadGitIgnorePatterns(targetPath);
     const entries = await fs.promises.readdir(targetPath, { withFileTypes: true });
 
     const items = await Promise.all(
       entries
-        .filter((entry) => !SKIPPED_FOLDERS.has(entry.name))
+        .filter((entry) => !shouldSkipEntry(entry.name, skipSet))
         .map(async (entry) => {
           const entryPath = path.join(targetPath, entry.name);
           const relPath = path.relative(process.cwd(), entryPath);
@@ -41,7 +43,7 @@ export async function GET(request: NextRequest) {
             size = entryStat.size;
             updatedAt = entryStat.mtime.toISOString();
           } catch {
-            // Ignore stat errors for broken symlinks / permission issues
+            // Ignore stat errors for broken symlinks / permissions
           }
 
           return {
@@ -64,9 +66,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ path: targetPath, items });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to read directory tree" },
-      { status: 500 }
-    );
+    const message = error instanceof Error ? error.message : "Failed to read directory tree";
+    const status = message.includes("Path traversal") ? 403 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

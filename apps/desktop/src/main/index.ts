@@ -6,13 +6,16 @@ import {
   nativeImage,
   shell,
   globalShortcut,
+  dialog,
 } from "electron";
 import * as path from "path";
 import { spawn, ChildProcess } from "child_process";
 import { registerIpcHandlers } from "./ipc-handlers";
 import { setupAutoUpdater } from "./updater";
-import { buildAppMenu } from "./menu";
 import { getStoreValue, setStoreValue } from "./credentials";
+import { DesktopRuntimeManager } from "./runtime-manager";
+import { StoreManager } from "./store-manager";
+import { TerminalManager } from "./terminal";
 
 // ──────────────────────────────────────────────
 // State
@@ -22,68 +25,107 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 let nextServer: ChildProcess | null = null;
+let cleanupTimers: Array<ReturnType<typeof setInterval>> = [];
+let fileWatcherCount = 0;
+const MAX_FILE_WATCHERS = 20;
 
 const isDev = !app.isPackaged;
 const WEB_DEV_URL = process.env.AGENTOS_WEB_URL || "http://localhost:3000";
-const WEB_PROD_PORT = 3001; // Use different port in prod to avoid conflicts
+const WEB_PROD_PORT = 3001;
+
 function getWebUrl(): string {
   if (isDev) return WEB_DEV_URL;
   return `http://localhost:${WEB_PROD_PORT}`;
 }
 
+// Shared runtime manager — single source of truth for desktop runtime
+let runtimeManager: DesktopRuntimeManager;
+
 // ──────────────────────────────────────────────
 // Production Next.js Server
 // ──────────────────────────────────────────────
 
+function loadEnvFile(envPath: string): Record<string, string> {
+  try {
+    const fs = require("fs");
+    const content = fs.readFileSync(envPath, "utf-8");
+    const vars: Record<string, string> = {};
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eqIdx = trimmed.indexOf("=");
+      if (eqIdx === -1) continue;
+      const key = trimmed.slice(0, eqIdx).trim();
+      let val = trimmed.slice(eqIdx + 1).trim();
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.slice(1, -1);
+      }
+      if (key) vars[key] = val;
+    }
+    return vars;
+  } catch {
+    return {};
+  }
+}
+
 function startNextServer(): Promise<string> {
   return new Promise((resolve, reject) => {
-    // In production, the Next.js app is bundled at resourcesPath/web
     const resourcesPath =
-      (process as any).resourcesPath || path.join(__dirname, "../../");
+      (process as any).resourcesPath || path.join(__dirname, "../../../");
     const webDir = path.join(resourcesPath, "web");
-    const serverJsPath = path.join(webDir, "apps/web/server.js");
+    const serverDir = path.join(webDir, "apps/web");
+    const serverJsPath = path.join(serverDir, "server.js");
+    const envPath = path.join(serverDir, ".env");
+
+    try {
+      const fs = require("fs");
+      if (!fs.existsSync(serverJsPath)) {
+        reject(new Error(`Server script not found at: ${serverJsPath}`));
+        return;
+      }
+    } catch { /* ignore */ }
+
+    const envVars = loadEnvFile(envPath);
+    const missingRequired = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "AGENTOS_ENCRYPTION_KEY"]
+      .filter((key) => !envVars[key] && !process.env[key]);
+    if (missingRequired.length > 0) {
+      console.warn(`[Desktop] Missing required env vars: ${missingRequired.join(", ")}`);
+    }
+
+    const childEnv: Record<string, string> = {
+      ...process.env,
+      ...envVars,
+      ELECTRON_RUN_AS_NODE: "1",
+      NODE_ENV: "production",
+      PORT: String(WEB_PROD_PORT),
+    };
 
     console.log(`[Desktop] Starting Next.js standalone server from: ${serverJsPath}`);
 
     nextServer = spawn(process.execPath, [serverJsPath], {
-      cwd: path.join(webDir, "apps/web"),
+      cwd: serverDir,
       stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        ELECTRON_RUN_AS_NODE: "1",
-        NODE_ENV: "production",
-        PORT: String(WEB_PROD_PORT),
-      },
+      env: childEnv,
     });
 
     let started = false;
-    let pollInterval: NodeJS.Timeout | null = null;
+    let stderrLog = "";
     let timeoutId: NodeJS.Timeout | null = null;
+    let pollTimer: NodeJS.Timeout | null = null;
+    let apiPollTimer: NodeJS.Timeout | null = null;
 
     const cleanup = () => {
-      if (pollInterval) {
-        clearInterval(pollInterval);
-        pollInterval = null;
-      }
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      if (apiPollTimer) { clearInterval(apiPollTimer); apiPollTimer = null; }
+      if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
     };
 
     const handleSuccess = (url: string) => {
-      if (!started) {
-        started = true;
-        cleanup();
-        resolve(url);
-      }
+      if (!started) { started = true; cleanup(); resolve(url); }
     };
 
     const handleFailure = (err: Error) => {
-      if (!started) {
-        cleanup();
-        reject(err);
-      }
+      if (!started) { cleanup(); reject(err); }
     };
 
     nextServer.stdout?.on("data", (chunk: Buffer) => {
@@ -92,8 +134,7 @@ function startNextServer(): Promise<string> {
       if (!started && (
         text.toLowerCase().includes("ready") ||
         text.includes("Local:") ||
-        text.includes("localhost:") ||
-        text.includes("http://localhost:")
+        text.includes("localhost:")
       )) {
         handleSuccess(`http://localhost:${WEB_PROD_PORT}`);
       }
@@ -102,6 +143,7 @@ function startNextServer(): Promise<string> {
     nextServer.stderr?.on("data", (chunk: Buffer) => {
       const text = chunk.toString().trim();
       if (text && !text.includes("ExperimentalWarning")) {
+        stderrLog += text + "\n";
         console.error(`[Next.js] ${text}`);
       }
     });
@@ -113,34 +155,100 @@ function startNextServer(): Promise<string> {
     nextServer.on("exit", (code: number | null) => {
       console.log(`[Next.js] exited with code ${code}`);
       if (!started) {
-        handleFailure(new Error(`Next.js exited before ready (code: ${code})`));
+        const details = stderrLog ? `\n\nStderr:\n${stderrLog.slice(0, 2000)}` : "";
+        handleFailure(new Error(`Next.js exited before ready (code: ${code})${details}`));
       }
     });
 
-    // Polling fallback check
-    pollInterval = setInterval(async () => {
+    const checkApiHealth = async (): Promise<boolean> => {
+      try {
+        const res = await fetch(`http://localhost:${WEB_PROD_PORT}/api/setup/status`, {
+          signal: AbortSignal.timeout(3000),
+        });
+        const text = await res.text();
+        if (text.trim().startsWith("{")) {
+          return true;
+        }
+        console.warn(`[Desktop] API returned non-JSON (HTTP ${res.status}): ${text.slice(0, 100)}`);
+        return false;
+      } catch {
+        return false;
+      }
+    };
+
+    pollTimer = setInterval(async () => {
       if (started) return;
       try {
         const res = await fetch(`http://localhost:${WEB_PROD_PORT}`, { signal: AbortSignal.timeout(1000) });
         if (res.ok || res.status === 404) {
           handleSuccess(`http://localhost:${WEB_PROD_PORT}`);
         }
-      } catch {
-        // Not ready yet
-      }
+      } catch { /* not ready */ }
     }, 1000);
 
-    // Timeout after 30 seconds
+    apiPollTimer = setInterval(async () => {
+      if (started) return;
+      const healthy = await checkApiHealth();
+      if (healthy) {
+        handleSuccess(`http://localhost:${WEB_PROD_PORT}`);
+      }
+    }, 2000);
+
     timeoutId = setTimeout(() => {
       if (!started) {
-        handleFailure(new Error("Next.js server did not become ready within 30s"));
+        cleanup();
+        const details = stderrLog ? `\n\nLast stderr output:\n${stderrLog.slice(0, 2000)}` : "";
+        handleFailure(new Error(`Next.js server did not become ready within 60s${details}`));
       }
-    }, 30_000);
+    }, 60_000);
   });
 }
 
 // ──────────────────────────────────────────────
-// Window
+// Window State Persistence
+// ──────────────────────────────────────────────
+
+interface WindowState {
+  x?: number;
+  y?: number;
+  width: number;
+  height: number;
+  maximized: boolean;
+}
+
+let windowStateStore: StoreManager;
+
+function loadWindowState(): WindowState | null {
+  try {
+    const raw = windowStateStore.get<string>("bounds");
+    return raw ? (JSON.parse(raw) as WindowState) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveWindowState(): void {
+  if (!mainWindow) return;
+  try {
+    const bounds = mainWindow.getBounds();
+    const state: WindowState = {
+      ...bounds,
+      maximized: mainWindow.isMaximized(),
+    };
+    windowStateStore.set("bounds", JSON.stringify(state));
+  } catch {
+    // Silently fail
+  }
+}
+
+let saveTimeout: NodeJS.Timeout | null = null;
+function saveWindowStateDebounced(): void {
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(saveWindowState, 500);
+}
+
+// ──────────────────────────────────────────────
+// Window Creation
 // ──────────────────────────────────────────────
 
 async function createWindow(): Promise<BrowserWindow> {
@@ -151,7 +259,8 @@ async function createWindow(): Promise<BrowserWindow> {
     minHeight: 600,
     title: "AgentOS Studio",
     icon: path.join(__dirname, "../../resources/icon.png"),
-    backgroundColor: "#1C1C1E",
+    autoHideMenuBar: true,
+    backgroundColor: "#0C0C0E",
     show: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -161,6 +270,9 @@ async function createWindow(): Promise<BrowserWindow> {
       webSecurity: !isDev,
     },
   });
+
+  // Register window with runtime manager for boot progress events
+  runtimeManager.registerWindow(win);
 
   // Restore last window state
   const savedState = loadWindowState();
@@ -181,7 +293,6 @@ async function createWindow(): Promise<BrowserWindow> {
     return { action: "deny" };
   });
 
-  // Save window state on resize/move
   win.on("resize", saveWindowStateDebounced);
   win.on("move", saveWindowStateDebounced);
 
@@ -192,7 +303,13 @@ async function createWindow(): Promise<BrowserWindow> {
     }
   });
 
-  // Load content — in production, start Next.js server first
+  // Start desktop runtime boot sequence
+  // Renderer will show boot screen via the boot:progress events
+  runtimeManager.boot().catch((err) => {
+    console.error("[Desktop] Runtime boot failed:", err);
+  });
+
+  // Load content
   if (isDev) {
     win.loadURL(WEB_DEV_URL);
     win.webContents.openDevTools({ mode: "detach" });
@@ -206,47 +323,6 @@ async function createWindow(): Promise<BrowserWindow> {
 }
 
 // ──────────────────────────────────────────────
-// Window State Persistence
-// ──────────────────────────────────────────────
-
-interface WindowState {
-  x?: number;
-  y?: number;
-  width: number;
-  height: number;
-  maximized: boolean;
-}
-
-function loadWindowState(): WindowState | null {
-  try {
-    const raw = getStoreValue("window-state", "local");
-    return raw ? (JSON.parse(raw) as WindowState) : null;
-  } catch {
-    return null;
-  }
-}
-
-function saveWindowState(): void {
-  if (!mainWindow) return;
-  try {
-    const bounds = mainWindow.getBounds();
-    const state: WindowState = {
-      ...bounds,
-      maximized: mainWindow.isMaximized(),
-    };
-    setStoreValue("window-state", JSON.stringify(state), "local");
-  } catch {
-    // Silently fail — window state is non-critical
-  }
-}
-
-let saveTimeout: NodeJS.Timeout | null = null;
-function saveWindowStateDebounced(): void {
-  if (saveTimeout) clearTimeout(saveTimeout);
-  saveTimeout = setTimeout(saveWindowState, 500);
-}
-
-// ──────────────────────────────────────────────
 // Tray
 // ──────────────────────────────────────────────
 
@@ -257,7 +333,7 @@ function createTray(): void {
     trayImage = nativeImage.createFromPath(iconPath);
     trayImage = trayImage.resize({ width: 16, height: 16 });
   } catch {
-    return; // No icon available
+    return;
   }
 
   tray = new Tray(trayImage);
@@ -283,7 +359,7 @@ function createTray(): void {
 }
 
 // ──────────────────────────────────────────────
-// Deep Linking (agentos:// protocol)
+// Deep Linking
 // ──────────────────────────────────────────────
 
 function handleDeepLink(url: string): void {
@@ -302,7 +378,6 @@ app.on("open-url", (_event: Electron.Event, url: string) => {
   handleDeepLink(url);
 });
 
-// Second instance handling (Windows deep links)
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
@@ -313,34 +388,62 @@ if (!gotTheLock) {
       mainWindow.show();
       mainWindow.focus();
     }
-    // Handle deep link from second instance args
     const deepLink = argv.find((arg: string) => arg.startsWith("agentos://"));
     if (deepLink) handleDeepLink(deepLink);
   });
 }
 
+// ──────────────────────────────────────────────
+// Memory Leak Prevention
+// ──────────────────────────────────────────────
+
+function registerCleanupTimer(timer: ReturnType<typeof setInterval>): void {
+  cleanupTimers.push(timer);
+}
+
+function clearAllTimers(): void {
+  for (const t of cleanupTimers) clearInterval(t);
+  cleanupTimers = [];
+}
+
+// Periodic memory pressure check — every 5 minutes
+registerCleanupTimer(setInterval(() => {
+  const mem = process.memoryUsage();
+  if (mem.heapUsed > 1.5 * 1024 * 1024 * 1024) {
+    console.warn(`[Desktop] High memory usage: ${(mem.heapUsed / 1024 / 1024 / 1024).toFixed(1)}GB — forcing GC`);
+    if (global.gc) global.gc();
+  }
+  if (fileWatcherCount > MAX_FILE_WATCHERS) {
+    console.warn(`[Desktop] Too many file watchers: ${fileWatcherCount} — triggering cleanup`);
+    fileWatcherCount = 0;
+  }
+}, 300_000));
+
 app.whenReady().then(async () => {
-  // Register IPC handlers
-  const { providerRegistry } = registerIpcHandlers();
+  // Initialize desktop runtime manager (owns providers, stores, boot lifecycle)
+  runtimeManager = new DesktopRuntimeManager();
+
+  // Initialize window state store
+  windowStateStore = new StoreManager({ name: "agentos-window-state" });
+
+  // Register all IPC handlers with shared runtime
+  registerIpcHandlers(runtimeManager);
 
   // Start provider health monitor
   const { ProviderHealthMonitor } = require("./providers/ProviderHealthMonitor");
-  const healthMonitor = new ProviderHealthMonitor(providerRegistry);
+  const healthMonitor = new ProviderHealthMonitor(runtimeManager.providerRegistry);
   healthMonitor.start();
 
-  // Build native menu
-  const menu = buildAppMenu(() => mainWindow);
-  Menu.setApplicationMenu(menu);
+  // Remove native menu bar
+  Menu.setApplicationMenu(null);
 
-  // Create main window (handles server startup internally in production)
+  // Create window — runtime boot starts in the background
   try {
     await createWindow();
   } catch (err: any) {
     console.error("[Desktop] Failed to create window:", err.message);
-    // In production, show an error dialog
     if (!isDev) {
-      const { dialog: dl } = require("electron");
-      dl.showErrorBox(
+      dialog.showErrorBox(
         "AgentOS Studio - Startup Error",
         `Failed to start the application:\n\n${err.message}\n\nPlease try reinstalling or check the logs.`
       );
@@ -349,22 +452,15 @@ app.whenReady().then(async () => {
     return;
   }
 
-  // Tray (skip in dev for simplicity)
   if (!isDev) {
     createTray();
-  }
-
-  // Auto-updater (production only)
-  if (!isDev) {
     setupAutoUpdater(mainWindow!);
   }
 
-  // Global shortcuts
   globalShortcut.register("CommandOrControl+Shift+P", () => {
     mainWindow?.webContents.send("global-shortcut", "command-palette");
   });
 
-  // macOS: re-create window on activate
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       if (!mainWindow && !isQuitting) {
@@ -381,8 +477,21 @@ app.whenReady().then(async () => {
 app.on("before-quit", () => {
   isQuitting = true;
   globalShortcut.unregisterAll();
+
+  clearAllTimers();
+
+  if (runtimeManager) {
+    runtimeManager.shutdown();
+  }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    saveWindowState();
+    mainWindow.destroy();
+    mainWindow = null;
+  }
+
   if (nextServer) {
-    nextServer.kill();
+    try { nextServer.kill(); } catch {}
     nextServer = null;
   }
 });

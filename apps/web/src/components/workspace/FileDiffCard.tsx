@@ -108,7 +108,7 @@ export function FileDiffCard({
   return (
     <div
       className={cn(
-        "flex flex-col gap-1.5 p-2.5 bg-[#18181c] border border-zinc-800/80 rounded text-[10px] font-mono",
+        "flex flex-col gap-1.5 p-2.5 bg-[--bg-tertiary] border border-[--border-primary] rounded-lg text-[10px] font-mono",
         className
       )}
     >
@@ -116,15 +116,15 @@ export function FileDiffCard({
         {hasResult ? (
           <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
         ) : (
-          <Loader2 className="w-3.5 h-3.5 text-amber-500 animate-spin shrink-0" />
+          <Loader2 className="w-3.5 h-3.5 text-[--accent-primary] animate-spin shrink-0" />
         )}
-        <FileCode className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-        <span className="font-bold text-zinc-200 truncate max-w-[160px]">{fileName}</span>
-        <span className="opacity-70 truncate max-w-[100px] text-[9px] text-zinc-400">{toolName}</span>
+        <FileCode className="w-3.5 h-3.5 text-[--text-muted] shrink-0" />
+        <span className="font-bold text-[--text-primary] truncate max-w-[160px]">{fileName}</span>
+        <span className="text-[--text-disabled] truncate max-w-[100px] text-[9px]">{toolName}</span>
         {originalContent && newContent && (
-          <span className="ml-auto text-[9px] text-zinc-500 shrink-0">
-            <span className="text-emerald-400">+{addCount}</span>{" "}
-            <span className="text-red-400">-{removeCount}</span>
+          <span className="ml-auto text-[9px] text-[--text-disabled] shrink-0">
+            <span className="text-emerald-400 font-medium">+{addCount}</span>{" "}
+            <span className="text-rose-400 font-medium">-{removeCount}</span>
           </span>
         )}
       </div>
@@ -132,7 +132,7 @@ export function FileDiffCard({
       {originalContent && newContent && (
         <button
           onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-1 text-[9px] text-zinc-500 hover:text-zinc-300 transition-colors self-start"
+          className="flex items-center gap-1 text-[9px] text-[--text-disabled] hover:text-[--text-secondary] transition-colors self-start"
         >
           {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
           {expanded ? "Hide diff" : "Show diff"}
@@ -140,39 +140,39 @@ export function FileDiffCard({
       )}
 
       {expanded && diffLines.length > 0 && (
-        <div className="mt-1 bg-zinc-950 rounded border border-zinc-800 max-h-[300px] overflow-auto">
-          <table className="w-full text-[9px] leading-[1.4] border-collapse">
+        <div className="mt-1 bg-[--bg-primary] rounded-lg border border-[--border-primary] max-h-[300px] overflow-auto shadow-inner">
+          <table className="w-full text-[10px] leading-[1.4] border-collapse">
             <tbody>
               {diffLines.map((line, idx) => (
                 <tr
                   key={idx}
                   className={cn(
-                    "hover:bg-white/5 transition-colors",
-                    line.type === "add" && "bg-emerald-950/30",
-                    line.type === "remove" && "bg-red-950/30",
+                    "hover:bg-[--bg-glass] transition-colors",
+                    line.type === "add" && "bg-emerald-950/20",
+                    line.type === "remove" && "bg-rose-950/20",
                   )}
                 >
-                  <td className="w-8 text-right text-zinc-600 select-none px-1 py-0 border-r border-zinc-800">
+                  <td className="w-8 text-right text-[--text-disabled] select-none px-1.5 py-0 border-r border-[--border-primary]">
                     {line.type === "remove" ? line.oldLineNum : ""}
                   </td>
-                  <td className="w-8 text-right text-zinc-600 select-none px-1 py-0 border-r border-zinc-800">
+                  <td className="w-8 text-right text-[--text-disabled] select-none px-1.5 py-0 border-r border-[--border-primary]">
                     {line.type === "add" ? line.newLineNum : ""}
                   </td>
                   <td className="w-4 text-center select-none px-1 py-0">
                     {line.type === "add" ? (
                       <Plus className="w-2.5 h-2.5 text-emerald-400 inline" />
                     ) : line.type === "remove" ? (
-                      <Minus className="w-2.5 h-2.5 text-red-400 inline" />
+                      <Minus className="w-2.5 h-2.5 text-rose-400 inline" />
                     ) : (
-                      <span className="text-zinc-600">&nbsp;</span>
+                      <span className="text-[--text-disabled]">&nbsp;</span>
                     )}
                   </td>
                   <td
                     className={cn(
                       "px-2 py-0 whitespace-pre",
                       line.type === "add" && "text-emerald-300",
-                      line.type === "remove" && "text-red-300",
-                      line.type === "equal" && "text-zinc-400",
+                      line.type === "remove" && "text-rose-300",
+                      line.type === "equal" && "text-[--text-muted]",
                     )}
                   >
                     {line.content || " "}
@@ -187,7 +187,7 @@ export function FileDiffCard({
       {!hasResult && onReviewDiff && (
         <Button
           size="sm"
-          className="w-full bg-amber-500 hover:bg-amber-400 text-zinc-950 mt-1 h-7 text-xs rounded transition-colors"
+          className="w-full bg-[--accent-primary] hover:bg-[--accent-hover] text-[--bg-primary] mt-1 h-7 text-xs rounded-lg transition-all shadow-sm shadow-[--glow-primary]/20"
           onClick={() => onReviewDiff(args)}
         >
           Review Code Diff
@@ -198,7 +198,7 @@ export function FileDiffCard({
         <div className="flex gap-2 mt-1">
           <Button
             size="sm"
-            className="flex-1 bg-[#dcb45c] hover:bg-amber-400 text-zinc-950 text-[9px] h-6 flex items-center justify-center gap-1 rounded transition-colors"
+            className="flex-1 bg-[--accent-primary] hover:bg-[--accent-hover] text-[--bg-primary] text-[9px] h-6 flex items-center justify-center gap-1 rounded-lg transition-all"
             disabled={approving}
             onClick={() => onApprove?.(toolCallId, toolName, args)}
           >
@@ -212,7 +212,7 @@ export function FileDiffCard({
           <Button
             size="sm"
             variant="outline"
-            className="flex-1 border-zinc-800 bg-[#1e1e24] hover:bg-zinc-800 text-zinc-300 text-[9px] h-6 flex items-center justify-center gap-1 rounded transition-colors"
+            className="flex-1 border-[--border-primary] bg-[--bg-elevated] hover:bg-[--bg-tertiary] text-[--text-secondary] text-[9px] h-6 flex items-center justify-center gap-1 rounded-lg transition-colors"
             disabled={approving}
             onClick={() => onDeny?.(toolCallId)}
           >

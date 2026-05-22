@@ -15,16 +15,128 @@ import {
 } from "./credentials";
 import { ProviderRegistry } from "./providers/ProviderRegistry";
 import type { ChatMessage } from "./providers/ProviderClient";
+import { DesktopRuntimeManager } from "./runtime-manager";
+import { StoreManager } from "./store-manager";
 
 const execAsync = promisify(exec);
 
+const DEFAULT_SKIP_DIRS = new Set([".git", "node_modules", ".next", ".turbo", "dist", "build", ".cache", "__pycache__", ".vercel", ".svelte-kit", ".wrangler"]);
+const DEFAULT_SKIP_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".woff", ".woff2", ".ttf", ".eot", ".otf", ".mp3", ".mp4", ".webm", ".wav", ".ogg", ".zip", ".tar", ".gz", ".exe", ".dll", ".so", ".dylib", ".bin", ".wasm", ".map"]);
+const MAX_INDEX_FILES = 50_000;
+const MAX_INDEX_DEPTH = 12;
+
+function parseGitignore(content: string): string[] {
+  return content.split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("#"))
+    .map((l) => l.replace(/\/$/, "").replace(/^\/?/, ""));
+}
+
+function matchesIgnore(filePath: string, patterns: string[]): boolean {
+  const relative = filePath.replace(/\\/g, "/");
+  for (const p of patterns) {
+    if (p.startsWith("*.") && relative.endsWith(p.slice(1))) return true;
+    if (p.includes("/")) {
+      if (relative === p || relative.startsWith(p + "/") || relative.includes("/" + p + "/")) return true;
+    } else {
+      if (relative.split("/").includes(p)) return true;
+    }
+  }
+  return false;
+}
+
+async function loadGitignorePatterns(rootDir: string): Promise<string[]> {
+  try {
+    const content = await fsp.readFile(path.join(rootDir, ".gitignore"), "utf-8");
+    return parseGitignore(content);
+  } catch {
+    return [];
+  }
+}
+
+interface IpcRequestStats {
+  total: number;
+  completed: number;
+  timedOut: number;
+  active: Set<string>;
+}
+
+const ipcStats: IpcRequestStats = { total: 0, completed: 0, timedOut: 0, active: new Set() };
+
+function wrapHandler<T>(channel: string, handler: (...args: any[]) => Promise<T> | T) {
+  return async (_event: Electron.IpcMainInvokeEvent, ...args: any[]): Promise<T> => {
+    ipcStats.total++;
+    const requestId = `${channel}:${Date.now()}:${Math.random().toString(36).slice(2, 6)}`;
+    ipcStats.active.add(requestId);
+    try {
+      const result = await Promise.race([
+        (async () => handler(_event, ...args))(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`IPC timeout: ${channel}`)), 30_000)
+        ),
+      ]);
+      ipcStats.completed++;
+      return result;
+    } catch (err: any) {
+      if (err.message?.includes("IPC timeout")) {
+        ipcStats.timedOut++;
+      }
+      throw err;
+    } finally {
+      ipcStats.active.delete(requestId);
+    }
+  };
+}
+
 /**
  * Registers all IPC handlers for the Electron main process.
- * Runs once during app startup.
+ * Accepts the shared RuntimeManager for coordinated runtime access.
  */
-export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
+export function registerIpcHandlers(runtimeManager: DesktopRuntimeManager): void {
   const terminalManager = new TerminalManager();
-  const providerRegistry = new ProviderRegistry();
+  const providerRegistry = runtimeManager.providerRegistry;
+  const store = runtimeManager.store;
+
+  // ────────────────────────────────────────────
+  // IPC Request Stats
+  // ────────────────────────────────────────────
+
+  ipcMain.handle("_ipc-stats", () => {
+    return {
+      total: ipcStats.total,
+      completed: ipcStats.completed,
+      timedOut: ipcStats.timedOut,
+      activeCount: ipcStats.active.size,
+    };
+  });
+
+  // ────────────────────────────────────────────
+  // Runtime Management
+  // ────────────────────────────────────────────
+
+  ipcMain.handle("runtime:bootStatus", wrapHandler("runtime:bootStatus", () => {
+    return {
+      phase: runtimeManager.bootPhase,
+      booted: runtimeManager.booted,
+      error: runtimeManager.safeMode ? null : null,
+      safeMode: runtimeManager.safeMode,
+    };
+  }));
+
+  ipcMain.handle("runtime:state", wrapHandler("runtime:state", () => {
+    return {
+      phase: runtimeManager.bootPhase,
+      booted: runtimeManager.booted,
+      bootError: null,
+      safeMode: runtimeManager.safeMode,
+      providers: providerRegistry.list(),
+    };
+  }));
+
+  ipcMain.handle("runtime:reset", wrapHandler("runtime:reset", () => {
+    runtimeManager.resetRuntime();
+    return { success: true };
+  }));
 
   // ────────────────────────────────────────────
   // File Operations
@@ -90,7 +202,6 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
         size: 0,
         modifiedAt: "",
       }));
-      // Get stats for files
       const withStats = await Promise.all(
         items.map(async (item) => {
           try {
@@ -166,8 +277,7 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
           timeout: 15_000,
         });
         return { success: true, results: stdout.slice(0, 50_000) };
-      } catch (err: any) {
-        // grep returns non-zero when no matches
+      } catch {
         return { success: true, results: "No matches found." };
       }
     }
@@ -288,7 +398,7 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
     try {
       const accounts = await findCredentials(service);
       return { success: true, accounts };
-    } catch (err: any) {
+    } catch {
       return { success: true, accounts: [] };
     }
   });
@@ -340,9 +450,13 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
       defaultModel: string;
       apiKey: string;
       baseUrl?: string;
+      selectedModel: string;
     }) => {
       try {
-        // Store config (no apiKey in persisted config)
+        if (!config.selectedModel) {
+          return { success: false, error: "A model must be selected for this provider." };
+        }
+
         providerRegistry.add({
           id: config.id,
           gatewayType: config.gatewayType,
@@ -350,9 +464,9 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
           defaultModel: config.defaultModel,
           baseUrl: config.baseUrl,
           enabled: true,
+          selectedModel: config.selectedModel,
         });
 
-        // Store API key in OS keychain
         await setCredential("agentos-provider", config.id, config.apiKey);
 
         return { success: true, id: config.id };
@@ -364,7 +478,6 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
 
   ipcMain.handle("provider:list", async () => {
     const configs = providerRegistry.list();
-    // Mask keys — only return whether a key is stored
     const masked = await Promise.all(
       configs.map(async (c) => {
         const hasKey = await getCredential("agentos-provider", c.id);
@@ -384,7 +497,7 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
     }
   });
 
-  ipcMain.handle("provider:ping", async (_event, id: string) => {
+  ipcMain.handle("provider:ping", wrapHandler("provider:ping", async (_event: Electron.IpcMainInvokeEvent, id: string) => {
     const apiKey = await getCredential("agentos-provider", id);
     if (!apiKey) return { ok: false, latency: 0, error: "No API key stored" };
 
@@ -392,14 +505,25 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
     if (!client) return { ok: false, latency: 0, error: "Provider not found" };
 
     const start = performance.now();
-    const ok = await client.ping();
-    const latency = Math.round(performance.now() - start);
-    return { ok, latency };
-  });
+    try {
+      const ok = await client.ping();
+      const latency = Math.round(performance.now() - start);
+      return { ok, latency };
+    } catch (err: any) {
+      const latency = Math.round(performance.now() - start);
+      return { ok: false, latency, error: err.message || "Connection failed" };
+    }
+  }));
 
   ipcMain.handle(
     "provider:streamChat",
-    async (_event, id: string, messages: ChatMessage[], model: string) => {
+    wrapHandler("provider:streamChat", async (
+      _event: Electron.IpcMainInvokeEvent,
+      id: string,
+      messages: ChatMessage[],
+      model: string,
+      tools?: Array<{ function: { name: string; description?: string; parameters?: Record<string, unknown> }; type: string }>
+    ) => {
       const apiKey = await getCredential("agentos-provider", id);
       if (!apiKey) return { error: "No API key stored" };
 
@@ -409,13 +533,13 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
       const streamId = `provider:${id}:${Date.now()}`;
       const win = BrowserWindow.getFocusedWindow();
 
-      // Start streaming in background, push events to renderer
       (async () => {
         try {
-          const gen = client.streamChat(messages, model);
+          const gen = client.streamChat(messages, model, tools);
           for await (const chunk of gen) {
             if (win && !win.isDestroyed()) {
-              win.webContents.send(`provider:chunk:${streamId}`, { text: chunk });
+              // Forward structured StreamChunk (type/content/toolCall/done)
+              win.webContents.send(`provider:chunk:${streamId}`, chunk);
             }
           }
           if (win && !win.isDestroyed()) {
@@ -431,7 +555,7 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
       })();
 
       return { streamId };
-    }
+    })
   );
 
   // ────────────────────────────────────────────
@@ -442,7 +566,6 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
   // File System Bridge (fs: prefix)
   // ────────────────────────────────────────────
 
-  // Active folder watchers for real-time sync
   const folderWatchers = new Map<string, fs.FSWatcher>();
 
   ipcMain.handle("fs:readFile", async (_event, filePath: string) => {
@@ -466,7 +589,7 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
     }
   });
 
-  ipcMain.handle("fs:openFolder", async (_event) => {
+  ipcMain.handle("fs:openFolder", wrapHandler("fs:openFolder", async (_event: Electron.IpcMainInvokeEvent) => {
     try {
       const result = await dialog.showOpenDialog({
         properties: ["openDirectory"],
@@ -475,17 +598,18 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
         return { success: true, path: null, tree: null };
       }
       const rootPath = result.filePaths[0];
+      const gitignorePatterns = await loadGitignorePatterns(rootPath);
 
-      // Recursively build file tree (depth-limited to avoid hangs)
       async function buildTree(dir: string, depth: number = 0): Promise<any[]> {
-        if (depth > 8) return []; // safety limit
+        if (depth > MAX_INDEX_DEPTH) return [];
         const entries: any[] = [];
         try {
           const items = await fsp.readdir(dir, { withFileTypes: true });
           for (const item of items) {
-            const skip = [".git", "node_modules", ".next", ".turbo", "dist", "build", ".cache", "__pycache__"];
-            if (skip.includes(item.name)) continue;
+            if (DEFAULT_SKIP_DIRS.has(item.name)) continue;
+            if (matchesIgnore(path.join(dir, item.name).replace(rootPath, ""), gitignorePatterns)) continue;
             const fullPath = path.join(dir, item.name);
+            if (DEFAULT_SKIP_EXT.has(path.extname(item.name).toLowerCase())) continue;
             if (item.isDirectory()) {
               const children = await buildTree(fullPath, depth + 1);
               entries.push({ name: item.name, path: fullPath, isDir: true, children });
@@ -498,7 +622,7 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
               }
             }
           }
-        } catch { /* permission denied — skip */ }
+        } catch {}
         entries.sort((a, b) => {
           if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
           return a.name.localeCompare(b.name);
@@ -511,23 +635,28 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
     } catch (err: any) {
       return { success: false, error: err.message, path: null, tree: null };
     }
-  });
+  }));
 
-  ipcMain.handle("fs:getIndex", async (_event, rootPath: string) => {
+  ipcMain.handle("fs:getIndex", wrapHandler("fs:getIndex", async (_event: Electron.IpcMainInvokeEvent, rootPath: string) => {
     try {
       const resolved = path.resolve(rootPath);
+      const gitignorePatterns = await loadGitignorePatterns(resolved);
       const files: { name: string; path: string; ext: string; size: number; modifiedAt: string }[] = [];
+      let fileCount = 0;
 
-      async function walk(dir: string): Promise<void> {
+      async function walk(dir: string, depth: number = 0): Promise<void> {
+        if (depth > MAX_INDEX_DEPTH || fileCount >= MAX_INDEX_FILES) return;
         try {
           const items = await fsp.readdir(dir, { withFileTypes: true });
           for (const item of items) {
-            const skip = [".git", "node_modules", ".next", ".turbo", "dist", "build", ".cache", "__pycache__"];
-            if (skip.includes(item.name)) continue;
+            if (fileCount >= MAX_INDEX_FILES) return;
+            if (DEFAULT_SKIP_DIRS.has(item.name)) continue;
+            if (matchesIgnore(path.join(dir, item.name).replace(resolved, ""), gitignorePatterns)) continue;
             const fullPath = path.join(dir, item.name);
             if (item.isDirectory()) {
-              await walk(fullPath);
+              await walk(fullPath, depth + 1);
             } else {
+              if (DEFAULT_SKIP_EXT.has(path.extname(item.name).toLowerCase())) continue;
               try {
                 const stat = await fsp.stat(fullPath);
                 files.push({
@@ -537,10 +666,11 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
                   size: stat.size,
                   modifiedAt: stat.mtime.toISOString(),
                 });
-              } catch { /* skip unreadable */ }
+                fileCount++;
+              } catch {}
             }
           }
-        } catch { /* skip */ }
+        } catch {}
       }
 
       await walk(resolved);
@@ -548,13 +678,11 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
     } catch (err: any) {
       return { success: false, error: err.message, files: [] };
     }
-  });
+  }));
 
   ipcMain.handle("fs:watchFolder", async (_event, folderPath: string) => {
     try {
       const resolved = path.resolve(folderPath);
-
-      // Clean up existing watcher for this path
       const existing = folderWatchers.get(resolved);
       if (existing) {
         existing.close();
@@ -564,7 +692,6 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
       const watcher = fs.watch(resolved, { recursive: true }, (eventType, filename) => {
         if (!filename) return;
         const fullPath = path.join(resolved, filename.toString());
-        // Emit to all windows
         for (const win of BrowserWindow.getAllWindows()) {
           if (!win.isDestroyed()) {
             win.webContents.send("fs:watchEvent", {
@@ -600,17 +727,13 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
   ipcMain.handle("fs:applyPatch", async (_event, filePath: string, patch: { oldString?: string; newString?: string; oldContent?: string; newContent?: string }) => {
     try {
       const resolved = path.resolve(filePath);
-
-      // Read current file content
       let currentContent: string;
       try {
         currentContent = await fsp.readFile(resolved, "utf-8");
       } catch {
-        // File doesn't exist yet — treat as empty
         currentContent = "";
       }
 
-      // Apply replacement patch
       if (patch.oldString !== undefined && patch.newString !== undefined) {
         const idx = currentContent.indexOf(patch.oldString);
         if (idx === -1) {
@@ -618,10 +741,9 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
         }
         currentContent = currentContent.replace(patch.oldString, patch.newString);
       } else if (patch.newContent !== undefined) {
-        // Full replacement
         currentContent = patch.newContent;
       } else {
-        return { success: false, error: "Invalid patch format — provide oldString+newString or newContent" };
+        return { success: false, error: "Invalid patch format" };
       }
 
       await fsp.writeFile(resolved, currentContent, "utf-8");
@@ -632,13 +754,66 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
   });
 
   // ────────────────────────────────────────────
+  // PTY Inspection (for runtime diagnostics)
+  // ────────────────────────────────────────────
+
+  ipcMain.handle("pty:list", wrapHandler("pty:list", () => {
+    return terminalManager.listSessions();
+  }));
+
+  ipcMain.handle("pty:scrollback", wrapHandler("pty:scrollback", (_event: Electron.IpcMainInvokeEvent, id: string, maxLines?: number) => {
+    return terminalManager.getScrollback(id, maxLines);
+  }));
+
+  ipcMain.handle("pty:info", wrapHandler("pty:info", (_event: Electron.IpcMainInvokeEvent, id: string) => {
+    return terminalManager.getSessionInfo(id);
+  }));
+
+  ipcMain.handle("pty:killAll", wrapHandler("pty:killAll", () => {
+    terminalManager.killAll();
+    return { success: true };
+  }));
+
+  // ────────────────────────────────────────────
+  // Runtime Inspection
+  // ────────────────────────────────────────────
+
+  ipcMain.handle("runtime:inspect", wrapHandler("runtime:inspect", () => {
+    return {
+      bootPhase: runtimeManager.bootPhase,
+      booted: runtimeManager.booted,
+      safeMode: runtimeManager.safeMode,
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      pid: process.pid,
+      platform: process.platform,
+      nodeVersion: process.version,
+      providers: providerRegistry.list().length,
+      sessions: terminalManager.listSessions().length,
+    };
+  }));
+
+  // ────────────────────────────────────────────
+  // File Watcher Cleanup
+  // ────────────────────────────────────────────
+
+  ipcMain.handle("fs:unwatchAll", wrapHandler("fs:unwatchAll", () => {
+    let count = 0;
+    for (const [path, watcher] of folderWatchers) {
+      watcher.close();
+      folderWatchers.delete(path);
+      count++;
+    }
+    return { success: true, count };
+  }));
+
+  // ────────────────────────────────────────────
   // Provider Health
   // ────────────────────────────────────────────
 
-  ipcMain.handle("provider:getHealth", async () => {
-    const { ProviderHealthMonitor } = require("./providers/ProviderHealthMonitor");
-    return ProviderHealthMonitor.getCachedResults();
-  });
+  ipcMain.handle("provider:getHealth", wrapHandler("provider:getHealth", async () => {
+    return runtimeManager.getCachedProviderHealth();
+  }));
 
   ipcMain.on("update:install", () => {
     try {
@@ -648,6 +823,4 @@ export function registerIpcHandlers(): { providerRegistry: ProviderRegistry } {
       console.error("[Desktop] Failed to install update:", err.message);
     }
   });
-
-  return { providerRegistry };
 }

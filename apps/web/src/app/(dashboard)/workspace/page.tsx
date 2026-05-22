@@ -17,10 +17,6 @@ import {
 } from "@/components/ui/resizable";
 import { WorkspaceProvider, useWorkspace } from "@/components/workspace/workspace-context";
 
-/**
- * WorkspacePage — clean page shell that consumes the global
- * workspace context and sets up the native desktop IDE panel layout.
- */
 export default function WorkspacePage() {
   const chat = useChat({
     transport: new DefaultChatTransport({ api: "/api/chat" }),
@@ -37,40 +33,51 @@ function WorkspacePageInner() {
   const { sidebarOpen, terminalOpen, searchOpen } = useWorkspace();
 
   return (
-    <div className="flex flex-col h-full bg-background overflow-hidden font-sans">
-      <ResizablePanelGroup direction="horizontal" className="flex-1">
-        {/* Left Sidebar: File Explorer */}
-        {sidebarOpen && (
-          <>
-            <ResizablePanel defaultSize={18} minSize={12} maxSize={28} className="min-w-[220px]">
-              <FileExplorer />
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-          </>
-        )}
+    <div className="flex flex-col h-full overflow-hidden select-none">
+      <div className="flex-1 flex overflow-hidden">
+        <ResizablePanelGroup direction="horizontal" className="flex-1">
+          {/* Left Panel: Explorer */}
+          {sidebarOpen && (
+            <>
+              <ResizablePanel defaultSize={18} minSize={12} maxSize={30} className="!overflow-visible">
+                <FileExplorer />
+              </ResizablePanel>
+              <ResizableHandle
+                withHandle
+                className="w-[3px] bg-transparent hover:bg-[--accent-primary]/20 transition-colors data-[resize-handle-active]:bg-[--accent-primary]/30"
+              />
+            </>
+          )}
 
-        {/* Center: Editor (top) + Terminal (bottom) */}
-        <ResizablePanel defaultSize={52} minSize={30}>
-          <ResizablePanelGroup direction="vertical">
-            <EditorPanel />
-            {terminalOpen && (
-              <>
-                <ResizableHandle withHandle />
-                <TerminalPanel />
-              </>
-            )}
-          </ResizablePanelGroup>
-        </ResizablePanel>
+          {/* Center: Editor (top) + Terminal (bottom) */}
+          <ResizablePanel defaultSize={55} minSize={30}>
+            <ResizablePanelGroup direction="vertical">
+              <EditorPanel />
+              {terminalOpen && (
+                <>
+                  <ResizableHandle
+                    withHandle
+                    className="h-[3px] bg-transparent hover:bg-[--accent-primary]/20 transition-colors data-[resize-handle-active]:bg-[--accent-primary]/30"
+                  />
+                  <TerminalPanel />
+                </>
+              )}
+            </ResizablePanelGroup>
+          </ResizablePanel>
 
-        <ResizableHandle withHandle />
+          <ResizableHandle
+            withHandle
+            className="w-[3px] bg-transparent hover:bg-[--accent-primary]/20 transition-colors data-[resize-handle-active]:bg-[--accent-primary]/30"
+          />
 
-        {/* Right Panel: AI Chat */}
-        <ResizablePanel defaultSize={30} minSize={18} maxSize={40} className="min-w-[260px]">
-          <ChatPanel />
-        </ResizablePanel>
-      </ResizablePanelGroup>
+          {/* Right Panel: AI Chat */}
+          <ResizablePanel defaultSize={27} minSize={16} maxSize={45}>
+            <ChatPanel />
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      </div>
 
-      {/* Execution Graph (collapsible, shows live agent execution) */}
+      {/* Execution Graph (collapsible agent timeline) */}
       <ExecutionGraph />
 
       {/* Bottom Status Bar */}

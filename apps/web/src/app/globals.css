@@ -2,41 +2,106 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  /* Cursor Dark (charcoal slate) - default dark theme */
-  :root, .dark {
-    --background: 220 13% 7%;
-    --foreground: 210 20% 98%;
+/* ================================================================
+   AGENTOS STUDIO — Premium Design Token System
+   Matte Black + Gold (#F5B301) accent system
+   Inspired by Cursor, Linear, Arc Browser, Warp Terminal, Raycast
+   ================================================================ */
 
-    --card: 220 13% 10%;
+@layer base {
+  /* ───────────────────────────────────────────────
+     DEFAULT DARK THEME — Premium Matte Black + Gold
+     ─────────────────────────────────────────────── */
+  :root, .dark {
+    /* Background hierarchy — editorial calm, low noise */
+    --background: 222 28% 5%;        /* #0A0D12 – deepest matte surface */
+    --foreground: 210 20% 98%;       /* #F9FAFB – primary text */
+
+    --card: 220 20% 8%;              /* #0F131A – pane surface */
     --card-foreground: 210 20% 98%;
 
-    --popover: 220 13% 8%;
+    --popover: 220 18% 11%;          /* #141922 – elevated surface */
     --popover-foreground: 210 20% 98%;
 
-    --primary: 38 92% 50%;
-    --primary-foreground: 38 30% 5%;
+    /* Gold accent system — warm, editorial */
+    --primary: 42 100% 48%;          /* #F5B301 – signature gold */
+    --primary-foreground: 220 25% 4%;
 
-    --secondary: 220 12% 14%;
+    --secondary: 220 16% 14%;        /* #1E2632 – elevated surface */
     --secondary-foreground: 210 20% 98%;
 
-    --muted: 220 12% 14%;
-    --muted-foreground: 215 15% 65%;
+    --muted: 220 16% 14%;
+    --muted-foreground: 215 10% 45%; /* #657080 – spec's muted */
 
-    --accent: 142 70% 45%;
-    --accent-foreground: 210 20% 98%;
+    --accent: 42 100% 48%;           /* gold accent */
+    --accent-foreground: 220 25% 4%;
 
-    --destructive: 0 84% 60%;
+    --destructive: 355 100% 69%;     /* #FF5D73 – spec error */
     --destructive-foreground: 210 20% 98%;
 
-    --border: 220 12% 14%;
-    --input: 220 12% 14%;
-    --ring: 38 92% 50%;
+    /* Borders & inputs */
+    --border: 220 16% 14%;           /* #1E2632 */
+    --input: 220 16% 14%;
+    --ring: 42 100% 48%;             /* gold ring focus */
 
     --radius: 0.5rem;
+
+    /* ============================================
+       WORKSPACE DESIGN TOKENS — Premium IDE
+       ============================================ */
+
+    /* Background hierarchy */
+    --bg-primary: #0A0D12;
+    --bg-secondary: #0F131A;
+    --bg-tertiary: #141922;
+    --bg-elevated: #1E2632;
+    --bg-glass: rgba(255, 255, 255, 0.04);
+
+    /* Accent — warm gold */
+    --accent-primary: #F5B301;
+    --accent-hover: #FFC933;
+    --accent-soft: #FFDD66;
+    --accent-deep: #D99000;
+
+    /* Text — editorial readability */
+    --text-primary: #F5F7FA;
+    --text-secondary: #9BA6B2;
+    --text-muted: #657080;
+    --text-disabled: #4A5568;
+
+    /* Border system — thin, refined */
+    --border-primary: rgba(255, 255, 255, 0.08);
+    --border-secondary: rgba(245, 179, 1, 0.18);
+    --border-hover: rgba(245, 179, 1, 0.35);
+
+    /* Glow system — subtle gold radiance */
+    --glow-primary: rgba(245, 179, 1, 0.25);
+    --glow-soft: rgba(255, 204, 51, 0.12);
+
+    /* Terminal — deep navy */
+    --terminal-bg: #081120;
+    --terminal-panel: #0C1628;
+    --terminal-border: rgba(245, 179, 1, 0.08);
+
+    /* Status colors */
+    --status-success: #2BCB7F;
+    --status-error: #FF5D73;
+    --status-warning: #F5B301;
+
+    /* Sidebar/layout tokens */
+    --sidebar-width: 240px;
+    --sidebar-collapsed-width: 48px;
+    --topbar-height: 36px;
+    --statusbar-height: 24px;
+
+    /* Tab bar */
+    --tab-height: 32px;
+    --tab-active-bg: #0A0D12;
   }
 
-  /* OLED Black Theme */
+  /* ───────────────────────────────────────────────
+     PURE OLED THEME – Zero-light background
+     ─────────────────────────────────────────────── */
   .theme-oled {
     --background: 0 0% 0%;
     --foreground: 0 0% 98%;
@@ -44,10 +109,10 @@
     --card: 0 0% 3%;
     --card-foreground: 0 0% 98%;
 
-    --popover: 0 0% 2%;
+    --popover: 0 0% 5%;
     --popover-foreground: 0 0% 98%;
 
-    --primary: 38 92% 50%;
+    --primary: 38 92% 52%;
     --primary-foreground: 0 0% 0%;
 
     --secondary: 0 0% 8%;
@@ -56,18 +121,26 @@
     --muted: 0 0% 8%;
     --muted-foreground: 0 0% 63%;
 
-    --accent: 142 70% 45%;
-    --accent-foreground: 0 0% 98%;
-
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 0 0% 98%;
-
     --border: 0 0% 10%;
     --input: 0 0% 10%;
-    --ring: 38 92% 50%;
+    --ring: 38 92% 52%;
+
+    --bg-primary: #000000;
+    --bg-secondary: #030303;
+    --bg-tertiary: #080808;
+    --bg-elevated: #0D0D0D;
+    --bg-glass: rgba(255, 255, 255, 0.03);
+
+    --terminal-bg: #000000;
+    --terminal-panel: #050505;
+    --terminal-border: rgba(245, 165, 36, 0.08);
+
+    --border-primary: rgba(255, 255, 255, 0.06);
   }
 
-  /* Sleek Light Theme */
+  /* ───────────────────────────────────────────────
+     SLEEK LIGHT THEME – Clean, professional
+     ─────────────────────────────────────────────── */
   .theme-light {
     --background: 220 15% 97%;
     --foreground: 220 20% 10%;
@@ -79,7 +152,7 @@
     --popover-foreground: 220 20% 10%;
 
     --primary: 38 92% 45%;
-    --primary-foreground: 220 20% 98%;
+    --primary-foreground: 0 0% 100%;
 
     --secondary: 220 10% 90%;
     --secondary-foreground: 220 20% 10%;
@@ -87,8 +160,8 @@
     --muted: 220 10% 92%;
     --muted-foreground: 220 8% 40%;
 
-    --accent: 142 70% 40%;
-    --accent-foreground: 220 20% 98%;
+    --accent: 38 92% 45%;
+    --accent-foreground: 0 0% 100%;
 
     --destructive: 0 84% 50%;
     --destructive-foreground: 0 0% 98%;
@@ -96,81 +169,352 @@
     --border: 220 10% 88%;
     --input: 220 10% 88%;
     --ring: 38 92% 45%;
+
+    --bg-primary: #F7F8FA;
+    --bg-secondary: #FFFFFF;
+    --bg-tertiary: #F0F1F3;
+    --bg-elevated: #FFFFFF;
+    --bg-glass: rgba(0, 0, 0, 0.03);
+
+    --border-primary: rgba(0, 0, 0, 0.08);
+    --border-secondary: rgba(245, 165, 36, 0.20);
+
+    --terminal-bg: #F0F1F3;
+    --terminal-panel: #FFFFFF;
+    --terminal-border: rgba(0, 0, 0, 0.08);
+
+    --glow-primary: rgba(245, 165, 36, 0.25);
+    --glow-soft: rgba(245, 165, 36, 0.10);
   }
 }
 
+/* ================================================================
+   BASE LAYER
+   ================================================================ */
 @layer base {
   * {
     @apply border-border;
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
   }
 
   html {
     color-scheme: dark;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   body {
     @apply bg-background text-foreground overflow-hidden;
-    font-feature-settings: "rlig" 1, "calt" 1;
-    background-image: none; /* Remove cream background image */
+    font-feature-settings: "rlig" 1, "calt" 1, "cv02" 1, "cv03" 1, "cv04" 1;
+  }
+
+  /* Improve text rendering for long coding sessions */
+  :is(h1, h2, h3, h4, h5, h6, p, span, li) {
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Selection color */
+  ::selection {
+    background-color: rgba(245, 165, 36, 0.25);
+    color: #F9FAFB;
   }
 }
 
-/* Custom scrollbars - thin and elegant like VS Code */
+/* ================================================================
+   CUSTOM SCROLLBARS – Thin, elegant, VS Code-inspired
+   ================================================================ */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
   background: hsl(var(--border));
   border-radius: 4px;
 }
+
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--muted-foreground) / 0.5);
+  background: hsl(var(--muted-foreground) / 0.4);
 }
 
-/* High quality shadows and layers */
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Hide scrollbar for horizontal tab bars, etc. */
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* ================================================================
+   PREMIUM UTILITY CLASSES
+   ================================================================ */
+
+/* Glassmorphism surface – layered, translucent, blurred */
 .agentos-glass {
-  @apply border bg-card/65 shadow-2xl backdrop-blur-xl;
-  border-color: hsl(var(--border));
+  @apply border backdrop-blur-xl;
+  background-color: var(--bg-glass);
+  border-color: var(--border-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.02) inset;
 }
 
+/* Elevated glass – for modals, popovers, dropdowns */
+.agentos-glass-elevated {
+  background: hsl(var(--popover));
+  border: 1px solid var(--border-primary);
+  box-shadow:
+    0 4px 6px -1px rgba(0, 0, 0, 0.3),
+    0 2px 4px -2px rgba(0, 0, 0, 0.2),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+}
+
+/* Card surface – standard card with subtle depth */
 .agentos-card {
-  @apply rounded-xl border bg-card shadow-lg transition-all;
-  border-color: hsl(var(--border));
+  @apply rounded-xl border;
+  background: hsl(var(--card));
+  border-color: var(--border-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2), 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
+/* Card with amber border glow on hover */
+.agentos-card-glow {
+  @apply rounded-xl border transition-all duration-300;
+  background: hsl(var(--card));
+  border-color: var(--border-primary);
+}
+.agentos-card-glow:hover {
+  border-color: var(--border-hover);
+  box-shadow: 0 0 20px var(--glow-soft), 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* Shell background – deepest level */
 .agentos-shell {
-  @apply bg-background;
+  background: var(--bg-primary);
 }
 
-/* Code block highlight integration */
-.code-block {
-  @apply relative overflow-hidden rounded-lg border border-border bg-black/40;
+/* Surface background – secondary level */
+.agentos-surface {
+  background: hsl(var(--secondary));
 }
+
+/* Amber glow effects */
+.agentos-glow {
+  box-shadow: 0 0 0 0 var(--glow-primary);
+  transition: box-shadow 0.3s ease;
+}
+.agentos-glow:hover {
+  box-shadow: 0 0 20px var(--glow-soft);
+}
+.agentos-glow-active {
+  box-shadow: 0 0 20px var(--glow-primary), 0 0 40px var(--glow-soft);
+}
+
+/* Focus ring with amber glow */
+.agentos-focus-ring:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--accent-primary), 0 0 12px var(--glow-soft);
+}
+
+/* Gradient text – amber to gold */
+.agentos-gradient-text {
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-hover), var(--accent-soft));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Amber underline accent */
+.agentos-underline {
+  background-image: linear-gradient(var(--accent-primary), var(--accent-primary));
+  background-size: 100% 1.5px;
+  background-repeat: no-repeat;
+  background-position: left bottom;
+}
+
+/* ================================================================
+   TERMINAL THEME – Premium xterm.js integration
+   ================================================================ */
+.agentos-terminal {
+  background: var(--terminal-bg);
+  border: 1px solid var(--terminal-border);
+}
+
+.agentos-terminal-panel {
+  background: var(--terminal-panel);
+  border: 1px solid var(--terminal-border);
+}
+
+/* ANSI terminal color overrides via CSS custom properties */
+.terminal-ansi {
+  --ansi-black: #1E293B;
+  --ansi-red: #EF4444;
+  --ansi-green: #10B981;
+  --ansi-yellow: #F5A524;
+  --ansi-blue: #3B82F6;
+  --ansi-magenta: #C084FC;
+  --ansi-cyan: #22D3EE;
+  --ansi-white: #E5E7EB;
+  --ansi-bright-black: #334155;
+  --ansi-bright-red: #F87171;
+  --ansi-bright-green: #34D399;
+  --ansi-bright-yellow: #FBBF24;
+  --ansi-bright-blue: #60A5FA;
+  --ansi-bright-magenta: #D8B4FE;
+  --ansi-bright-cyan: #67E8F9;
+  --ansi-bright-white: #F3F4F6;
+}
+
+/* ================================================================
+   CODE BLOCKS – In-chat markdown code rendering
+   ================================================================ */
+.code-block {
+  @apply relative overflow-hidden rounded-lg border;
+  border-color: var(--border-primary);
+  background: hsl(var(--background));
+}
+
 .code-block pre {
   @apply overflow-x-auto p-4 text-sm leading-relaxed font-mono;
+  color: var(--text-primary);
 }
 
-/* Animations */
-.animate-in {
-  animation: fade-in 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+.code-block .code-header {
+  @apply flex items-center justify-between px-4 py-2 text-[10px] font-medium;
+  background: hsl(var(--muted));
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-primary);
 }
 
+/* ================================================================
+   KEYFRAME ANIMATIONS – Premium motion system
+   ================================================================ */
+
+/* Fade + slide up entrance */
 @keyframes fade-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Fade + slide in from right */
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* Subtle shimmer for loading states */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* Pulsing amber glow ring for active agents */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px var(--glow-soft), 0 0 16px var(--glow-soft); }
+  50% { box-shadow: 0 0 16px var(--glow-primary), 0 0 32px var(--glow-soft); }
+}
+
+/* Breathing border glow */
+@keyframes border-glow {
+  0%, 100% { border-color: var(--border-secondary); }
+  50% { border-color: var(--border-hover); }
+}
+
+/* Floating indicator for streaming/active states */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-3px); }
+}
+
+/* Typing dots animation */
+@keyframes typing-dot {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+/* Streaming token reveal */
+@keyframes token-reveal {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Scale entrance for modals/popovers */
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* Spin for loaders */
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Success flash */
+@keyframes flash-green {
+  0% { background-color: rgba(16, 185, 129, 0.2); }
+  100% { background-color: transparent; }
+}
+
+/* ================================================================
+   APPLIED ANIMATION CLASSES
+   ================================================================ */
+.animate-fade-in {
+  animation: fade-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted)) 25%,
+    hsl(var(--secondary)) 50%,
+    hsl(var(--muted)) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-border-glow {
+  animation: border-glow 3s ease-in-out infinite;
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-typing-dot {
+  animation: typing-dot 1.4s ease-in-out infinite;
+}
+
+.animate-typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.animate-typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
 }
 
 .animate-flash-green {
-  animation: flash-green 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: flash-green 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-@keyframes flash-green {
-  0%   { background-color: rgba(16, 185, 129, 0.25); }
-  100% { background-color: transparent; }
+.animate-token-reveal {
+  animation: token-reveal 0.15s ease-out forwards;
 }
 
 /* Pulse rings for active agents */
@@ -181,4 +525,29 @@
 }
 .animate-pulse-ring {
   animation: pulse-ring 2s infinite ease-in-out;
+}
+
+/* ================================================================
+   RESPONSIVE & ACCESSIBILITY HELPERS
+   ================================================================ */
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Focus visible polyfill */
+.js-focus-visible :focus:not(.focus-visible) {
+  outline: none;
+}
+
+/* Ensure proper stacking across panels */
+.panel-stack {
+  isolation: isolate;
 }

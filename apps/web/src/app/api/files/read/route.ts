@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import { resolveSafePath } from "@/lib/server/path-security";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +14,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Path is required" }, { status: 400 });
     }
 
-    const resolvedPath = path.resolve(targetPath);
+    const resolvedPath = resolveSafePath(targetPath);
 
     if (!fs.existsSync(resolvedPath)) {
       return NextResponse.json({ error: "File not found" }, { status: 404 });
@@ -34,9 +35,8 @@ export async function GET(request: NextRequest) {
       updatedAt: stat.mtime.toISOString(),
     });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to read file content" },
-      { status: 500 }
-    );
+    const message = error instanceof Error ? error.message : "Failed to read file content";
+    const status = message.includes("Path traversal") ? 403 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

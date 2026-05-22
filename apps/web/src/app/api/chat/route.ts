@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { z, type ZodTypeAny } from "zod";
 import { DEFAULT_PROJECT_ID } from "@/lib/server/agentos-data";
 import { resolveModelForRole } from "@/lib/runtime/role-router";
 import { loadSecuritySettings, loadRoleMappings } from "@/lib/runtime/settings-loader";
@@ -10,6 +10,76 @@ import type { StreamingChunk } from "@/lib/runtime/types";
 import { BaseUniversalProvider } from "@/lib/runtime/providers/base-provider";
 
 export const dynamic = "force-dynamic";
+
+// ── Zod → JSON Schema converter ───────────────────────────────
+// The OpenAI-compatible API needs plain JSON Schema, not Zod objects.
+// Zod schemas silently serialize to {} via JSON.stringify, breaking tool calls.
+
+function zodToJsonSchema(schema: any): Record<string, any> {
+  // If not a Zod schema, return as-is (might already be JSON Schema)
+  const def = (schema as any)?._def;
+  if (!def || def?.typeName !== "ZodObject") {
+    return schema;
+  }
+
+  const shape = typeof def.shape === "function" ? def.shape() : def.shape;
+  const properties: Record<string, any> = {};
+  const required: string[] = [];
+
+  for (const [key, value] of Object.entries<ZodTypeAny>(shape)) {
+    const zType = value;
+    const isOptional = zType.isOptional() || (zType as any)._def?.typeName === "ZodOptional";
+
+    // Unwrap optional
+    let innerType = zType;
+    if ((innerType as any)._def?.typeName === "ZodOptional") {
+      innerType = (innerType as any)._def.innerType;
+    }
+
+    // Map to JSON Schema type
+    const typeName = (innerType as any)._def?.typeName;
+    let jsonType = "string";
+    if (typeName === "ZodNumber" || typeName === "ZodNaN") jsonType = "number";
+    else if (typeName === "ZodBoolean") jsonType = "boolean";
+    else if (typeName === "ZodArray") jsonType = "array";
+
+    properties[key] = { type: jsonType };
+    const desc = (innerType as any)._def?.description;
+    if (desc) properties[key].description = desc;
+
+    if (!isOptional) required.push(key);
+  }
+
+  return { type: "object", properties, required };
+}
+
+// ── AI SDK v6 message format normalizer ──────────────────────
+// The AI SDK v6 sends messages with a `parts` array instead of a `content` string.
+// We normalize them here so the rest of the pipeline works unchanged.
+
+function normalizeMessages(messages: any[]): { role: string; content: string }[] {
+  return messages.map((msg) => {
+    if (typeof msg.content === "string") {
+      // Already in old-format
+      return { role: msg.role, content: msg.content };
+    }
+    // AI SDK v6 format: extract text from parts array
+    const parts = msg.parts;
+    if (Array.isArray(parts)) {
+      const textParts = parts.filter((p: any) => p.type === "text" && typeof p.text === "string");
+      const content = textParts.map((p: any) => p.text).join("\n");
+      return { role: msg.role, content };
+    }
+    // Fallback: convert content object to string
+    const content =
+      msg.content != null
+        ? typeof msg.content === "string"
+          ? msg.content
+          : JSON.stringify(msg.content)
+        : "";
+    return { role: msg.role, content };
+  });
+}
 
 /**
  * Detect the best role for a user message by analyzing content + attachments.
@@ -90,67 +160,97 @@ async function* executeWithToolLoop(
 ): AsyncGenerator<StreamingChunk> {
   let currentMessages: { role: string; content: unknown; tool_call_id?: string }[] = [...messages];
 
+  // Convert Zod schemas → JSON Schema once so the API receives proper parameter definitions
+  const toolsForApi: Record<string, any> = {};
+  for (const [name, def] of Object.entries(tools)) {
+    toolsForApi[name] = { ...def, parameters: zodToJsonSchema(def.parameters) };
+  }
+
   for (let step = 0; step < maxSteps; step++) {
     let textContent = "";
     const toolCalls: { name: string; args: unknown; id: string }[] = [];
 
-    for await (const chunk of provider.execute(modelId, currentMessages, system, tools)) {
+    for await (const chunk of provider.execute(modelId, currentMessages, system, toolsForApi)) {
       if (chunk.type === "text") {
         textContent += chunk.content || "";
         yield chunk;
       } else if (chunk.type === "tool_call" && chunk.toolName) {
+        const toolCallId = chunk.toolCallId || `call_${step}_${chunk.toolName}`;
         toolCalls.push({
           name: chunk.toolName,
           args: chunk.args,
-          id: chunk.toolCallId || `call_${step}_${chunk.toolName}`,
+          id: toolCallId,
         });
+        // Yield immediately so the SSE writer can emit tool-input-start/-available events
+        yield { type: "tool_call", toolName: chunk.toolName, args: chunk.args, toolCallId };
       } else if (chunk.type === "done") {
-        if (toolCalls.length === 0) {
+          if (toolCalls.length === 0) {
+            yield chunk;
+            return;
+          }
+        } else if (chunk.type === "error") {
           yield chunk;
           return;
         }
-      } else if (chunk.type === "error") {
-        yield chunk;
+      }
+
+      // If the provider stream ended without tool calls, we're done
+      if (toolCalls.length === 0) {
+        if (textContent.trim()) {
+          yield { type: "done", finishReason: "stop" };
+        }
         return;
       }
-    }
 
-    if (toolCalls.length === 0) return;
+      // Provider produced tool calls — push assistant message with tool calls
+      const assistantMsg: any = { role: "assistant" };
+      if (textContent) assistantMsg.content = textContent;
+      assistantMsg.tool_calls = toolCalls.map((tc) => ({
+        id: tc.id,
+        type: "function",
+        function: { name: tc.name, arguments: JSON.stringify(tc.args) },
+      }));
+      currentMessages.push(assistantMsg);
 
-    const assistantMsg: any = { role: "assistant" };
-    if (textContent) assistantMsg.content = textContent;
-    assistantMsg.tool_calls = toolCalls.map((tc) => ({
-      id: tc.id,
-      type: "function",
-      function: { name: tc.name, arguments: JSON.stringify(tc.args) },
-    }));
-    currentMessages.push(assistantMsg);
-
-    for (const tc of toolCalls) {
-      const toolDef = tools[tc.name];
-      let result: any;
-      try {
-        result = toolDef?.execute ? await toolDef.execute(tc.args) : { error: `Unknown tool: ${tc.name}` };
-      } catch (err) {
-        result = { error: String(err) };
+      // Execute each tool, yield result for SSE, and push results
+      for (const tc of toolCalls) {
+        const toolDef = tools[tc.name];
+        let result: any;
+        let success = true;
+        try {
+          result = toolDef?.execute ? await toolDef.execute(tc.args) : { error: `Unknown tool: ${tc.name}` };
+          success = result?.success !== false;
+        } catch (err) {
+          result = { error: String(err) };
+          success = false;
+        }
+        // Yield tool_result chunk so SSE writer can emit tool-output-available
+        yield { type: "tool_result", toolName: tc.name, toolCallId: tc.id, result, success };
+        currentMessages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify(result),
+        });
       }
-      currentMessages.push({
-        role: "tool",
-        tool_call_id: tc.id,
-        content: JSON.stringify(result),
-      });
-    }
   }
 }
 
 // POST /api/chat — stream AI response with role routing & tools
 export async function POST(request: NextRequest) {
   try {
-    const { messages, attachments, projectId = DEFAULT_PROJECT_ID, autonomous = false } =
+    const { messages: rawMessages, attachments, projectId = DEFAULT_PROJECT_ID, autonomous = false } =
       await request.json();
+
+    // Normalize AI SDK v6 message format (parts array) to legacy format (content string)
+    const messages = normalizeMessages(rawMessages);
+
+    // Separate provider messages — may differ from normalized messages (e.g. vision content)
+    const providerMessages: { role: string; content: unknown }[] = [...messages];
 
     const hasAttachments = attachments && attachments.length > 0;
     const assignedRole = detectRole(messages, hasAttachments);
+
+    console.log(`[Chat] Role: ${assignedRole} | Messages: ${messages.length} | Attachments: ${hasAttachments}`);
 
     const roleMappings = await loadRoleMappings(projectId);
     const securitySettings = await loadSecuritySettings(projectId);
@@ -158,6 +258,8 @@ export async function POST(request: NextRequest) {
     securityGuard.setSandbox(process.cwd());
 
     const resolved = await resolveModelForRole(assignedRole);
+
+    console.log(`[Chat] Resolved: provider=${resolved.provider.name} model=${resolved.modelName}`);
 
     const systemPrompt = await loadSystemPromptForRole(
       assignedRole,
@@ -184,7 +286,7 @@ export async function POST(request: NextRequest) {
 
     const lastMessage = messages[messages.length - 1];
     if (hasAttachments && lastMessage.role === "user") {
-      const supportsVision = resolved.normalizedModel.capabilities.has("vision");
+      const supportsVision = resolved.normalizedModel.capabilities.includes("vision");
 
       if (!supportsVision) {
         return NextResponse.json(
@@ -205,7 +307,8 @@ export async function POST(request: NextRequest) {
           image_url: { url: `data:${a.type || "image/png"};base64,${base64Data}` },
         });
       }
-      messages[messages.length - 1] = { ...lastMessage, content };
+      providerMessages[providerMessages.length - 1] = { ...lastMessage, content };
+      console.log(`[Chat] Vision content built: ${content.length} parts`);
     }
 
     // Build tools
@@ -410,13 +513,55 @@ export async function POST(request: NextRequest) {
           return toolResult(false, "Deferred: Terminal execution requires client-side approval.");
         }
         try {
-          const util = await import("util");
-          const exec = util.promisify((await import("child_process")).exec);
-          const { stdout, stderr } = await exec(command, { cwd: process.cwd(), timeout: 30_000 });
-          return toolResult(true, `STDOUT:\n${stdout}\nSTDERR:\n${stderr}`);
+          const { spawn } = await import("child_process");
+          const isWin = process.platform === "win32";
+          const shell = isWin ? "cmd.exe" : "/bin/bash";
+          const args = isWin ? ["/c", command] : ["-c", command];
+
+          return new Promise((resolve) => {
+            let stdout = "";
+            let stderr = "";
+            const MAX_OUTPUT = 50_000;
+
+            const proc = spawn(shell, args, {
+              cwd: process.cwd(),
+              timeout: 30_000,
+              env: { ...process.env },
+            });
+
+            proc.stdout?.on("data", (data: Buffer) => {
+              const text = data.toString();
+              if (stdout.length + text.length <= MAX_OUTPUT) {
+                stdout += text;
+              }
+            });
+
+            proc.stderr?.on("data", (data: Buffer) => {
+              const text = data.toString();
+              if (stderr.length + text.length <= MAX_OUTPUT) {
+                stderr += text;
+              }
+            });
+
+            proc.on("close", (code: number | null) => {
+              resolve(toolResult(
+                code === 0,
+                `Exit code: ${code ?? "unknown"}\nSTDOUT:\n${stdout || "(empty)"}\nSTDERR:\n${stderr || "(empty)"}`,
+              ));
+            });
+
+            proc.on("error", (err: Error) => {
+              resolve(toolResult(false, `Process error: ${err.message}`));
+            });
+
+            proc.on("timeout", () => {
+              proc.kill();
+              resolve(toolResult(false, `Command timed out after 30s. STDOUT:\n${stdout}\nSTDERR:\n${stderr}`));
+            });
+          });
         } catch (err: any) {
           return toolResult(
-            err.killed === false,
+            false,
             `Exit code ${err.code}\nSTDOUT:\n${err.stdout || ""}\nSTDERR:\n${err.stderr || ""}\nError: ${err.message}`,
           );
         }
@@ -456,17 +601,21 @@ export async function POST(request: NextRequest) {
 
     (async () => {
       try {
+        console.log(`[Chat] Starting stream provider=${resolved.provider.name} model=${resolved.modelName}`);
+
         const gen = executeWithToolLoop(
           resolved.provider,
           resolved.modelName,
-          messages,
+          providerMessages,
           finalSystemPrompt,
           tools,
         );
 
         let textStarted = false;
+        let chunkCount = 0;
 
         for await (const chunk of gen) {
+          chunkCount++;
           if (chunk.type === "text") {
             if (!textStarted) {
               writer.write(encoder.encode(
@@ -477,7 +626,26 @@ export async function POST(request: NextRequest) {
             writer.write(encoder.encode(
               `data: ${JSON.stringify({ type: "text-delta", id: textId, delta: chunk.content })}\n\n`
             ));
+          } else if (chunk.type === "tool_call") {
+            // Emit tool-input-start + tool-input-available so the AI SDK builds a tool-invocation part
+            // providerExecuted: true tells the SDK that OUR backend handles tool execution,
+            // not the client via onToolCall. Without this, tool invocations get stuck in "call" state.
+            writer.write(encoder.encode(
+              `data: ${JSON.stringify({ type: "tool-input-start", toolCallId: chunk.toolCallId, toolName: chunk.toolName, providerExecuted: true })}\n\n`
+            ));
+            writer.write(encoder.encode(
+              `data: ${JSON.stringify({ type: "tool-input-available", toolCallId: chunk.toolCallId, toolName: chunk.toolName, input: chunk.args, providerExecuted: true })}\n\n`
+            ));
+          } else if (chunk.type === "tool_result") {
+            const resultObj = chunk.result as any;
+            const output = chunk.success !== false
+              ? { success: true, message: typeof resultObj === 'string' ? resultObj : JSON.stringify(resultObj) }
+              : { success: false, error: resultObj?.error || resultObj?.message || 'Tool execution failed' };
+            writer.write(encoder.encode(
+              `data: ${JSON.stringify({ type: "tool-output-available", toolCallId: chunk.toolCallId, output })}\n\n`
+            ));
           } else if (chunk.type === "done") {
+            console.log(`[Chat] Stream done finishReason=${chunk.finishReason} chunks=${chunkCount}`);
             if (textStarted) {
               writer.write(encoder.encode(
                 `data: ${JSON.stringify({ type: "text-end", id: textId })}\n\n`
@@ -487,10 +655,10 @@ export async function POST(request: NextRequest) {
               `data: ${JSON.stringify({
                 type: "finish",
                 finishReason: chunk.finishReason || "stop",
-                usage: { promptTokens: 0, completionTokens: 0 },
               })}\n\n`
             ));
           } else if (chunk.type === "error") {
+            console.error(`[Chat] Stream error: ${chunk.message}`);
             writer.write(encoder.encode(
               `data: ${JSON.stringify({ type: "error", error: { message: chunk.message } })}\n\n`
             ));
@@ -498,6 +666,7 @@ export async function POST(request: NextRequest) {
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : "Stream failed";
+        console.error(`[Chat] Stream exception: ${message}`, err);
         writer.write(encoder.encode(
           `data: ${JSON.stringify({ type: "error", error: { message } })}\n\n`
         ));

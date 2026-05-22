@@ -25,7 +25,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "task (string) is required" }, { status: 400 });
     }
 
-    const root = workspaceRoot || process.cwd();
+    if (!workspaceRoot || typeof workspaceRoot !== "string") {
+      return NextResponse.json({ error: "workspaceRoot is required — open a workspace folder first" }, { status: 400 });
+    }
+
+    const root = workspaceRoot;
 
     // Create a TransformStream to pipe SSE events
     const encoder = new TextEncoder();

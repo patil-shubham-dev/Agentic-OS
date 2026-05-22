@@ -258,6 +258,44 @@ The installer will be in `apps/desktop/out/`.
 
 > **Connection testing** is proxied through the backend — no CORS issues. Error messages are classified into 7 categories (timeout, DNS, TLS, auth, refused, reset, network) with actionable guidance.
 
+### Provider Architecture: One Card = One Model
+
+AgentOS Studio uses a **one-provider-card = one-model** architecture.
+
+To use multiple models from the same vendor, create multiple provider cards — each with its own selected model:
+
+```
+Provider Card A:          Provider Card B:          Provider Card C:
+NVIDIA NIM                NVIDIA NIM                NVIDIA NIM
+→ deepseek-v4-flash        → deepseek-v3             → qwen-coder
+```
+
+**Key rules:**
+
+| Rule | Description |
+|------|-------------|
+| **Single selection** | Each provider card has exactly one `selectedModel`. No multi-model arrays. |
+| **No raw discovery leakage** | The UI, role dropdowns, and runtime only see `selectedModel` — not all discovered models. |
+| **Dedup by instance** | `providerInstanceId + selectedModelId` is the canonical dedup key. No duplicate entries. |
+| **Role routing** | Role dropdowns only show `selectedModel` from active, enabled provider cards. |
+| **Connection per card** | Each card has independent health status, latency, and last-checked timestamp. |
+
+**Provider card layout:**
+```
+┌──────────────────────────────┐
+│ NVIDIA NIM                  │
+│ deepseek-v4-flash           │
+│                              │
+│ ● Connected                  │
+│ latency: 420ms               │
+│ roles: Coding, Research      │
+│                              │
+│ [Test] [Configure] [Remove]  │
+└──────────────────────────────┘
+```
+
+**Configuration flow:** Add Provider → Select Type → Enter API Key → Discover Models → **Pick ONE Model** → Save → Isolated provider instance created.
+
 ---
 
 ## 🖥 Desktop App (Electron)

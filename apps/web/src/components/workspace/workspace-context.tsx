@@ -510,14 +510,10 @@ export function WorkspaceProvider({
   // Filesystem Operations
   // ============================================================
   const loadFolderTree = useCallback(async (folderPath: string) => {
-    setLoadingPaths((prev) => new Set(prev).add(folderPath || "root"));
+    if (!folderPath) return;
+    setLoadingPaths((prev) => new Set(prev).add(folderPath));
     try {
       let activePath = folderPath;
-      if (!activePath) {
-        // Fallback or read from backend first
-        const rootRes = await getJson<{ path: string }>("/api/files/tree");
-        activePath = rootRes.path;
-      }
 
       // Read using unified readDirectory helper (handles Electron native calls automatically!)
       const result = await readDirectory(activePath);
@@ -544,15 +540,14 @@ export function WorkspaceProvider({
     }
   }, [rootPath]);
 
-  // Load saved root path on mount
+  // Load saved root path on mount — only if previously saved
   useEffect(() => {
     const savedRoot = localStorage.getItem("agentos_root_path");
     if (savedRoot) {
       setRootPath(savedRoot);
       loadFolderTree(savedRoot);
-    } else {
-      loadFolderTree("");
     }
+    // No saved root → show clean empty state (no auto-load)
   }, [loadFolderTree]);
 
   const handleOpenFolder = useCallback(async () => {
@@ -800,10 +795,15 @@ export function WorkspaceProvider({
     const abortController = new AbortController();
     orchestrationAbortRef.current = abortController;
     try {
+      if (!rootPath) {
+        setOrchestrationEvents((prev) => [...prev, { type: "error", text: "No workspace folder selected. Open a folder first before using orchestration." }]);
+        setOrchestrating(false);
+        return;
+      }
       const res = await fetch("/api/chat/orchestrate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task, workspaceRoot: rootPath || process.cwd() }),
+        body: JSON.stringify({ task, workspaceRoot: rootPath }),
         signal: abortController.signal,
       });
       if (!res.ok) {
@@ -975,13 +975,21 @@ export function WorkspaceProvider({
 
   // Tool approval
   const handleApproveTool = useCallback(async (toolCallId: string, toolName: string, args: any) => {
+    if (!rootPath) {
+      toast.error("No workspace folder selected. Open a folder first.");
+      return;
+    }
     setApprovingToolId(toolCallId);
     try {
       const res = await fetch("/api/tools/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ toolName, args }),
+        body: JSON.stringify({ toolName, args, workspaceRoot: rootPath }),
       });
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Tool execution failed (HTTP ${res.status}): ${errText.slice(0, 200)}`);
+      }
       const data = await res.json();
       if (data.success) {
         toast.success(`Approved tool ${toolName} executed successfully.`);
@@ -1082,7 +1090,7 @@ export function WorkspaceProvider({
               onDragStart={(e) => handleFileTreeDragStart(e, item.path)}
               onDragOver={(e) => handleFileTreeDragOver(e, item)}
               onDrop={(e) => handleFileTreeDrop(e, item.isDir ? item.path : dirPath)}
-              className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-zinc-800/60 cursor-pointer text-xs transition-colors group text-zinc-300 hover:text-white"
+              className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-[--bg-elevated]/60 cursor-pointer text-xs transition-colors group text-[--text-primary] hover:text-[--text-primary]"
               onClick={() => (item.isDir ? handleToggleFolder(item.path) : handleOpenFile(item))}
             >
               {item.isDir ? (
@@ -1090,7 +1098,7 @@ export function WorkspaceProvider({
                   <span className="w-3.5 h-3.5 border border-amber-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
                 ) : (
                   <>
-                    <span className="text-zinc-500 mr-0.5 group-hover:text-zinc-300 flex-shrink-0">
+                    <span className="text-[--text-muted] mr-0.5 group-hover:text-[--text-primary] flex-shrink-0">
                       {isExpanded ? (
                         <ChevronDown className="w-3 h-3" />
                       ) : (
@@ -1113,37 +1121,37 @@ export function WorkspaceProvider({
               )}
             </div>
           </ContextMenuTrigger>
-          <ContextMenuContent className="w-48 bg-[#18181c] border border-zinc-800 shadow-xl rounded-lg p-1 text-zinc-300">
+          <ContextMenuContent className="w-48 bg-[--bg-secondary] border border-[--border-primary] shadow-xl rounded-lg p-1 text-[--text-primary]">
             {item.isDir ? (
               <>
                 <ContextMenuItem
-                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-zinc-800 focus:text-white"
+                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-[--bg-elevated] focus:text-[--text-primary]"
                   onClick={() => handleToggleFolder(item.path)}
                 >
                   {isExpanded ? "Collapse" : "Expand"}
                 </ContextMenuItem>
-                <ContextMenuSeparator className="bg-zinc-800 my-0.5" />
+                <ContextMenuSeparator className="bg-[--bg-elevated] my-0.5" />
                 <ContextMenuItem
-                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-zinc-800 focus:text-white"
+                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-[--bg-elevated] focus:text-[--text-primary]"
                   onClick={() => handleCreateFile(item.path)}
                 >
                   New File
                 </ContextMenuItem>
                 <ContextMenuItem
-                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-zinc-800 focus:text-white"
+                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-[--bg-elevated] focus:text-[--text-primary]"
                   onClick={() => handleCreateFolder(item.path)}
                 >
                   New Folder
                 </ContextMenuItem>
-                <ContextMenuSeparator className="bg-zinc-800 my-0.5" />
+                <ContextMenuSeparator className="bg-[--bg-elevated] my-0.5" />
                 <ContextMenuItem
-                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-zinc-800 focus:text-white"
+                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-[--bg-elevated] focus:text-[--text-primary]"
                   onClick={() => handleRenameItem(item.path, dirPath)}
                 >
                   Rename
                 </ContextMenuItem>
                 <ContextMenuItem
-                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-rose-950 focus:text-rose-200 text-rose-400"
+                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-rose-950/80 focus:text-rose-200 text-rose-400"
                   onClick={() => handleDeleteItem(item.path, dirPath)}
                 >
                   Delete
@@ -1152,26 +1160,26 @@ export function WorkspaceProvider({
             ) : (
               <>
                 <ContextMenuItem
-                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-zinc-800 focus:text-white"
+                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-[--bg-elevated] focus:text-[--text-primary]"
                   onClick={() => handleOpenFile(item)}
                 >
                   Open
                 </ContextMenuItem>
                 <ContextMenuItem
-                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-zinc-800 focus:text-white"
+                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-[--bg-elevated] focus:text-[--text-primary]"
                   onClick={(e) => handleToggleContext(item.path, e as unknown as React.MouseEvent)}
                 >
                   {isContextSelected ? "Remove from Context" : "Add to Context"}
                 </ContextMenuItem>
-                <ContextMenuSeparator className="bg-zinc-800 my-0.5" />
+                <ContextMenuSeparator className="bg-[--bg-elevated] my-0.5" />
                 <ContextMenuItem
-                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-zinc-800 focus:text-white"
+                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-[--bg-elevated] focus:text-[--text-primary]"
                   onClick={() => handleRenameItem(item.path, dirPath)}
                 >
                   Rename
                 </ContextMenuItem>
                 <ContextMenuItem
-                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-rose-950 focus:text-rose-200 text-rose-400"
+                  className="text-xs cursor-pointer rounded px-3 py-1.5 focus:bg-rose-950/80 focus:text-rose-200 text-rose-400"
                   onClick={() => handleDeleteItem(item.path, dirPath)}
                 >
                   Delete
@@ -1180,7 +1188,7 @@ export function WorkspaceProvider({
             )}
           </ContextMenuContent>
           {item.isDir && isExpanded && (
-            <div className="border-l border-zinc-800 ml-2.5 pl-1.5 my-0.5">
+            <div className="border-l border-[--border-primary] ml-2.5 pl-1.5 my-0.5">
               {renderTreeNodes(item.path, depth + 1)}
             </div>
           )}

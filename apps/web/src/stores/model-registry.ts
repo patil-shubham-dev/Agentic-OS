@@ -12,7 +12,11 @@ interface ModelRegistryState {
   models: NormalizedModel[];
   /** All discovered models with status === "available" (for debug display) */
   availableModels: NormalizedModel[];
-  /** Configured + enabled + available models only — source of truth for role assignment */
+  /**
+   * Configured + enabled + selected models only — source of truth for role assignment.
+   * ARCHITECTURE: One provider card = ONE selected model.
+   * This array ONLY contains models that are explicitly selected on a provider card.
+   */
   activeModels: NormalizedModel[];
   loading: boolean;
   error: string | null;
@@ -32,32 +36,43 @@ interface ModelRegistryState {
 
 function deriveActiveModels(models: NormalizedModel[]): NormalizedModel[] {
   const { providers } = useProviderStore.getState();
-  const providerMap = new Map(providers.map((p) => [p.id, p]));
+
+  // Build a map of providerId → selectedModel (only for enabled providers with a selectedModel)
+  const providerModelMap = new Map<string, string>();
+  for (const p of providers) {
+    if (!p.enabled) continue;
+    const selected = p.selectedModel || p.defaultModel || "";
+    if (selected) {
+      providerModelMap.set(p.id, selected);
+    }
+  }
+
+  // Dedup key: providerInstanceId + selectedModelId
+  // This ensures NO duplicate entries, even if the same model name appears under different forms
+  const seen = new Set<string>();
 
   return models.filter((m) => {
     if (m.status !== "available") return false;
 
-    const provider = providerMap.get(m.providerId);
-    if (!provider) return false;
-    if (!provider.enabled) return false;
-
-    // ONE provider card = ONE selected model.
-    // Only include a model if the provider has an explicit selectedModel
-    // that matches this model's name. This prevents raw discovery leakage
-    // into role dropdowns and ensures the one-card-one-model contract.
-    if (provider.selectedModel) {
-      return m.name === provider.selectedModel;
+    const selectedModel = providerModelMap.get(m.providerId);
+    if (!selectedModel) {
+      // No model selected for this provider — exclude ALL its models.
+      // This prevents raw discovery leakage into role dropdowns.
+      return false;
     }
 
-    // Fallback: if provider has a defaultModel but no selectedModel yet,
-    // include that as a candidate (during initial setup before save).
-    if (provider.defaultModel) {
-      return m.name === provider.defaultModel;
-    }
+    // Check if this model matches the selected model for its provider
+    const matchesName = m.name === selectedModel;
+    const matchesId = m.id.endsWith(`:${selectedModel}`);
 
-    // No model selected or defaulted — exclude all models for this provider.
-    // This prevents raw discovery leakage into UI/roles.
-    return false;
+    if (!matchesName && !matchesId) return false;
+
+    // Dedup: only include the first match for each providerInstanceId + selectedModelId combo
+    const dedupKey = `${m.providerId}:${selectedModel}`;
+    if (seen.has(dedupKey)) return false;
+    seen.add(dedupKey);
+
+    return true;
   });
 }
 
@@ -76,7 +91,8 @@ export const useModelRegistry = create<ModelRegistryState>()((set, get) => ({
       const providerStore = useProviderStore.getState();
       const { providers, providerInstances } = providerStore;
 
-      const cached = getCachedModels(providers);        if (cached && cached.length > 0) {
+      const cached = getCachedModels(providers);
+      if (cached && cached.length > 0) {
         const available = cached.filter((m) => m.status === "available");
         const active = deriveActiveModels(cached);
         set({
@@ -245,6 +261,10 @@ export const useModelRegistry = create<ModelRegistryState>()((set, get) => ({
   },
 
   getModel: (modelId) => {
+    // First check activeModels (the canonical store)
+    let model = get().activeModels.find((m) => m.id === modelId);
+    if (model) return model;
+    // Fall back to full models list
     return get().models.find((m) => m.id === modelId);
   },
 
@@ -295,9 +315,6 @@ function mergeAndDedupeModels(models: NormalizedModel[]): NormalizedModel[] {
   const seen = new Map<string, NormalizedModel>();
 
   for (const model of models) {
-    // Normalize the key to a consistent format.
-    // model.id is typically "providerId:modelName" (e.g. "nvidia:meta/llama-3.1-70b-instruct").
-    // Ensure we collapse any double-prefix cases by normalizing.
     const normalizedId = normalizeModelId(model.id, model.providerId);
     const key = normalizedId.toLowerCase();
 
@@ -320,11 +337,9 @@ function mergeAndDedupeModels(models: NormalizedModel[]): NormalizedModel[] {
 
 /**
  * Normalize a model ID to ensure no double-prefix (e.g., "nvidia:nvidia:llama" → "nvidia:llama").
- * Some discovery paths produce IDs like "nvidia:nvidia/llama" while others produce "nvidia:llama".
  */
 function normalizeModelId(id: string, providerId: string): string {
   const prefix = `${providerId}:`;
-  // Check for double prefix: "nvidia:nvidia/..." or "nvidia:nvidia:..."
   if (id.startsWith(prefix + providerId + "/") || id.startsWith(prefix + providerId + ":")) {
     return prefix + id.slice(prefix.length + providerId.length + 1);
   }

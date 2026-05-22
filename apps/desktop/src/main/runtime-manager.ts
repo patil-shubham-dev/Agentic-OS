@@ -95,40 +95,50 @@ export class DesktopRuntimeManager {
 
   async boot(): Promise<boolean> {
     try {
+      // Phase: Init → Runtime
+      this.state.bootPhase = "init";
       this.emitBootProgress("runtime", 5);
-      await this.delay(200);
 
-      this.emitBootProgress("store", 15);
+      // Phase: Store — check for previous error state
+      this.emitBootProgress("store", 20);
       const persistedPhases = this.sessionStore.get<string>("bootPhase");
       if (persistedPhases === "error") {
         console.warn("[RuntimeManager] Previous boot ended in error");
       }
 
-      this.emitBootProgress("providers", 30);
+      // Phase: Providers — activate all configured providers in parallel
+      this.emitBootProgress("providers", 35);
       const configuredProviders = this.state.providers.list();
       if (configuredProviders.length > 0) {
-        for (const cfg of configuredProviders) {
-          const apiKey = await getCredential("agentos-provider", cfg.id);
-          if (apiKey) {
-            this.state.providers.activate(cfg.id, apiKey);
+        const activationPromises = configuredProviders.map(async (cfg) => {
+          try {
+            const apiKey = await getCredential("agentos-provider", cfg.id);
+            if (apiKey) {
+              this.state.providers.activate(cfg.id, apiKey);
+            }
+          } catch {
+            // Silently skip providers that fail to activate
           }
-        }
+        });
+        await Promise.all(activationPromises);
       }
 
-      this.emitBootProgress("models", 50);
-      await this.delay(100);
+      // Phase: Models — quick check without artificial delays
+      this.emitBootProgress("models", 55);
 
+      // Phase: Roles
       this.emitBootProgress("roles", 65);
-      await this.delay(100);
 
-      this.emitBootProgress("workspace", 80);
-      await this.delay(100);
+      // Phase: Workspace
+      this.emitBootProgress("workspace", 78);
 
-      this.emitBootProgress("chat", 90);
-      await this.delay(100);
+      // Phase: Chat
+      this.emitBootProgress("chat", 88);
 
+      // Phase: Session
       this.emitBootProgress("session", 95);
 
+      // Mark as ready
       this.state.booted = true;
       this.sessionStore.set("bootPhase", "ready");
       this.emitBootProgress("ready", 100);
@@ -161,9 +171,5 @@ export class DesktopRuntimeManager {
     this.state.booted = false;
     this.state.bootError = null;
     this.state.bootPhase = "init";
-  }
-
-  private delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }

@@ -199,11 +199,12 @@ interface ProviderModalProps {
   onBaseUrlBlur: (url: string) => void;
   onApiKeyChange: (key: string) => void;
   onShowApiKeyToggle: () => void;
-  onDefaultModelSelect: (modelId: string) => void;
+  onSelectedModelSelect: (modelId: string) => void;
   onModelPickerToggle: () => void;
   onTestConnection: () => void;
   onSave: () => void;
   onTriggerDiscovery: () => void;
+  onCloseDialogResult: () => void;
 }
 
 // ── Modal component ────────────────────────────────────────────────────────
@@ -231,11 +232,12 @@ export const ProviderModal = memo(function ProviderModal({
   onBaseUrlBlur,
   onApiKeyChange,
   onShowApiKeyToggle,
-  onDefaultModelSelect,
+  onSelectedModelSelect,
   onModelPickerToggle,
   onTestConnection,
   onSave,
   onTriggerDiscovery,
+  onCloseDialogResult,
 }: ProviderModalProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -397,22 +399,25 @@ export const ProviderModal = memo(function ProviderModal({
 
               <div className="space-y-3">
                 <h4 className="text-xs font-semibold text-[--text-secondary] uppercase tracking-wider flex items-center gap-2">
-                  <Cpu className="w-3 h-3" /> Model Configuration
+                  <Cpu className="w-3 h-3" /> Model Selection
+                  <span className="text-[9px] font-normal text-[--accent-primary] bg-[--accent-primary]/10 px-1.5 py-0.5 rounded-md border border-[--accent-primary]/20">
+                    One per provider
+                  </span>
                 </h4>
 
                 <div className="space-y-1.5">
-                  <Label htmlFor="default-model" className="text-xs font-medium text-[--text-secondary]">
-                    Default Model
+                  <Label htmlFor="selected-model" className="text-xs font-medium text-[--text-secondary]">
+                    Select Model
                   </Label>
                   <div className="relative">
                     <button
-                      id="default-model"
+                      id="selected-model"
                       type="button"
                       onClick={onModelPickerToggle}
                       className="w-full h-10 px-3 rounded-lg bg-[--bg-tertiary] border border-[--border-primary] flex items-center justify-between text-xs text-[--text-primary] hover:border-[--border-hover] transition-colors"
                     >
-                      <span className={activeProvider.defaultModel ? "font-mono" : "text-[--text-disabled]"}>
-                        {activeProvider.defaultModel || "Select a model..."}
+                      <span className={activeProvider.selectedModel ? "font-mono" : "text-[--text-disabled]"}>
+                        {activeProvider.selectedModel || "Select a model..."}
                       </span>
                       <div className="flex items-center gap-2">
                         {discoveryStatus === "loading" && (
@@ -423,7 +428,7 @@ export const ProviderModal = memo(function ProviderModal({
                         )}
                         {discoveryStatus === "success" && discoveredModels.length > 0 && (
                           <span className="text-[9px] text-emerald-400 font-medium">
-                            {discoveredModels.length} models
+                            Pick one model
                           </span>
                         )}
                         <ChevronDown className={cn("w-3.5 h-3.5 text-[--text-muted] transition-transform shrink-0", modelPickerOpen && "rotate-180")} />
@@ -435,8 +440,8 @@ export const ProviderModal = memo(function ProviderModal({
                       onOpenChange={(open) => {
                         if (!open) onModelPickerToggle();
                       }}
-                      selectedModelId={activeProvider.defaultModel}
-                      onSelect={onDefaultModelSelect}
+                      selectedModelId={activeProvider.selectedModel || ""}
+                      onSelect={onSelectedModelSelect}
                       models={discoveredModels}
                       discoveryStatus={discoveryStatus}
                       discoveryError={discoveryError}
@@ -446,8 +451,8 @@ export const ProviderModal = memo(function ProviderModal({
                   </div>
                   <p className="text-[10px] text-[--text-muted]">
                     {isNew
-                      ? "Models are auto-discovered when a valid API key and Base URL are provided. Select from the list below or type a custom model name."
-                      : "Models are auto-discovered from connected providers. Pick from the list or type a custom model name."}
+                      ? "Pick exactly ONE model for this provider. For multiple models, add another provider card."
+                      : "Select exactly ONE model. The selected model is what roles and routing will use."}
                   </p>
                 </div>
               </div>
@@ -483,7 +488,7 @@ export const ProviderModal = memo(function ProviderModal({
                 </button>
               )}
               <button
-                onClick={() => {}}
+                onClick={onCloseDialogResult}
                 className="shrink-0 text-[--text-muted] hover:text-[--text-primary] transition-colors"
               >
                 <X className="w-3.5 h-3.5" />
@@ -519,7 +524,7 @@ export const ProviderModal = memo(function ProviderModal({
               <Button
                 className="bg-[--accent-primary] text-black hover:bg-[--accent-hover] rounded-lg h-9 text-xs font-medium shadow-sm shadow-[--glow-soft] px-5"
                 onClick={onSave}
-                disabled={saving}
+                disabled={saving || !activeProvider?.selectedModel}
               >
                 {saving ? (
                   <>

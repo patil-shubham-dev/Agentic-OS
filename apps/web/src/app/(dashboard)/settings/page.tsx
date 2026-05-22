@@ -63,6 +63,7 @@ export default function SettingsPage() {
       name: gt.name,
       baseUrl: gt.baseUrl,
       defaultModel: "",
+      selectedModel: "",
       enabled: true,
       type: gt.type,
       health: "unknown",
@@ -137,7 +138,7 @@ export default function SettingsPage() {
   );
   const onDefaultModelSelect = useCallback(
     (modelId: string) => {
-      setActiveProvider((prev) => prev ? { ...prev, defaultModel: modelId } : null);
+      setActiveProvider((prev) => prev ? { ...prev, selectedModel: modelId, defaultModel: modelId } : null);
       setModelPickerOpen(false);
     },
     [setActiveProvider, setModelPickerOpen]
@@ -267,11 +268,12 @@ export default function SettingsPage() {
         onBaseUrlBlur={handleBaseUrlBlur}
         onApiKeyChange={onApiKeyChange}
         onShowApiKeyToggle={onShowApiKeyToggle}
-        onDefaultModelSelect={onDefaultModelSelect}
+        onSelectedModelSelect={onDefaultModelSelect}
         onModelPickerToggle={handleModelPickerToggle}
         onTestConnection={stableTestConnection}
         onSave={stableSave}
         onTriggerDiscovery={handleTriggerDiscovery}
+        onCloseDialogResult={useCallback(() => settings.setDialogTestResult(null), [settings.setDialogTestResult])}
       />
     </div>
   );

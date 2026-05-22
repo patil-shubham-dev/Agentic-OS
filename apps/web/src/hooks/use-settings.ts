@@ -4,7 +4,7 @@ import { useModelRegistry } from "@/stores/model-registry";
 import { useRoleStore } from "@/stores/role-store";
 import { modelCache } from "@/lib/runtime/model-cache";
 import type { NormalizedModel, UniversalProviderConfig } from "@/lib/runtime/types";
-import { sendJson } from "@/lib/client-api";
+import { sendJson, testProviderConnection, isElectron } from "@/lib/client-api";
 import { toast } from "sonner";
 
 interface UseSettingsState {
@@ -328,6 +328,7 @@ export function useSettings(): UseSettingsState & UseSettingsActions {
       name: "OpenAI",
       baseUrl: "https://api.openai.com/v1",
       defaultModel: "",
+      selectedModel: "",
       enabled: true,
       type: "cloud",
       health: "unknown",
@@ -346,8 +347,11 @@ export function useSettings(): UseSettingsState & UseSettingsActions {
     if (!activeProvider || !activeProvider.name) return;
     setSaving(true);
     try {
-      // Determine the selected model (from defaultModel or first discovered)
-      const selectedModel = activeProvider.defaultModel
+      // ARCHITECTURE: One provider card = ONE selected model.
+      // selectedModel is the canonical field. Fall back to defaultModel
+      // for backward compatibility, then first discovered model, then empty.
+      const selectedModel = activeProvider.selectedModel
+        || activeProvider.defaultModel
         || (discoveredModels.length > 0 ? discoveredModels[0].name : "");
 
       const payload: Record<string, unknown> = {
@@ -355,7 +359,8 @@ export function useSettings(): UseSettingsState & UseSettingsActions {
         label: activeProvider.name,
         baseUrl: activeProvider.baseUrl,
         defaultModel: selectedModel,
-        selectedModel,
+        selected_model: selectedModel,      // server field (snake_case)
+        configured_models: [selectedModel],  // legacy array (first element = selected model)
         enabled: activeProvider.enabled ?? true,
         apiKey: editApiKey || undefined,
       };
@@ -385,14 +390,6 @@ export function useSettings(): UseSettingsState & UseSettingsActions {
       // Set selectedModel in the local store
       if (selectedModel) {
         useProviderStore.getState().setSelectedModel(pid, selectedModel);
-
-        // Persist to server metadata for backward compatibility
-        try {
-          await sendJson(`/api/settings/providers/${pid}`, "PATCH", {
-            selected_model: selectedModel,
-            configured_models: [selectedModel],
-          });
-        } catch { /* best-effort */ }
       }
 
       setDialogTestResult(null);
@@ -416,7 +413,7 @@ export function useSettings(): UseSettingsState & UseSettingsActions {
   }, [activeProvider, isNew, editApiKey, discoveredModels]);
 
   const handleDeleteProvider = useCallback(async (p: UniversalProviderConfig) => {
-    if (!confirm(`Delete ${p.name}?`)) return;
+    if (!window.confirm(`Delete ${p.name}? This action cannot be undone.`)) return;
     try {
       await sendJson(`/api/settings/providers/${p.id}`, "DELETE");
       toast.success(`${p.name} deleted.`);
@@ -448,15 +445,33 @@ export function useSettings(): UseSettingsState & UseSettingsActions {
   const handleTestConnection = useCallback(async (providerId: string) => {
     setTestingProvider(providerId);
     try {
-      const res = await sendJson<{ success: boolean; message: string }>(
-        `/api/settings/providers/${providerId}/test`,
-        "POST"
-      );
-      if (res.success) toast.success(res.message);
-      else toast.warning(res.message);
+      // Route through IPC in Electron mode for reliability
+      if (isElectron()) {
+        const res = await testProviderConnection(providerId);
+        if (res.ok) {
+          toast.success(`Provider connected (${res.latency}ms)`);
+          useProviderStore.getState().setProviderHealth(providerId, "healthy", res.latency || 0);
+        } else {
+          toast.warning(res.error || "Connection failed");
+          useProviderStore.getState().setProviderHealth(providerId, "offline", 0);
+        }
+      } else {
+        const res = await sendJson<{ success: boolean; message: string; latency?: number }>(
+          `/api/settings/providers/${providerId}/test`,
+          "POST"
+        );
+        if (res.success) {
+          toast.success(res.message);
+          useProviderStore.getState().setProviderHealth(providerId, "healthy", res.latency || 0);
+        } else {
+          toast.warning(res.message);
+          useProviderStore.getState().setProviderHealth(providerId, "offline", 0);
+        }
+      }
       await useProviderStore.getState().hydrate();
-    } catch {
-      toast.error("Connection test failed.");
+    } catch (err: any) {
+      toast.error(err?.message || "Connection test failed.");
+      useProviderStore.getState().setProviderHealth(providerId, "offline", 0);
     } finally {
       setTestingProvider(null);
     }
@@ -474,7 +489,17 @@ export function useSettings(): UseSettingsState & UseSettingsActions {
     setTestingDialog(true);
     setDialogTestResult(null);
     try {
-      if (isNew) {
+      // Route through IPC in Electron mode for reliability (only for EXISTING providers
+      // with stored credentials; new providers need HTTP to pass API key in body)
+      if (isElectron() && !isNew) {
+        const res = await testProviderConnection(activeProvider.id);
+        setDialogTestResult({
+          success: res.ok,
+          message: res.ok ? `Connected (${res.latency}ms)` : (res.error || "Connection failed"),
+        });
+        if (res.ok) toast.success(`Connected (${res.latency}ms)`);
+        else toast.warning(res.error || "Connection failed");
+      } else if (isNew) {
         const data = await safeFetchJson("/api/settings/providers/test", {
           method: "POST",
           headers: { "Content-Type": "application/json" },

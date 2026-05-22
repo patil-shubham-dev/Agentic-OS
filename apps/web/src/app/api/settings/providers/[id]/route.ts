@@ -26,18 +26,36 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     const apiKey: string | undefined = typeof body.apiKey === "string" && body.apiKey.length > 0 ? body.apiKey : undefined;
 
-    // Merge selected_model and legacy configured_models into metadata JSONB
-    // (there is no dedicated DB column for selected_model)
+    // ARCHITECTURE: One provider card = ONE selected model.
+    // selected_model in metadata is the canonical field.
+    // Merge with existing metadata preserving all fields.
     let metadata = { ...(existing.metadata || {}) };
     if (body.metadata !== undefined) {
       metadata = { ...metadata, ...(body.metadata ?? {}) };
     }
-    const selectedModel = body.selectedModel ?? body.selected_model ?? null;
+
+    // Resolve selected_model from request body with priority:
+    // 1. body.selected_model (snake_case, server-side)
+    // 2. body.selectedModel (camelCase, client-side)
+    // 3. body.defaultModel (fallback for backward compat)
+    // 4. existing metadata selected_model
+    // 5. existing default_model
+    const selectedModel = body.selected_model
+      || body.selectedModel
+      || body.defaultModel
+      || metadata.selected_model
+      || existing.default_model
+      || "";
+
     if (selectedModel) {
       metadata.selected_model = selectedModel;
     }
-    if (body.configured_models !== undefined) {
+
+    // configured_models is legacy — only first element matters now
+    if (body.configured_models !== undefined && Array.isArray(body.configured_models)) {
       metadata.configured_models = body.configured_models;
+    } else if (selectedModel) {
+      metadata.configured_models = [selectedModel];
     }
 
     // Preserve existing API key unless explicitly overwritten
@@ -52,7 +70,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       provider: id,
       label: body.label !== undefined ? body.label : existing.label,
       base_url: body.baseUrl !== undefined ? body.baseUrl : existing.base_url,
-      default_model: body.defaultModel !== undefined ? body.defaultModel : existing.default_model,
+      default_model: body.defaultModel !== undefined ? body.defaultModel : (selectedModel || existing.default_model),
       enabled: body.enabled !== undefined ? Boolean(body.enabled) : existing.enabled,
       metadata,
       api_key_ciphertext: apiKeyCiphertext,

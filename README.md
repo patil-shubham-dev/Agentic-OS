@@ -34,6 +34,29 @@
 
 ---
 
+## 📸 Screenshots
+
+<div align="center">
+  <table>
+    <tr>
+      <td width="33%">
+        <img src="screenshots/dashboard.png" alt="Dashboard" width="100%" />
+        <p align="center"><strong>📊 Dashboard</strong><br/>Stats, charts & activity</p>
+      </td>
+      <td width="33%">
+        <img src="screenshots/workspace.png" alt="Workspace" width="100%" />
+        <p align="center"><strong>⌨️ Workspace</strong><br/>Editor, chat & file explorer</p>
+      </td>
+      <td width="33%">
+        <img src="screenshots/settings-providers.png" alt="Provider Settings" width="100%" />
+        <p align="center"><strong>⚙️ Providers</strong><br/>One card = one model</p>
+      </td>
+    </tr>
+  </table>
+</div>
+
+---
+
 ## ✨ Features
 
 ### 🤖 Chat & AI

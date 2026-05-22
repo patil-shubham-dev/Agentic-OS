@@ -34,18 +34,25 @@ export async function POST(request: NextRequest) {
 
     const apiKey: string | undefined = typeof body.apiKey === "string" && body.apiKey.length > 0 ? body.apiKey : undefined;
 
-    // Persist selected_model in metadata JSONB (no dedicated DB column)
-    const selectedModel = body.selectedModel ?? body.selected_model ?? null;
+    // ARCHITECTURE: One provider card = ONE selected model.
+    // selected_model is the canonical field. configured_models is the legacy array
+    // where only the first element is relevant (retained for backward compat).
+    const selectedModel = body.selected_model || body.selectedModel || body.defaultModel || "";
+    const configuredModels = Array.isArray(body.configured_models)
+      ? body.configured_models
+      : (selectedModel ? [selectedModel] : []);
+
     const metadata = {
       ...(body.metadata ?? {}),
-      ...(selectedModel ? { selected_model: selectedModel } : {}),
+      selected_model: selectedModel,
+      configured_models: configuredModels,
     };
 
     const updates: Partial<ProviderConfigRecord> = {
       provider: body.provider,
       label: body.label,
       base_url: body.baseUrl ?? null,
-      default_model: body.defaultModel ?? null,
+      default_model: body.defaultModel || selectedModel || null,
       enabled: Boolean(body.enabled ?? true),
       metadata,
     };

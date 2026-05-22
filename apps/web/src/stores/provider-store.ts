@@ -41,31 +41,38 @@ export const useProviderStore = create<ProviderState>()(
       setProviders: (providers: UniversalProviderConfig[]) => {
         const instances: Record<string, BaseUniversalProvider> = {};
         for (const p of providers) {
-          if (p.enabled) {
-            try {
-              instances[p.id] = createUniversalProvider(p);
-            } catch {
-              console.warn(`[ProviderStore] Failed to create instance for "${p.name}"`);
-            }
+          if (!p.enabled || !p.id) continue;
+          try {
+            instances[p.id] = createUniversalProvider(p);
+          } catch (err) {
+            console.warn(`[ProviderStore] Failed to create instance for "${p.name}":`, err instanceof Error ? err.message : err);
           }
         }
         set({ providers, providerInstances: instances });
       },
 
       addProvider: (config: UniversalProviderConfig) => {
+        if (!config.id) {
+          console.error("[ProviderStore] Cannot add provider without id");
+          return;
+        }
         const providers = [...get().providers, config];
         const instances = { ...get().providerInstances };
         if (config.enabled) {
           try {
             instances[config.id] = createUniversalProvider(config);
-          } catch {
-            console.warn(`[ProviderStore] Failed to create instance for "${config.name}"`);
+          } catch (err) {
+            console.warn(`[ProviderStore] Failed to create instance for "${config.name}":`, err instanceof Error ? err.message : err);
           }
         }
         set({ providers, providerInstances: instances });
       },
 
       updateProvider: (id: string, updates: Partial<UniversalProviderConfig>) => {
+        if (!id) {
+          console.error("[ProviderStore] Cannot update provider without id");
+          return;
+        }
         const providers = get().providers.map((p) =>
           p.id === id ? { ...p, ...updates } : p
         );
@@ -74,7 +81,8 @@ export const useProviderStore = create<ProviderState>()(
         if (updated?.enabled) {
           try {
             instances[id] = createUniversalProvider(updated);
-          } catch {
+          } catch (err) {
+            console.warn(`[ProviderStore] Failed to update instance for "${updated.name}":`, err instanceof Error ? err.message : err);
             delete instances[id];
           }
         } else {
@@ -85,14 +93,21 @@ export const useProviderStore = create<ProviderState>()(
 
       setSelectedModel: (providerId: string, modelName: string) => {
         const providers = get().providers.map((p) =>
-          p.id === providerId ? { ...p, selectedModel: modelName } : p
+          p.id === providerId
+            ? {
+                ...p,
+                selectedModel: modelName,
+                // When selectedModel changes, also update defaultModel for backward compat
+                defaultModel: modelName,
+              }
+            : p
         );
         set({ providers });
       },
 
       getSelectedModel: (providerId: string) => {
         const provider = get().providers.find((p) => p.id === providerId);
-        return provider?.selectedModel ?? "";
+        return provider?.selectedModel ?? provider?.defaultModel ?? "";
       },
 
       removeProvider: (id: string) => {
@@ -114,16 +129,18 @@ export const useProviderStore = create<ProviderState>()(
 
       refreshHealth: async () => {
         const { providers, providerInstances } = get();
-        for (const p of providers) {
-          const instance = providerInstances[p.id];
-          if (!instance) continue;
-          try {
-            const health = await checkProviderHealth(instance);
-            get().setProviderHealth(p.id, health.status, health.latency);
-          } catch {
-            get().setProviderHealth(p.id, "offline", 999);
-          }
-        }
+        await Promise.all(
+          providers.map(async (p) => {
+            const instance = providerInstances[p.id];
+            if (!instance) return;
+            try {
+              const health = await checkProviderHealth(instance);
+              get().setProviderHealth(p.id, health.status, health.latency);
+            } catch {
+              get().setProviderHealth(p.id, "offline", 999);
+            }
+          })
+        );
       },
 
       getInstance: (id: string) => get().providerInstances[id],
@@ -139,10 +156,18 @@ export const useProviderStore = create<ProviderState>()(
             else if (p.validation_status === "invalid") health = "offline";
 
             const meta = p.metadata || {};
-            // Migrate from old configuredModels array to new selectedModel
+            // Deterministic resolution:
+            // 1. selected_model from server metadata (primary)
+            // 2. selectedModel from local cache (secondary)
+            // 3. configured_models[0] (legacy migration)
+            // 4. default_model (fallback)
+            const serverSelectedModel = meta.selected_model || p.selected_model || "";
+            const localSelectedModel = p.selectedModel || "";
             const serverConfiguredModels = meta.configured_models || meta.configuredModels || p.configured_models || p.configuredModels || [];
             const legacyConfiguredModels = Array.isArray(serverConfiguredModels) ? serverConfiguredModels : [];
-            let selectedModel = p.selected_model || p.selectedModel || meta.selected_model || "";
+
+            let selectedModel = serverSelectedModel || localSelectedModel;
+
             // Fallback: take first configured model if selectedModel is empty
             if (!selectedModel && legacyConfiguredModels.length > 0) {
               selectedModel = legacyConfiguredModels[0];
@@ -151,6 +176,7 @@ export const useProviderStore = create<ProviderState>()(
             if (!selectedModel) {
               selectedModel = p.default_model || p.defaultModel || "";
             }
+
             return {
               id: p.provider || p.id,
               name: p.label || p.name,
@@ -162,7 +188,7 @@ export const useProviderStore = create<ProviderState>()(
                     : ("openai-compatible" as const),
               baseUrl: p.base_url || p.baseUrl || "",
               apiKey: undefined,
-              defaultModel: p.default_model || p.defaultModel || "",
+              defaultModel: p.default_model || p.defaultModel || selectedModel,
               enabled: Boolean(p.enabled),
               selectedModel,
               metadata: p.metadata || {},
@@ -170,7 +196,19 @@ export const useProviderStore = create<ProviderState>()(
               latency: 0,
             };
           });
-          get().setProviders(mapped);
+
+          // Deduplicate: if same providerType + selectedModel combo exists, keep only the last one
+          const deduped: UniversalProviderConfig[] = [];
+          const seen = new Set<string>();
+          for (const prov of [...mapped].reverse()) {
+            const key = `${prov.id}:${prov.selectedModel}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              deduped.unshift(prov);
+            }
+          }
+
+          get().setProviders(deduped);
           set({ error: null });
         } catch {
           if (get().providers.length === 0) {
@@ -213,7 +251,12 @@ export const useProviderStore = create<ProviderState>()(
                     selectedModel = p.defaultModel || "";
                   }
                   const { configuredModels: _, ...rest } = p;
-                  return { ...rest, selectedModel };
+                  return {
+                    ...rest,
+                    selectedModel,
+                    // Also sync defaultModel for backward compat
+                    defaultModel: selectedModel || p.defaultModel,
+                  };
                 }).filter((p: any) => p && typeof p === "object" && p.id)
               : [],
           };
@@ -227,7 +270,12 @@ export const useProviderStore = create<ProviderState>()(
             selectedModel = oldConfigured[0];
           }
           const { configuredModels: _, ...rest } = p;
-          return { ...rest, selectedModel: selectedModel || "" };
+          return {
+            ...rest,
+            selectedModel: selectedModel || "",
+            // Sync defaultModel with selectedModel
+            defaultModel: selectedModel || p.defaultModel || "",
+          };
         });
         return {
           providers,
@@ -242,7 +290,7 @@ export const useProviderStore = create<ProviderState>()(
           name: p.name,
           type: p.type,
           baseUrl: p.baseUrl,
-          defaultModel: p.defaultModel,
+          defaultModel: p.selectedModel || p.defaultModel,
           enabled: p.enabled,
           selectedModel: p.selectedModel ?? "",
           metadata: p.metadata,

@@ -1,0 +1,70 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+  <Product Name='Agentic-OS Studio' Id='*' UpgradeCode='{B7A9E7C1-5F3E-4A2D-9C8E-1F2D3A4B5C6D}'
+           Language='1033' Codepage='1252' Version='$(var.Version)' Manufacturer='Agentic-OS'>
+
+    <Package Id='*' Keywords='Installer' Description="Agentic-OS Studio Installer"
+             Comments='Agentic-OS Studio is a AI operating system for development.'
+             Manufacturer='Agentic-OS' InstallerVersion='200' Languages='1033'
+             Compressed='yes' SummaryCodepage='1252' />
+
+    <Media Id='1' Cabinet='agenticos.cab' EmbedCab='yes' />
+
+    <Directory Id='TARGETDIR' Name='SourceDir'>
+      <Directory Id='ProgramFiles64Folder' Name='PFiles'>
+        <Directory Id='INSTALLDIR' Name='Agentic-OS Studio'>
+          <Component Id='MainExecutable' Guid='{D8F6E5B4-3C2D-4A1E-9F0B-8A7C6D5E4F3A}'>
+            <File Id='AppExe' Name='Agentic-OS Studio.exe' DiskId='1' Source='$(var.AppDir)\Agentic-OS Studio.exe' KeyPath='yes' />
+            <Shortcut Id='StartMenuShortcut' Directory='ProgramMenuDir' Name='Agentic-OS Studio'
+                      Advertise='yes' />
+            <Shortcut Id='DesktopShortcut' Directory='DesktopFolder' Name='Agentic-OS Studio'
+                      Advertise='yes' />
+          </Component>
+        </Directory>
+      </Directory>
+
+      <Directory Id='ProgramMenuFolder' Name='Programs'>
+        <Directory Id='ProgramMenuDir' Name='Agentic-OS Studio'>
+          <Component Id='StartMenuEntries' Guid='{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}'>
+            <RemoveFolder Id='ProgramMenuDir' On='uninstall' />
+            <RegistryValue Root='HKCU' Key='Software\Agentic-OS\Studio' Name='installed' Type='integer' Value='1' KeyPath='yes' />
+          </Component>
+        </Directory>
+      </Directory>
+
+      <Directory Id='DesktopFolder' Name='Desktop' />
+    </Directory>
+
+    <Feature Id='MainFeature' Title='Agentic-OS Studio' Level='1'>
+      <ComponentRef Id='MainExecutable' />
+      <ComponentRef Id='StartMenuEntries' />
+    </Feature>
+
+    <Property Id='ARPPRODUCTICON' Value='icon.ico' />
+    <Icon Id='icon.ico' SourceFile='$(var.AppDir)\icons\icon.ico' />
+
+    <UIRef Id='WixUI_InstallDir' />
+    <UIRef Id='WixUI_ErrorProgressText' />
+
+    <Property Id='WIXUI_INSTALLDIR' Value='INSTALLDIR' />
+    <Property Id='ApplicationFolderName' Value='Agentic-OS Studio' />
+    <Property Id='WixAppFolder' Value='WixPerUserFolder' />
+
+    <WixVariable Id='WixUILicenseRtf' Value='' />
+    <WixVariable Id='WixUIDialogBmp' Value='' />
+    <WixVariable Id='WixUIBannerBmp' Value='' />
+
+    <CustomAction Id='LaunchApp' FileKey='AppExe' ExeCommand='' Execute='immediate' Return='asyncNoWait' />
+
+    <InstallExecuteSequence>
+      <Custom Action='LaunchApp' After='InstallFinalize'>NOT Installed AND NOT WIXUSERSKIPLAUNCHAPP</Custom>
+    </InstallExecuteSequence>
+
+    <InstallUISequence>
+      <Show Dialog='UserExit' OnExit='cancel' />
+      <Show Dialog='ExitDialog' OnExit='success' >
+        <Publish Dialog='ExitDialog' Control='Finish' Event='DoAction' Value='LaunchApp'>WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
+      </Show>
+    </InstallUISequence>
+  </Product>
+</Wix>

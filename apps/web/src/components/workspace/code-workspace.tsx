@@ -1,0 +1,720 @@
+import { useState, useRef, useCallback, useEffect } from "react"
+import { motion, AnimatePresence } from "framer-motion"
+import Editor, { type OnMount, type OnChange } from "@monaco-editor/react"
+import type { editor } from "monaco-editor"
+import { useWorkspaceStore } from "@/stores/workspace-store"
+import type { OpenFile } from "@/types"
+import { cn } from "@/lib/utils"
+import { Badge } from "@/components/ui/badge"
+import { Tooltip } from "@/components/ui/tooltip"
+import { PremiumEmptyState, getCodeEmptyState } from "./premium-empty-state"
+import { pickWorkspaceFolder, loadFileTree, startWatching } from "@/lib/workspace"
+import { RenderScheduler } from "@/runtime/render-engine/render-scheduler"
+import { useHaptic } from "@/lib/haptics"
+import {
+  WrapText, Minus, Plus, X, FileCode,
+  Sparkles, Brain, Check, Save,
+  PanelRightClose, Terminal, Download, FileDown,
+} from "lucide-react"
+
+const EXT_LANG_MAP: Record<string, string> = {
+  ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
+  css: "css", scss: "scss", html: "html", json: "json",
+  md: "markdown", py: "python", rs: "rust", toml: "toml",
+  yaml: "yaml", yml: "yaml", sh: "shell", bash: "shell",
+  sql: "sql", go: "go", java: "java", rb: "ruby",
+  svelte: "html", vue: "html", astro: "html",
+}
+
+function getMonacoLang(filename: string): string {
+  const ext = filename.split(".").pop()?.toLowerCase() ?? ""
+  return EXT_LANG_MAP[ext] ?? "plaintext"
+}
+
+/** Default Monaco editor options */
+const EDITOR_OPTIONS: editor.IStandaloneEditorConstructionOptions = {
+  fontSize: 13,
+  fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+  fontLigatures: true,
+  minimap: { enabled: true, scale: 1, showSlider: "mouseover" },
+  scrollBeyondLastLine: false,
+  lineNumbers: "on",
+  lineNumbersMinChars: 3,
+  glyphMargin: false,
+  folding: true,
+  foldingHighlight: true,
+  renderLineHighlight: "all",
+  renderWhitespace: "selection",
+  bracketPairColorization: { enabled: true },
+  autoClosingBrackets: "always",
+  autoClosingQuotes: "always",
+  formatOnPaste: true,
+  smoothScrolling: true,
+  cursorBlinking: "smooth",
+  cursorSmoothCaretAnimation: "on",
+  wordWrap: "off",
+  tabSize: 2,
+  insertSpaces: true,
+  renderControlCharacters: false,
+  padding: { top: 12 },
+  suggest: {
+    showMethods: true, showFunctions: true, showConstructors: true,
+    showDeprecated: false, showFields: true, showVariables: true,
+    showClasses: true, showStructs: true, showInterfaces: true,
+    showModules: true, showProperties: true, showEvents: true,
+    showOperators: true, showUnits: true, showValues: true,
+    showConstants: true, showEnums: true, showEnumMembers: true,
+    showKeywords: true, showWords: true, showColors: true,
+    showFiles: true, showReferences: true, showSnippets: true,
+    showTypeParameters: true,
+  },
+  "semanticHighlighting.enabled": true,
+}
+
+interface AIChange {
+  filePath: string
+  originalContent: string
+  newContent: string
+  applied: boolean
+  rejected: boolean
+}
+
+// ── Editor Tabs ──
+
+function EditorTabs({ openFiles, activeFilePath, onOpen, onClose }: {
+  openFiles: OpenFile[]
+  activeFilePath: string | null
+  onOpen: (f: OpenFile) => void
+  onClose: (path: string) => void
+}) {
+  const tabsRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const container = tabsRef.current
+    if (!container) return
+    const activeTab = container.querySelector('[data-active="true"]') as HTMLDivElement | null
+    if (activeTab) {
+      activeTab.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" })
+    }
+  }, [activeFilePath])
+
+  function handleMiddleClick(e: React.MouseEvent, path: string) {
+    if (e.button === 1) {
+      e.preventDefault()
+      onClose(path)
+    }
+  }
+
+  return (
+    <div ref={tabsRef} className="flex items-center border-b border-white/[0.04] bg-black/20 overflow-x-auto shrink-0 scrollbar-thin">
+      {openFiles.map((file) => {
+        const lang = getMonacoLang(file.name)
+        return (
+          <motion.div
+            key={file.path}
+            data-active={file.path === activeFilePath ? "true" : undefined}
+            onMouseDown={(e) => handleMiddleClick(e, file.path)}
+            layout
+            layoutId={file.path}
+            transition={{ type: "spring", stiffness: 400, damping: 30 }}
+            className={cn(
+              "group flex items-center gap-1.5 px-3 py-1.5 text-[11px] cursor-pointer border-r border-white/[0.03] transition-all select-none whitespace-nowrap",
+              file.path === activeFilePath
+                ? "bg-white/[0.04] text-white shadow-[inset_0_-1.5px_0_0] shadow-blue-500"
+                : "text-white/40 hover:text-white/70 hover:bg-white/[0.02]"
+            )}
+            onClick={() => onOpen(file)}
+          >
+            <span className={cn(
+              "text-[10px] font-medium uppercase",
+              lang === "typescript" && "text-blue-400",
+              lang === "javascript" && "text-yellow-400",
+              lang === "css" && "text-pink-400",
+              lang === "html" && "text-orange-400",
+              lang === "json" && "text-green-400",
+              lang === "python" && "text-blue-300",
+              lang === "rust" && "text-orange-400",
+              lang === "markdown" && "text-white/40",
+            )}>
+              {file.name.split(".").pop()}
+            </span>
+            <span className="truncate max-w-28">{file.name}</span>
+            {file.isDirty && (
+              <motion.span
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                className="h-1.5 w-1.5 rounded-full bg-blue-500 shrink-0"
+              />
+            )}
+            <button
+              onClick={(e) => { e.stopPropagation(); onClose(file.path) }}
+              className="ml-0.5 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-white/10 transition-all text-white/30 hover:text-white"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </motion.div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── AI Change Diff Overlay ──
+
+function AiChangeOverlay({ change, onAccept, onReject, onTimeout }: {
+  change: AIChange
+  onAccept: () => void
+  onReject: () => void
+  onTimeout: () => void
+}) {
+  const [timeLeft, setTimeLeft] = useState(30)
+
+  useEffect(() => {
+    if (timeLeft <= 0) {
+      onTimeout()
+      return
+    }
+    const timer = setInterval(() => setTimeLeft((t) => t - 1), 1000)
+    return () => clearInterval(timer)
+  }, [timeLeft, onTimeout])
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -10, scale: 0.95 }}
+      transition={{ type: "spring", stiffness: 400, damping: 25 }}
+      className="absolute top-3 right-3 z-50"
+    >
+      <div className="rounded-xl border border-blue-500/20 bg-blue-500/10 backdrop-blur-xl p-3 shadow-2xl shadow-blue-500/10 min-w-[220px]">
+        <div className="flex items-center gap-2 mb-2">
+          <Sparkles className="h-3.5 w-3.5 text-blue-400" />
+          <span className="text-[11px] font-medium text-blue-400">AI Suggestion</span>
+          <motion.span
+            key={timeLeft}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="ml-auto text-[8px] text-white/30 font-mono"
+          >
+            {timeLeft}s
+          </motion.span>
+        </div>
+        <div className="flex items-center gap-1.5 text-[10px] text-white/50 mb-2.5">
+          <FileCode className="h-3 w-3" />
+          <span className="truncate">{change.filePath}</span>
+        </div>
+        {/* Progress bar */}
+        <div className="h-0.5 bg-white/5 rounded-full mb-2.5 overflow-hidden">
+          <motion.div
+            className="h-full bg-blue-500/40 rounded-full"
+            initial={{ width: "100%" }}
+            animate={{ width: "0%" }}
+            transition={{ duration: 30, ease: "linear" }}
+          />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <motion.button
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={onAccept}
+            className="flex items-center gap-1 rounded-lg bg-green-500/20 border border-green-500/30 px-3 py-1.5 text-[10px] font-medium text-green-400 hover:bg-green-500/30 transition-all"
+          >
+            <Check className="h-3 w-3" />
+            Accept
+          </motion.button>
+          <motion.button
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={onReject}
+            className="flex items-center gap-1 rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-1.5 text-[10px] font-medium text-red-400 hover:bg-red-500/20 transition-all"
+          >
+            <X className="h-3 w-3" />
+            Reject
+          </motion.button>
+        </div>
+      </div>
+    </motion.div>
+  )
+}
+
+// ── Save utility with Tauri + web fallback ──
+
+async function saveFile(
+  filePath: string,
+  fileName: string,
+  content: string,
+  rootPath?: string,
+): Promise<{ success: boolean; method: "tauri" | "download" | "error"; error?: string }> {
+  // Try Tauri first
+  try {
+    const { invoke } = await import("@tauri-apps/api/core")
+    // Normalize path to use platform-appropriate separators
+    const normalizedPath = filePath.replace(/\//g, "\\")
+    const absolutePath = rootPath ? `${rootPath}\\${normalizedPath}` : filePath
+    await invoke("write_text_file", { path: absolutePath, content })
+    try {
+      await invoke("save_snapshot", {
+        path: absolutePath,
+        content,
+        description: `Saved ${fileName}`,
+      })
+    } catch { /* snapshot is optional */ }
+    return { success: true, method: "tauri" }
+  } catch {
+    // Tauri not available — fall back to download
+  }
+
+  // Web fallback: download as blob
+  try {
+    const blob = new Blob([content], { type: "text/plain" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = fileName
+    a.click()
+    URL.revokeObjectURL(url)
+    return { success: true, method: "download" }
+  } catch (e) {
+    return { success: false, method: "error", error: String(e) }
+  }
+}
+
+// ── Main Component ──
+
+export function CodeWorkspace() {
+  const openFiles = useWorkspaceStore((s) => s.openFiles)
+  const activeFilePath = useWorkspaceStore((s) => s.activeFilePath)
+  const openFileInStore = useWorkspaceStore((s) => s.openFile)
+  const closeFile = useWorkspaceStore((s) => s.closeFile)
+  const updateFileContent = useWorkspaceStore((s) => s.updateFileContent)
+  const markFileDirty = useWorkspaceStore((s) => s.markFileDirty)
+  const aiContextFiles = useWorkspaceStore((s) => s.aiContextFiles)
+  const addAiContextFile = useWorkspaceStore((s) => s.addAiContextFile)
+  const removeAiContextFile = useWorkspaceStore((s) => s.removeAiContextFile)
+  const rootPath = useWorkspaceStore((s) => s.rootPath)
+  const { pulse, notify } = useHaptic()
+
+  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
+  const [saved, setSaved] = useState(false)
+  const [wordWrap, setWordWrap] = useState(false)
+  const [fontSize, setFontSize] = useState(13)
+  const [showMinimap, setShowMinimap] = useState(true)
+  const [aiChanges, setAiChanges] = useState<AIChange[]>([])
+  const [showAiOverlay, setShowAiOverlay] = useState(false)
+  const [saveMethod, setSaveMethod] = useState<"tauri" | "download" | null>(null)
+
+  const activeFile = openFiles.find((f) => f.path === activeFilePath)
+  const isInAiContext = activeFile ? aiContextFiles.some((f) => f.path === activeFile.path) : false
+
+  // ── Monaco mount handler ──
+  const handleEditorMount: OnMount = useCallback((editor, monaco) => {
+    editorRef.current = editor
+
+    // Configure dark theme
+    monaco.editor.defineTheme("agentic-dark", {
+      base: "vs-dark",
+      inherit: true,
+      rules: [
+        { token: "comment", foreground: "6A9955", fontStyle: "italic" },
+        { token: "keyword", foreground: "569CD6" },
+        { token: "string", foreground: "CE9178" },
+        { token: "number", foreground: "B5CEA8" },
+        { token: "type", foreground: "4EC9B0" },
+        { token: "function", foreground: "DCDCAA" },
+        { token: "variable", foreground: "9CDCFE" },
+        { token: "constant", foreground: "4FC1FF" },
+        { token: "regexp", foreground: "D16969" },
+      ],
+      colors: {
+        "editor.background": "#0a0a0b",
+        "editor.foreground": "#d4d4d4",
+        "editor.lineHighlightBackground": "#ffffff08",
+        "editor.selectionBackground": "#264f78",
+        "editor.inactiveSelectionBackground": "#3a3d41",
+        "editorCursor.foreground": "#569CD6",
+        "editorLineNumber.foreground": "#858585",
+        "editorLineNumber.activeForeground": "#c6c6c6",
+        "editor.selectionHighlightBackground": "#add6ff26",
+        "editor.wordHighlightBackground": "#49483E",
+        "editor.wordHighlightStrongBackground": "#49483E",
+        "editorBracketMatch.background": "#0d3a58",
+        "editorBracketMatch.border": "#569cd6",
+        "editorGutter.background": "#0c0c0d",
+        "editorRuler.foreground": "#ffffff0d",
+        "editorWidget.background": "#0c0c0d",
+        "editorWidget.border": "#ffffff12",
+        "input.background": "#0a0a0b",
+        "input.border": "#ffffff12",
+        "input.foreground": "#d4d4d4",
+        "list.activeSelectionBackground": "#094771",
+        "list.hoverBackground": "#2a2d2e",
+        "scrollbar.shadow": "#00000000",
+        "scrollbarSlider.background": "#ffffff20",
+        "scrollbarSlider.hoverBackground": "#ffffff30",
+        "scrollbarSlider.activeBackground": "#ffffff40",
+        "minimap.background": "#0a0a0b",
+      },
+    })
+    const ed = monaco.editor
+    ed.setTheme("agentic-dark")
+
+    // Keyboard shortcuts
+    editor.addAction({
+      id: "save-file",
+      label: "Save File",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
+      run: () => { handleSave() },
+    })
+
+    editor.addAction({
+      id: "toggle-minimap",
+      label: "Toggle Minimap",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyM],
+      run: () => { setShowMinimap((p) => !p) },
+    })
+  }, [])
+
+  // ── Update editor options when settings change ──
+  useEffect(() => {
+    const ed = editorRef.current
+    if (!ed) return
+    ed.updateOptions({
+      wordWrap: wordWrap ? "on" : "off",
+      fontSize,
+      minimap: { enabled: showMinimap },
+    })
+  }, [wordWrap, fontSize, showMinimap])
+
+  // ── Save handler ──
+  async function handleSave() {
+    const state = useWorkspaceStore.getState()
+    const currentFile = state.openFiles.find((f) => f.path === state.activeFilePath)
+    if (!currentFile) return
+
+    pulse("medium")
+
+    const result = await saveFile(currentFile.path, currentFile.name, currentFile.content, state.rootPath ?? undefined)
+
+    if (result.success) {
+      markFileDirty(currentFile.path, false)
+      if (result.method !== "error") {
+        setSaveMethod(result.method)
+      }
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } else {
+      notify(`Save failed: ${result.error ?? "Unknown error"}`, "error", "error")
+    }
+  }
+
+  // ── Download as file (explicit export) ──
+  async function handleDownload() {
+    if (!activeFile) return
+    pulse("light")
+    const result = await saveFile(activeFile.path, activeFile.name, activeFile.content, undefined)
+    if (result.success) {
+      notify(`Downloaded ${activeFile.name}`, "success", "success")
+    }
+  }
+
+  // ── Content change handler ──
+  const handleContentChange: OnChange = useCallback((value) => {
+    if (!activeFile || value === undefined) return
+    const current = useWorkspaceStore.getState().openFiles.find((f) => f.path === activeFile.path)
+    if (current && current.content !== value) {
+      updateFileContent(activeFile.path, value)
+    }
+  }, [activeFile, updateFileContent])
+
+  // ── Toggle AI context ──
+  function toggleAiContext() {
+    if (!activeFile) return
+    pulse("selection")
+    if (isInAiContext) {
+      removeAiContextFile(activeFile.path)
+    } else {
+      addAiContextFile(activeFile.path, activeFile.name, 100)
+    }
+  }
+
+  // ── Accept/reject AI changes ──
+  function acceptAiChange(change: AIChange) {
+    updateFileContent(change.filePath, change.newContent)
+    setAiChanges((prev) => prev.filter((c) => c.filePath !== change.filePath))
+    setShowAiOverlay(false)
+    pulse("success")
+    notify("AI change applied", "success", "success", 2000)
+  }
+
+  function rejectAiChange(change: AIChange) {
+    setAiChanges((prev) => prev.filter((c) => c.filePath !== change.filePath))
+    setShowAiOverlay(false)
+    pulse("light")
+  }
+
+  function timeoutAiChange(change: AIChange) {
+    setAiChanges((prev) => prev.filter((c) => c.filePath !== change.filePath))
+    setShowAiOverlay(false)
+  }
+
+  // ── Listen for AI-generated changes from the execution timeline ──
+  const activeFileRef = useRef(activeFile)
+  activeFileRef.current = activeFile
+  const aiChangeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    const scheduler = RenderScheduler.getInstance()
+    const unsub = useWorkspaceStore.subscribe((state) => {
+      const currentFile = activeFileRef.current
+      const lastFile = state.openFiles[state.openFiles.length - 1]
+      if (lastFile && lastFile.isDirty && currentFile?.path === lastFile.path) {
+        if (aiChangeDebounceRef.current) {
+          clearTimeout(aiChangeDebounceRef.current)
+        }
+        aiChangeDebounceRef.current = setTimeout(() => {
+          scheduler.schedule("ai-change-overlay", () => {
+            setAiChanges((prev) => {
+              if (prev.some((c) => c.filePath === lastFile.path)) return prev
+              return [...prev, {
+                filePath: lastFile.path,
+                originalContent: currentFile?.content || "",
+                newContent: lastFile.content,
+                applied: false,
+                rejected: false,
+              }]
+            })
+            setShowAiOverlay(true)
+            pulse("medium")
+          }, "low")
+        }, 300)
+      }
+    })
+    return () => {
+      unsub()
+      if (aiChangeDebounceRef.current) {
+        clearTimeout(aiChangeDebounceRef.current)
+      }
+    }
+  }, [])
+
+  const language = activeFile ? getMonacoLang(activeFile.name) : "plaintext"
+
+  // ── Empty state ──
+  if (!activeFile) {
+    return (
+      <PremiumEmptyState config={getCodeEmptyState(openFiles.length > 0)} />
+    )
+  }
+
+  const pendingChange = aiChanges.find((c) => c.filePath === activeFile.path && !c.applied && !c.rejected)
+
+  return (
+    <div className="flex h-full flex-col bg-[#0a0a0b] min-h-0">
+      {/* Editor Tabs */}
+      <EditorTabs
+        openFiles={openFiles}
+        activeFilePath={activeFilePath}
+        onOpen={openFileInStore}
+        onClose={closeFile}
+      />
+
+      {/* Editor toolbar */}
+      <div className="flex items-center justify-between border-b border-white/[0.04] bg-black/10 px-3 py-1 shrink-0">
+        <div className="flex items-center gap-2.5">
+          <span className="text-[10px] font-medium text-white/40 uppercase">{language}</span>
+          <span className="text-white/15 text-[8px]">|</span>
+          <span className="text-[10px] text-white/30">
+            Ln {editorRef.current?.getPosition()?.lineNumber || 1}, Col {editorRef.current?.getPosition()?.column || 1}
+          </span>
+          {isInAiContext && (
+            <Badge variant="info" size="sm">
+              <Brain className="h-2.5 w-2.5 mr-0.5" /> AI Context
+            </Badge>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <Tooltip content={isInAiContext ? "Remove from AI context" : "Add to AI context"}>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={toggleAiContext}
+              className={cn("rounded p-1 transition-all", isInAiContext ? "text-blue-400 bg-blue-500/10" : "text-white/30 hover:text-white/60")}
+            >
+              <Brain className="h-3 w-3" />
+            </motion.button>
+          </Tooltip>
+
+          <span className="text-white/10 text-[8px]">|</span>
+
+          <Tooltip content={showMinimap ? "Hide minimap" : "Show minimap"}>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => { pulse("click"); setShowMinimap(!showMinimap) }}
+              className={cn("rounded p-1 transition-colors", showMinimap ? "text-white/60" : "text-white/20 hover:text-white/40")}
+            >
+              <PanelRightClose className="h-3 w-3" />
+            </motion.button>
+          </Tooltip>
+
+          <Tooltip content={wordWrap ? "Disable word wrap" : "Enable word wrap"}>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => { pulse("click"); setWordWrap(!wordWrap) }}
+              className={cn("rounded p-1 transition-colors", wordWrap ? "text-white/60 bg-white/10" : "text-white/20 hover:text-white/40")}
+            >
+              <WrapText className="h-3 w-3" />
+            </motion.button>
+          </Tooltip>
+
+          <span className="text-white/10 text-[8px]">|</span>
+
+          <Tooltip content="Decrease font size">
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => { pulse("click"); setFontSize((s) => Math.max(10, s - 1)) }}
+              className="rounded p-1 text-white/20 hover:text-white/40"
+            >
+              <Minus className="h-3 w-3" />
+            </motion.button>
+          </Tooltip>
+          <motion.span
+            key={fontSize}
+            initial={{ y: -5, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            className="text-[10px] font-mono text-white/40 w-5 text-center select-none"
+          >
+            {fontSize}
+          </motion.span>
+          <Tooltip content="Increase font size">
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => { pulse("click"); setFontSize((s) => Math.min(24, s + 1)) }}
+              className="rounded p-1 text-white/20 hover:text-white/40"
+            >
+              <Plus className="h-3 w-3" />
+            </motion.button>
+          </Tooltip>
+
+          <span className="text-white/10 text-[8px]">|</span>
+
+          {/* Download as file (web fallback) */}
+          <Tooltip content="Download as file">
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={handleDownload}
+              className="rounded p-1 text-white/25 hover:text-cyan-400 transition-colors"
+            >
+              <FileDown className="h-3 w-3" />
+            </motion.button>
+          </Tooltip>
+
+          <Tooltip content="Save (⌘S)">
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={handleSave}
+              className="rounded p-1 text-white/30 hover:text-white/60"
+            >
+              <Save className="h-3 w-3" />
+            </motion.button>
+          </Tooltip>
+        </div>
+      </div>
+
+      {/* Editor */}
+      <div className="flex-1 relative overflow-hidden min-h-0">
+        <Editor
+          key="monaco-editor"
+          defaultLanguage={language}
+          language={language}
+          value={activeFile.content}
+          onChange={handleContentChange}
+          onMount={handleEditorMount}
+          options={{
+            ...EDITOR_OPTIONS,
+            wordWrap: wordWrap ? "on" : "off",
+            fontSize,
+            minimap: { enabled: showMinimap },
+            readOnly: false,
+          }}
+          theme="agentic-dark"
+          loading={
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="flex h-full items-center justify-center"
+            >
+              <div className="flex items-center gap-2 text-white/30">
+                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                <motion.span
+                  animate={{ opacity: [0.5, 1, 0.5] }}
+                  transition={{ duration: 2, repeat: Infinity }}
+                  className="text-[11px]"
+                >
+                  Loading editor...
+                </motion.span>
+              </div>
+            </motion.div>
+          }
+        />
+
+        <AnimatePresence>
+          {showAiOverlay && pendingChange && (
+            <AiChangeOverlay
+              change={pendingChange}
+              onAccept={() => acceptAiChange(pendingChange)}
+              onReject={() => rejectAiChange(pendingChange)}
+              onTimeout={() => timeoutAiChange(pendingChange)}
+            />
+          )}
+        </AnimatePresence>
+
+        {isInAiContext && !showAiOverlay && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="absolute top-2 right-2"
+          >
+            <div className="flex items-center gap-1.5 rounded-full bg-blue-500/15 border border-blue-500/25 px-2.5 py-1 text-[9px] text-blue-400">
+              <Sparkles className="h-2.5 w-2.5" />
+              AI Aware
+            </div>
+          </motion.div>
+        )}
+
+        <AnimatePresence>
+          {saved && (
+            <motion.div
+              initial={{ opacity: 0, y: 10, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -10, scale: 0.9 }}
+              transition={{ type: "spring", stiffness: 400, damping: 25 }}
+              className="absolute bottom-3 right-3 flex items-center gap-1.5 rounded-full bg-green-500/20 border border-green-500/30 px-3 py-1.5 text-[10px] text-green-400 shadow-lg"
+            >
+              <Check className="h-3 w-3" />
+              <span>Saved</span>
+              {saveMethod === "download" && (
+                <motion.span
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="text-[8px] text-green-400/60 ml-1"
+                >
+                  (downloaded)
+                </motion.span>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  )
+}

@@ -1,0 +1,19 @@
+{
+  "name": "@agentic-os/providers",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "tsc --build --clean"
+  },
+  "dependencies": {
+    "@agentic-os/shared": "*",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "@agentic-os/backend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@agentic-os/shared": "*",
+    "@agentic-os/providers": "*"
+  }
+}

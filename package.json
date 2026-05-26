@@ -1,0 +1,36 @@
+{
+  "name": "agentic-os-studio",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w apps/web",
+    "dev:desktop": "npm run dev -w apps/desktop",
+    "dev:web": "npm run dev -w apps/web",
+    "build": "npm run build -w packages/shared && npm run build -w packages/providers && npm run build -w packages/ui && npm run build -w apps/web",
+    "build:desktop": "npm run build && npm run tauri build -w apps/desktop",
+    "build:web": "npm run build -w apps/web",
+    "package": "npm run build:desktop",
+    "release": "npm run build:desktop && npm run sign -w apps/desktop",
+    "tauri": "npm run tauri -w apps/desktop",
+    "lint": "eslint . --ext .ts,.tsx",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "npm run clean -w packages/shared && npm run clean -w packages/providers && npm run clean -w packages/ui"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^24.12.3",
+    "eslint": "^9.0.0",
+    "eslint-plugin-react-hooks": "^5.0.0",
+    "eslint-plugin-react-refresh": "^0.4.0",
+    "globals": "^16.0.0",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^4.1.7"
+  }
+}

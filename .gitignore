@@ -1,0 +1,21 @@
+node_modules/
+dist/
+target/
+.env
+.env.local
+*.log
+.DS_Store
+Thumbs.db
+
+# Build output
+apps/desktop/dist/
+apps/desktop/src-tauri/target/
+apps/web/dist/
+packages/*/dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+nul

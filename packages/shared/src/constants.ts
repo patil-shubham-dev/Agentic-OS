@@ -1,4 +1,4 @@
-export const APP_NAME = "Agentic-OS Studio"
+export const APP_NAME = "AgenticOS"
 export const APP_IDENTIFIER = "com.agenticos.studio"
 export const APP_VERSION = "1.0.0"
 

@@ -8,9 +8,7 @@ target/
 Thumbs.db
 
 # Build output
-apps/desktop/dist/
-apps/desktop/src-tauri/target/
-apps/web/dist/
+src-tauri/target/
 packages/*/dist/
 
 # IDE
@@ -19,3 +17,6 @@ packages/*/dist/
 *.swp
 *.swo
 nul
+
+# Tauri
+src-tauri/gen/schemas/

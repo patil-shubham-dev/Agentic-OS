@@ -202,6 +202,25 @@ function ToastProvider({ children }: ToastProviderProps) {
   )
 }
 
-export { ToastProvider, useToast, toast }
+// Backward-compatible Toasts component (simple renderer)
+function Toasts() {
+  const { toasts, dismiss } = useToast()
+  return (
+    <div className="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 max-w-sm">
+      <AnimatePresence mode="popLayout">
+        {toasts.map((t) => (
+          <ToastRoot
+            key={t.id}
+            toast={t}
+            variant={t.variant}
+            onDismiss={() => dismiss(t.id)}
+          />
+        ))}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+export { ToastProvider, useToast, toast, Toasts }
 export type { Toast, ToastVariant }
 export const __REACT_REFRESH_SKIP_REEXPORT__ = true

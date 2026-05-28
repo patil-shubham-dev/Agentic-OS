@@ -18,8 +18,8 @@
 import { useAppStore } from "@/stores/app-store"
 import { useWorkspaceRuntime } from "@/runtime/workspace-runtime"
 import { useWorkspaceStore } from "@/stores/workspace-store"
-import type { ChatMessage, ChatResponse, ToolDef, ToolCall } from "@/lib/ai-service"
-import { directChatCompletion, streamChatCompletion } from "@/lib/ai-service"
+import type { ChatMessage, ChatResponse, ToolDef, ToolCall } from "@agentic-os/providers"
+import { directChatCompletion, streamChatCompletion } from "@agentic-os/providers"
 import { trace } from "@/lib/execution-trace"
 import { EventBus } from "@/runtime/render-engine/event-bus"
 import { ToolExecutionSandbox } from "@/runtime/tools/ToolExecutionSandbox"
@@ -463,7 +463,7 @@ async function executeSubAgentTools(toolCalls: ToolCall[]): Promise<ChatMessage[
  */
 export interface StreamRoundResult {
   content: string
-  toolCalls?: import("@/lib/ai-service").ToolCall[]
+  toolCalls?: import("@agentic-os/providers").ToolCall[]
   finishReason?: string | null
 }
 
@@ -479,7 +479,7 @@ async function attemptStreamingRound(
   // Only attempt streaming if we can
   try {
     let streamedContent = ""
-    let pendingToolCalls: import("@/lib/ai-service").ToolCall[] = []
+    let pendingToolCalls: import("@agentic-os/providers").ToolCall[] = []
 
     return await new Promise((resolve, reject) => {
       streamChatCompletion(
@@ -495,7 +495,7 @@ async function attemptStreamingRound(
             streamedContent += token
           },
           onDone: (fullContent: string, _meta) => {
-            const meta = _meta as { toolCalls?: import("@/lib/ai-service").ToolCall[] } | undefined
+            const meta = _meta as { toolCalls?: import("@agentic-os/providers").ToolCall[] } | undefined
             const toolCalls = meta?.toolCalls ?? pendingToolCalls
             resolve({
               content: fullContent || streamedContent,

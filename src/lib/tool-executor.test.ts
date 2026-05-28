@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import type { ToolCall } from "@/lib/ai-service"
+import type { ToolCall } from "@agentic-os/providers"
 
 // Mock Tauri invoke — tool-executor tries dynamic import("@tauri-apps/api/core")
 // which fails in node, so every Tauri-invoked tool returns an error.
@@ -9,6 +9,8 @@ import type { ToolCall } from "@/lib/ai-service"
 import { useDesignStore } from "@/stores/design-store"
 import { useToastStore } from "@/stores/toast-store"
 import { useLedgerStore } from "@/stores/ledger-store"
+import { RuntimeCleanupManager } from "@/runtime/RuntimeCleanupManager"
+import { RuntimeOS } from "@/runtime/RuntimeOS"
 
 // Dynamic import of the module under test
 async function loadExecutor() {
@@ -28,7 +30,15 @@ function makeToolCall(overrides: Partial<ToolCall> = {}): ToolCall {
 }
 
 describe("tool-executor", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    // Reset RuntimeOS singleton so each test starts cleanly, preventing
+    // cross-test contamination from full-suite runs where a prior test
+    // may have initialized RuntimeOS with registered tools. Without this,
+    // executeToolCall() routes through the live RuntimeOS pipeline instead
+    // of the fallback dispatch, causing hangs/timeouts in Node.js.
+    await RuntimeOS.destroy().catch(() => {/* no-op */})
+    RuntimeCleanupManager.getInstance().reset()
+
     useDesignStore.setState({
       artifacts: [],
       currentArtifactId: null,
@@ -37,6 +47,7 @@ describe("tool-executor", () => {
     useToastStore.setState({ toasts: [] })
     useLedgerStore.setState({ entries: [] })
   })
+
 
   describe("unknown / default tool", () => {
     it("returns error message for unknown tool name", async () => {

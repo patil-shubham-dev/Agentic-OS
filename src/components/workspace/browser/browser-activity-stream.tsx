@@ -3,8 +3,8 @@ import { cn } from "@/lib/utils"
 import type { BrowserAutomationStep } from "./browser-automation"
 import {
   Globe, MousePointer, Type, Camera, Terminal, Loader2,
-  CheckCircle2, XCircle, AlertCircle, ExternalLink,
-  Eye, Sparkles, Clock, Play,
+  CheckCircle2, XCircle, ExternalLink, Clock,
+  Sparkles,
 } from "lucide-react"
 
 const ACTION_ICONS: Record<BrowserAutomationStep["action"], typeof Globe> = {

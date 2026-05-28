@@ -66,6 +66,21 @@ export type ContextAssemblyInput = {
   memorySummary?: string
   environmentInfo?: Record<string, string>
   executionMode?: string
+
+  // ── Workspace context (read from workspace-store at call time) ──
+  activeFilePath?: string
+  activeFileName?: string
+  activeFileLanguage?: string
+  activeFileLines?: number
+  openFiles?: { path: string; name: string; isDirty: boolean; language: string }[]
+  selectedText?: string
+  cursorLine?: number
+  cursorColumn?: number
+  visibleRangeStart?: number
+  visibleRangeEnd?: number
+  unsavedChanges?: number
+  recentEdits?: { path: string; timestamp: number }[]
+  fileTreeSummary?: string
 }
 
 export type ContextAssemblyResult = {

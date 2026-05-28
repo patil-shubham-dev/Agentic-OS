@@ -1,11 +1,11 @@
 import { useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
+import { Button } from "@agentic-os/ui"
+import { Card, CardContent } from "@agentic-os/ui"
 import { useAppStore } from "@/stores/app-store"
 import { useWorkspaceStore } from "@/stores/workspace-store"
 import {
-  Rocket, FolderOpen, Cpu, Wifi, CheckCircle2,
+  Rocket, FolderOpen, Cpu, CheckCircle2,
   ArrowRight, ArrowLeft, Loader2, Sparkles, Server, AppWindow,
   AlertTriangle,
 } from "lucide-react"

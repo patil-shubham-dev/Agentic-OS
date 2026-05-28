@@ -118,6 +118,17 @@ export interface ExecutionErrorEvent {
   timestamp: number
 }
 
+export type StepCardStatus = "running" | "complete" | "error" | "waiting"
+
+export interface ToolCallRecord {
+  id: string
+  name: string
+  args: string
+  result?: string
+  status: "pending" | "running" | "complete" | "error"
+  durationMs?: number
+}
+
 export type TimelineEvent =
   | UserMessageEvent
   | ManagerRoutingEvent

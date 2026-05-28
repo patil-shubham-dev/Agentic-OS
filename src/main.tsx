@@ -8,10 +8,13 @@ import { persistLedger } from './lib/ledger'
 import { useLedgerStore } from './stores/ledger-store'
 import { useAppStore } from './stores/app-store'
 import { useWorkspaceRuntime } from './runtime/workspace-runtime'
+import { useTimelineStore } from './components/workspace/timeline/timeline-store'
 import { cancelPendingRefresh } from './runtime/runtime-coordinator'
 import { bootRuntime, shutdownRuntime, getKernel } from './core/kernel/startup'
 import { isInSafeMode } from './core/crash-handling/safe-mode'
 import { PrefetchScheduler } from './runtime/prefetch/prefetch-scheduler'
+import { RuntimeCleanupManager } from './runtime/RuntimeCleanupManager'
+import { tauriFetch } from '@agentic-os/providers/http-client'
 import './index.css'
 
 window.addEventListener('error', (e) => {
@@ -89,7 +92,7 @@ function Root() {
               priority: "low",
               label: `Warm provider ${p.name}`,
               execute: async () => {
-                await fetch(warmUrl, {
+                await tauriFetch(warmUrl, {
                   method: 'GET',
                   headers: { Authorization: `Bearer ${p.apiKey}` },
                   signal: AbortSignal.timeout(4000),
@@ -128,6 +131,12 @@ function Root() {
       for (const unsub of unsubs) unsub()
       cancelPersist()
       cancelPendingRefresh()
+      // Clear volatile UI state (timeline/streams — ensures fresh chat on next launch)
+      useTimelineStore.getState().clear()
+      // Graceful shutdown: clean all runtime resources (streams, tasks, sessions, event listeners)
+      RuntimeCleanupManager.getInstance().shutdown().catch((err) => {
+        console.error('[Cleanup] Shutdown error:', err)
+      })
       shutdownRuntime()
     }
   }, [])

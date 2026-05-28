@@ -2,7 +2,7 @@ import { useState, useRef, useCallback } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
 import { cn } from "@/lib/utils"
-import { Tooltip } from "@/components/ui/tooltip"
+import { TooltipSimple as Tooltip } from "@agentic-os/ui"
 import {
   LayoutDashboard,
   Code2,

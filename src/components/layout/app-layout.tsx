@@ -1,6 +1,6 @@
 import { Outlet } from "react-router-dom"
 import { NavigationRail } from "./navigation-rail"
-import { Toasts } from "@/components/ui/toast"
+import { Toasts } from "@agentic-os/ui"
 import { useApprovalStore } from "../../runtime/approval-gate"
 import { useAgentStore } from "../../stores/agent-store"
 import { agentExecutionService } from "../../runtime/AgentExecutionService"

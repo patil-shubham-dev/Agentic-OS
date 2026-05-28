@@ -55,19 +55,20 @@ export const KNOWN_PROVIDER_LIMITS: Record<string, ProviderModelCapability> = {
   "gemini-1.5-flash": { maxContext: 1048576, maxOutput: 8192, supportsStreaming: true },
 }
 
-// ── Context Window Resolution (backed by ContextWindowResolver) ──
+// ── Context Window Resolution ──
 
-let _resolver: import("@/runtime/context/ContextWindowResolver").ContextWindowResolver | null = null
+import { ContextWindowResolver } from "@/runtime/context/ContextWindowResolver"
 
-function getResolver(): import("@/runtime/context/ContextWindowResolver").ContextWindowResolver {
+let _resolver: ContextWindowResolver | null = null
+
+function getResolver(): ContextWindowResolver {
   if (!_resolver) {
-    const { ContextWindowResolver } = require("@/runtime/context/ContextWindowResolver") as typeof import("@/runtime/context/ContextWindowResolver")
     _resolver = new ContextWindowResolver()
   }
   return _resolver
 }
 
-export function setTokenResolver(resolver: import("@/runtime/context/ContextWindowResolver").ContextWindowResolver): void {
+export function setTokenResolver(resolver: ContextWindowResolver): void {
   _resolver = resolver
 }
 

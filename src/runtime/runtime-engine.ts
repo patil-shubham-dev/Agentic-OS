@@ -1,6 +1,7 @@
 import { useAppStore } from "@/stores/app-store"
 import type { GatewayProvider, AgentRoleConfig, RuntimeRole } from "@/types"
 import { normalizeRole } from "@/lib/role-identity"
+import { getGatewayProviderHealth } from "@agentic-os/providers"
 
 export type RuntimeStatus = "uninitialized" | "initializing" | "ready" | "error"
 
@@ -58,6 +59,7 @@ function warn(...args: unknown[]) {
 function computeGraphRaw(
   providers: GatewayProvider[],
   roleConfigs: AgentRoleConfig[],
+  providerHealth?: Map<string, { lastSuccess: number; lastFailure: number; avgLatencyMs: number; samples: number; streamingSupported: boolean | null }>,
 ): RuntimeGraph {
   const wiredAgents: WiredAgent[] = []
   const diagnostics: WiringDiagnostic[] = []
@@ -152,7 +154,36 @@ function computeGraphRaw(
 
   const wiredRuntimeRoles = new Set(wiredAgents.map((a) => a.runtimeRole))
   const mandatoryWired = Array.from(MANDATORY_ROLES).every((r) => wiredRuntimeRoles.has(r as RuntimeRole))
-  const health: RuntimeHealth = mandatoryWired ? "healthy" : wiredRoles > 0 ? "degraded" : "unhealthy"
+
+  // Determine actual health by checking provider connectivity
+  let health: RuntimeHealth = "unhealthy"
+  if (wiredRoles > 0) {
+    const providersUsed = new Set(wiredAgents.map((a) => a.providerId))
+    const providerHealthMap = new Map<string, boolean>()
+
+    for (const p of providers) {
+      const healthEntry = providerHealth?.get(p.baseUrl) ?? null
+      const hasRecentSuccess = healthEntry !== null && healthEntry.lastSuccess > 0
+      const hasRecentFailure = healthEntry !== null && healthEntry.lastFailure > healthEntry.lastSuccess
+      const hasValidated = healthEntry !== null && healthEntry.samples > 0
+      const isHealthy = hasValidated
+        ? hasRecentSuccess && !hasRecentFailure
+        : p.apiKey.length > 0 // no health data yet — assume possible
+      providerHealthMap.set(p.id, isHealthy)
+    }
+
+    // All wired providers must be healthy for overall health
+    const allProvidersHealthy = Array.from(providersUsed).every((id) => providerHealthMap.get(id) !== false)
+    const someProvidersHealthy = Array.from(providersUsed).some((id) => providerHealthMap.get(id) === true)
+
+    if (mandatoryWired && allProvidersHealthy) {
+      health = "healthy"
+    } else if (mandatoryWired && someProvidersHealthy) {
+      health = "degraded"
+    } else if (wiredRoles > 0) {
+      health = "degraded"
+    }
+  }
 
   return {
     wiredAgents,
@@ -179,7 +210,13 @@ function getAppRoleConfigs(): AgentRoleConfig[] {
 export function computeGraph(): RuntimeGraph {
   const providers = getAppProviders()
   const roleConfigs = getAppRoleConfigs()
-  return computeGraphRaw(providers, roleConfigs)
+  // Build health map from provider-gateway cache for real connectivity status
+  const healthMap = new Map<string, { lastSuccess: number; lastFailure: number; avgLatencyMs: number; samples: number; streamingSupported: boolean | null }>()
+  for (const p of providers) {
+    const h = getGatewayProviderHealth(p.baseUrl)
+    if (h) healthMap.set(p.baseUrl, h)
+  }
+  return computeGraphRaw(providers, roleConfigs, healthMap)
 }
 
 export function computeGraphWithLogging(): RuntimeGraph {

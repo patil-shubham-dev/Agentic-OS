@@ -3,8 +3,7 @@ import { motion, AnimatePresence } from "framer-motion"
 import { useWorkspaceStore } from "@/stores/workspace-store"
 import type { OpenFile } from "@/types"
 import { cn } from "@/lib/utils"
-import { Badge } from "@/components/ui/badge"
-import { Tooltip } from "@/components/ui/tooltip"
+import { Badge, TooltipSimple as Tooltip } from "@agentic-os/ui"
 import { WrapText, Minus, Plus, X, FileCode, Sparkles, Brain, Check } from "lucide-react"
 
 const EXT_LANG_MAP: Record<string, string> = {

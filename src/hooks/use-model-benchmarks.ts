@@ -2,8 +2,7 @@ import { useState, useCallback, useEffect } from "react"
 import { RuntimeTelemetryEngine } from "@/runtime/observability/RuntimeTelemetryEngine"
 import { ProviderInspector } from "@/runtime/observability/ProviderInspector"
 import type { ProviderHealthCheck } from "@/runtime/observability/ObservabilityTypes"
-import { getAllProviderHealth } from "@/lib/provider-health"
-import { getProviderHealth as getGatewayHealth } from "@/lib/provider-gateway"
+import { getAllProviderCache, getGatewayProviderHealth } from "@agentic-os/providers"
 import type { GatewayProvider } from "@/types"
 
 // ── Types ──
@@ -40,7 +39,7 @@ export interface BenchmarkSnapshot {
 function collectBenchmarks(providers: GatewayProvider[]): BenchmarkSnapshot {
   const telemetry = RuntimeTelemetryEngine.getInstance()
   const inspector = ProviderInspector.getInstance()
-  const libHealth = getAllProviderHealth()
+  const libHealth = getAllProviderCache()
   const globalMetrics = telemetry.getMetrics()
 
   const snapshot: BenchmarkSnapshot = {}
@@ -50,7 +49,7 @@ function collectBenchmarks(providers: GatewayProvider[]): BenchmarkSnapshot {
       | ProviderHealthCheck
       | undefined
 
-    const gwHealth = getGatewayHealth(provider.baseUrl)
+    const gwHealth = getGatewayProviderHealth(provider.baseUrl)
     const libHealthEntry = libHealth[provider.baseUrl]
 
     // First-token samples from lib health (per-endpoint)

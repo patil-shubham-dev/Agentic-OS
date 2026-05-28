@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
+import { Card, CardHeader, CardTitle, CardContent } from "@agentic-os/ui"
 import { Smartphone, Globe, Cloud, Bell, Shield, ArrowRight, QrCode, Radio } from "lucide-react"
 import { cn } from "@/lib/utils"
 

@@ -50,6 +50,10 @@ async function* walkDirectory(dir: FileSystemDirectoryHandle, parentPath: string
       }
       yield { name, path: entryPath, is_dir: true, children }
     } else {
+      // Note: File metadata (size, lastModified) is not available in web mode
+      // without calling getFile(), which reads the entire file content into memory.
+      // To avoid performance issues with large projects, web mode skips metadata.
+      // Metadata is available when using the Tauri backend.
       yield { name, path: entryPath, is_dir: false, children: [] }
     }
   }

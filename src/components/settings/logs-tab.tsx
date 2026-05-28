@@ -1,8 +1,7 @@
 import { useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { cn } from "@/lib/utils"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Badge, Button } from "@agentic-os/ui"
 import type { LogEntry, UsageStats } from "@/types"
 import {
   BarChart3, Search, Download, Layers,

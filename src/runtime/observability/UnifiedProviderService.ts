@@ -4,9 +4,8 @@ import { ProviderRegistry } from "@/runtime/ProviderRegistry"
 import type { ProviderInstance } from "@/runtime/ProviderInstance"
 import { ProviderInspector } from "./ProviderInspector"
 import type { ProviderHealthCheck } from "./ObservabilityTypes"
-import { getAllProviderHealth as getLibHealth } from "@/lib/provider-health"
-import { getAllPresets } from "@/lib/provider-registry"
-import type { ProviderPreset } from "@/lib/provider-registry"
+import { getAllProviderCache as getLibHealth, getAllPresets } from "@agentic-os/providers"
+import type { ProviderPreset } from "@agentic-os/providers"
 import type { ModelInfo } from "@/providers/BaseProviderAdapter"
 import type { RoleAssignment } from "@/runtime/ProviderInstance"
 import { TracePipeline } from "../telemetry/TracePipeline"
@@ -267,15 +266,15 @@ export class UnifiedProviderService {
           baseUrl,
           isLocal: baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1"),
           isOpenAiCompatible: true,
-          healthy: stats.consecutiveTimeouts < 3,
-          latencyMs: stats.lastFirstTokenMs,
+          healthy: stats.lastSuccess > stats.lastFailure,
+          latencyMs: stats.avgLatencyMs,
           models: [],
           capabilities: null,
           health: null,
-          lastChecked: stats.lastStreamingSuccess || stats.lastStreamingFailure,
+          lastChecked: stats.lastStreamingSuccess || stats.lastFailure,
           lastError: null,
           samples: stats.totalRequests,
-          failures: stats.streamingFailures,
+          failures: stats.samples - (stats.lastSuccess > 0 ? 1 : 0),
         })
       }
     }

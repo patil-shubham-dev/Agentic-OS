@@ -4,6 +4,8 @@ import { useAppStore } from "@/stores/app-store"
 import { validateRegistryIntegrity, printRuntimeDiagnostics } from "@/runtime/runtime-role-registry"
 import { detectSafeMode, isInSafeMode } from "@/core/crash-handling/safe-mode"
 import { RuntimeOS } from "@/runtime/RuntimeOS"
+import { RuntimeCleanupManager } from "@/runtime/RuntimeCleanupManager"
+import { useTimelineStore } from "@/components/workspace/timeline/timeline-store"
 import type { MCPClientConfig } from "@/runtime/mcp/MCPClient"
 import type { BootReport } from "./types"
 
@@ -72,6 +74,11 @@ export async function bootRuntime(): Promise<BootReport> {
   const runtimeOS = RuntimeOS.getInstance()
   await runtimeOS.initialize(mcpServers.length > 0 ? mcpServers : undefined)
 
+  // Phase 5: reset volatile UI state for a fresh chat experience
+  // On app restart, we clear the timeline so the user sees an empty conversation
+  // (like Cursor / Claude Code Desktop). Old sessions are preserved in History.
+  useTimelineStore.getState().clear()
+
   return report
 }
 
@@ -79,4 +86,6 @@ export async function shutdownRuntime(): Promise<void> {
   const kernel = getKernel()
   await RuntimeOS.destroy()
   await kernel.shutdown()
+  // Reset cleanup manager for fresh start on next boot
+  RuntimeCleanupManager.getInstance().reset()
 }

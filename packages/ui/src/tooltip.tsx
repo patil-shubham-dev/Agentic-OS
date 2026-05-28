@@ -24,4 +24,26 @@ const TooltipContent = React.forwardRef<
 ))
 TooltipContent.displayName = TooltipPrimitive.Content.displayName
 
-export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider }
+// Backward-compatible simple Tooltip wrapper
+interface TooltipSimpleProps {
+  content: string
+  children: React.ReactNode
+  side?: "top" | "bottom" | "left" | "right"
+  delay?: number
+  className?: string
+}
+
+function TooltipSimple({ content, children, side = "top", delay = 300, className }: TooltipSimpleProps) {
+  return (
+    <TooltipProvider delayDuration={delay}>
+      <Tooltip>
+        <TooltipTrigger asChild>{children}</TooltipTrigger>
+        <TooltipContent side={side} className={className}>
+          {content}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
+export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider, TooltipSimple }

@@ -19,7 +19,6 @@ import type {
   ExecutionErrorEvent,
   ExecutionHaltedEvent,
 } from "@/runtime/RuntimeTypes"
-import { compareTimelineEvents } from "@/runtime/RuntimeTypes"
 
 const MAX_PROJECTED_EVENTS = 1000
 

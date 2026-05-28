@@ -1,12 +1,7 @@
 import { useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { cn } from "@/lib/utils"
-import { Badge } from "@/components/ui/badge"
-import { Separator } from "@/components/ui/separator"
-import { Switch } from "@/components/ui/switch"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { Badge, Separator, Switch, Button, Input, Label } from "@agentic-os/ui"
 import { useAppStore } from "@/stores/app-store"
 import type { ToolConfig, MCPConfig } from "@/types"
 import {
@@ -173,7 +168,7 @@ export function ToolsTab() {
                     ))}
                   </div>
                 </div>
-                <Switch checked={tool.enabled} onCheckedChange={() => toggleTool(tool.id)} size="md" />
+                <Switch checked={tool.enabled} onCheckedChange={() => toggleTool(tool.id)} size="default" />
               </motion.div>
             ))}
           </AnimatePresence>
@@ -206,7 +201,7 @@ export function ToolsTab() {
                     </div>
                     <p className="text-xs text-white/30 font-mono mt-0.5">{mcp.command} {mcp.args.join(" ")}</p>
                   </div>
-                  <Switch checked={mcp.enabled} onCheckedChange={() => toggleMcpServer(mcp.id)} size="md" />
+                  <Switch checked={mcp.enabled} onCheckedChange={() => toggleMcpServer(mcp.id)} size="default" />
                 </div>
 
                 <AnimatePresence>

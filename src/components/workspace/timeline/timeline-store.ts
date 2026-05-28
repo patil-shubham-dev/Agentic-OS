@@ -16,56 +16,16 @@ import type {
 import type { ToolCallRecord, FileEditRecord, TerminalRecord } from "./step-card"
 
 const MAX_EVENTS = 500
-const STORAGE_KEY = "agentic-timeline-state"
 
-interface PersistedState {
-  events: TimelineEvent[]
-  sessions: [string, AgentSession][]
-  sessionOrder: string[]
-  sessionCreatedAtEventCount: number[]
-  timestamp: number
-}
-
-function persistToStorage(state: TimelineState): void {
-  try {
-    const payload: PersistedState = {
-      events: state.events,
-      sessions: Array.from(state.agentSessions.entries()),
-      sessionOrder: state.sessionOrder,
-      sessionCreatedAtEventCount: state.sessionCreatedAtEventCount,
-      timestamp: Date.now(),
-    }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
-  } catch {
-    // Storage full or unavailable — silently skip
-  }
-}
-
-function restoreFromStorage(): Partial<TimelineState> | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return null
-    const parsed: PersistedState = JSON.parse(raw)
-    if (!parsed.events || !parsed.sessions) return null
-    const MAX_AGE = 24 * 60 * 60 * 1000 // 24 hours
-    if (Date.now() - parsed.timestamp > MAX_AGE) {
-      localStorage.removeItem(STORAGE_KEY)
-      return null
-    }
-    return {
-      events: parsed.events,
-      agentSessions: new Map(parsed.sessions),
-      sessionOrder: parsed.sessionOrder,
-      sessionCreatedAtEventCount: parsed.sessionCreatedAtEventCount,
-    }
-  } catch {
-    return null
-  }
-}
-
+/**
+ * Timeline state is VOLATILE UI state that does NOT survive restarts.
+ * Old sessions are archived to SessionHistoryStore on shutdown.
+ * We intentionally never persist timeline to localStorage so users
+ * always see a fresh Cursor/Claude-Code-style conversation on launch.
+ */
 function clearStorage(): void {
   try {
-    localStorage.removeItem(STORAGE_KEY)
+    localStorage.removeItem("agentic-timeline-state")
   } catch {}
 }
 
@@ -112,6 +72,7 @@ interface TimelineState {
     filesEdited: number
     commandsRun: number
     browserActions: number
+    toolCalls: number
     agentsUsed: string[]
     totalDurationMs: number
   }
@@ -123,27 +84,25 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-let persistTimer: ReturnType<typeof setTimeout> | null = null
 
-function schedulePersist(state: TimelineState): void {
-  if (persistTimer) clearTimeout(persistTimer)
-  persistTimer = setTimeout(() => persistToStorage(state), 500)
-}
 
-const restored = restoreFromStorage()
-
+/**
+ * NOTE: Timeline state is VOLATILE UI state — it does NOT survive app restarts.
+ * Old sessions are archived to SessionHistoryStore on shutdown/close.
+ * We intentionally start with empty state on every app launch so the user
+ * sees a fresh Cursor/Claude-Code-style conversation.
+ */
 export const useTimelineStore = create<TimelineState>((set, get) => ({
-  events: restored?.events ?? [],
-  agentSessions: restored?.agentSessions ?? new Map(),
-  sessionOrder: restored?.sessionOrder ?? [],
-  sessionCreatedAtEventCount: restored?.sessionCreatedAtEventCount ?? [],
+  events: [],
+  agentSessions: new Map(),
+  sessionOrder: [],
+  sessionCreatedAtEventCount: [],
   collapsedSections: new Set(),
 
   addEvent: (event) => {
     set((s) => ({
       events: [...s.events, event].slice(-MAX_EVENTS),
     }))
-    schedulePersist(get())
   },
 
   updateEvent: (id, updates) => {
@@ -152,7 +111,6 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
         (e as any).id === id ? ({ ...e, ...updates } as TimelineEvent) : e
       ),
     }))
-    schedulePersist(get())
   },
 
   clear: () => {
@@ -176,7 +134,6 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
         sessionCreatedAtEventCount: [...s.sessionCreatedAtEventCount, s.events.length],
       }
     })
-    schedulePersist(get())
   },
 
   updateAgentSession: (stepId, updates) => {
@@ -188,7 +145,6 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
       }
       return { agentSessions: next }
     })
-    schedulePersist(get())
   },
 
   appendAgentStreamText: (stepId, text) => {
@@ -200,7 +156,6 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
       }
       return { agentSessions: next }
     })
-    schedulePersist(get())
   },
 
   addToolCallToAgent: (stepId, toolCall) => {
@@ -215,7 +170,6 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
       }
       return { agentSessions: next }
     })
-    schedulePersist(get())
   },
 
   updateToolCall: (stepId, toolId, updates) => {
@@ -232,7 +186,6 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
       }
       return { agentSessions: next }
     })
-    schedulePersist(get())
   },
 
   addFileEditToAgent: (stepId, fileEdit) => {
@@ -247,7 +200,6 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
       }
       return { agentSessions: next }
     })
-    schedulePersist(get())
   },
 
   addTerminalToAgent: (stepId, terminal) => {
@@ -262,7 +214,6 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
       }
       return { agentSessions: next }
     })
-    schedulePersist(get())
   },
 
   toggleCollapse: (id) =>

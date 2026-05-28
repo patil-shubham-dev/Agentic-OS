@@ -161,6 +161,9 @@ struct FileEntry {
     name: String,
     path: String,
     is_dir: bool,
+    size: Option<u64>,
+    #[serde(rename = "lastModified")]
+    last_modified: Option<u64>,
     children: Vec<FileEntry>,
 }
 
@@ -178,7 +181,16 @@ fn list_directory(path: String) -> Result<Vec<FileEntry>, String> {
                 .to_string_lossy()
                 .to_string();
             let full_path = entry.path();
-            let is_dir = entry.file_type().map_err(|e| format!("Failed to get file type: {}", e))?.is_dir();
+
+            // Get metadata once — provides file_type, size, and modified time
+            let metadata = entry.metadata().map_err(|e| format!("Failed to read metadata: {}", e))?;
+            let is_dir = metadata.is_dir();
+            let size = if metadata.is_file() { Some(metadata.len()) } else { None };
+            let last_modified = metadata.modified().ok().map(|t| {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64
+            });
 
             let relative_path = full_path
                 .strip_prefix(root_path)
@@ -197,6 +209,8 @@ fn list_directory(path: String) -> Result<Vec<FileEntry>, String> {
                 name,
                 path: relative_path,
                 is_dir,
+                size,
+                last_modified,
                 children,
             });
         }
@@ -228,6 +242,7 @@ pub fn run() {
     let initial_path: Option<String> = std::env::args().nth(1);
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())

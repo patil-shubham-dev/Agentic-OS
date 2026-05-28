@@ -5,16 +5,17 @@ import type { editor } from "monaco-editor"
 import { useWorkspaceStore } from "@/stores/workspace-store"
 import type { OpenFile } from "@/types"
 import { cn } from "@/lib/utils"
-import { Badge } from "@/components/ui/badge"
-import { Tooltip } from "@/components/ui/tooltip"
+import { Badge, TooltipSimple as Tooltip } from "@agentic-os/ui"
 import { PremiumEmptyState, getCodeEmptyState } from "./premium-empty-state"
-import { pickWorkspaceFolder, loadFileTree, startWatching } from "@/lib/workspace"
+
 import { RenderScheduler } from "@/runtime/render-engine/render-scheduler"
+import { requestRefresh } from "@/runtime/runtime-coordinator"
 import { useHaptic } from "@/lib/haptics"
+import { useLiveEditorStream } from "@/hooks/use-live-editor-stream"
 import {
   WrapText, Minus, Plus, X, FileCode,
   Sparkles, Brain, Check, Save,
-  PanelRightClose, Terminal, Download, FileDown,
+  PanelRightClose, FileDown, Pencil,
 } from "lucide-react"
 
 const EXT_LANG_MAP: Record<string, string> = {
@@ -81,9 +82,10 @@ interface AIChange {
 
 // ── Editor Tabs ──
 
-function EditorTabs({ openFiles, activeFilePath, onOpen, onClose }: {
+function EditorTabs({ openFiles, activeFilePath, liveEditingFile, onOpen, onClose }: {
   openFiles: OpenFile[]
   activeFilePath: string | null
+  liveEditingFile: string | null
   onOpen: (f: OpenFile) => void
   onClose: (path: string) => void
 }) {
@@ -107,12 +109,20 @@ function EditorTabs({ openFiles, activeFilePath, onOpen, onClose }: {
 
   return (
     <div ref={tabsRef} className="flex items-center border-b border-white/[0.04] bg-black/20 overflow-x-auto shrink-0 scrollbar-thin">
+      <style>{`
+        @keyframes streaming-border-pulse {
+          0%, 100% { border-left-color: rgba(34, 197, 94, 0); }
+          50% { border-left-color: rgba(34, 197, 94, 0.6); }
+        }
+      `}</style>
       {openFiles.map((file) => {
         const lang = getMonacoLang(file.name)
+        const isBeingStreamed = liveEditingFile === file.path
         return (
           <motion.div
             key={file.path}
             data-active={file.path === activeFilePath ? "true" : undefined}
+            data-streaming={isBeingStreamed ? "true" : undefined}
             onMouseDown={(e) => handleMiddleClick(e, file.path)}
             layout
             layoutId={file.path}
@@ -121,7 +131,8 @@ function EditorTabs({ openFiles, activeFilePath, onOpen, onClose }: {
               "group flex items-center gap-1.5 px-3 py-1.5 text-[11px] cursor-pointer border-r border-white/[0.03] transition-all select-none whitespace-nowrap",
               file.path === activeFilePath
                 ? "bg-white/[0.04] text-white shadow-[inset_0_-1.5px_0_0] shadow-blue-500"
-                : "text-white/40 hover:text-white/70 hover:bg-white/[0.02]"
+                : "text-white/40 hover:text-white/70 hover:bg-white/[0.02]",
+              isBeingStreamed && "border-l-2 border-l-transparent animate-[streaming-border-pulse_1.5s_ease-in-out_infinite]"
             )}
             onClick={() => onOpen(file)}
           >
@@ -279,6 +290,42 @@ async function saveFile(
   }
 }
 
+/** Format a number for display: 1234 → "1.2K", 12345 → "12.3K", 123 → "123" */
+function formatCount(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`
+  return String(n)
+}
+
+// ── Monaco model cache — reuses models across tab switches, avoids re-parsing ──
+const modelCache = new Map<string, { uri: string; content: string }>()
+let monacoInstance: any = null
+let languageRegistrationGuard = false
+
+// ── Editor view-state cache — preserves cursor/scroll per file across tab switches ──
+interface EditorViewState {
+  cursor: { lineNumber: number; column: number }
+  scrollTop: number
+  scrollLeft: number
+}
+const editorViewStateCache = new Map<string, EditorViewState>()
+
+function getOrCreateModel(monaco: any, filePath: string, content: string, language: string): any {
+  // Create a unique URI for each file so Monaco treats them as separate documents
+  const uri = monaco.Uri.parse(`file:///workspace/${filePath}`)
+  let model = monaco.editor.getModel(uri)
+  if (model) {
+    // Model exists — update content if changed
+    if (model.getValue() !== content) {
+      model.setValue(content)
+    }
+    return model
+  }
+  // Create new model and cache it
+  model = monaco.editor.createModel(content, language, uri)
+  modelCache.set(filePath, { uri: uri.toString(), content })
+  return model
+}
+
 // ── Main Component ──
 
 export function CodeWorkspace() {
@@ -295,6 +342,7 @@ export function CodeWorkspace() {
   const { pulse, notify } = useHaptic()
 
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
+  const monacoRef = useRef<any>(null)
   const [saved, setSaved] = useState(false)
   const [wordWrap, setWordWrap] = useState(false)
   const [fontSize, setFontSize] = useState(13)
@@ -303,60 +351,105 @@ export function CodeWorkspace() {
   const [showAiOverlay, setShowAiOverlay] = useState(false)
   const [saveMethod, setSaveMethod] = useState<"tauri" | "download" | null>(null)
 
+  // ── Live editor stream: AI-generated code streams directly into open tabs ──
+  const { liveStreamActive, liveEditingFile, streamProgress, sessionTokens, sessionChars } = useLiveEditorStream()
+
   const activeFile = openFiles.find((f) => f.path === activeFilePath)
   const isInAiContext = activeFile ? aiContextFiles.some((f) => f.path === activeFile.path) : false
+
+  // ── Workspace store cursor/selection sync ──
+  const setCursorPosition = useWorkspaceStore((s) => s.setCursorPosition)
+  const setSelectedText = useWorkspaceStore((s) => s.setSelectedText)
+  const setVisibleRange = useWorkspaceStore((s) => s.setVisibleRange)
+  const setUserActive = useWorkspaceStore((s) => s.setUserActive)
 
   // ── Monaco mount handler ──
   const handleEditorMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor
+    monacoRef.current = monaco
+    monacoInstance = monaco
 
-    // Configure dark theme
-    monaco.editor.defineTheme("agentic-dark", {
-      base: "vs-dark",
-      inherit: true,
-      rules: [
-        { token: "comment", foreground: "6A9955", fontStyle: "italic" },
-        { token: "keyword", foreground: "569CD6" },
-        { token: "string", foreground: "CE9178" },
-        { token: "number", foreground: "B5CEA8" },
-        { token: "type", foreground: "4EC9B0" },
-        { token: "function", foreground: "DCDCAA" },
-        { token: "variable", foreground: "9CDCFE" },
-        { token: "constant", foreground: "4FC1FF" },
-        { token: "regexp", foreground: "D16969" },
-      ],
-      colors: {
-        "editor.background": "#0a0a0b",
-        "editor.foreground": "#d4d4d4",
-        "editor.lineHighlightBackground": "#ffffff08",
-        "editor.selectionBackground": "#264f78",
-        "editor.inactiveSelectionBackground": "#3a3d41",
-        "editorCursor.foreground": "#569CD6",
-        "editorLineNumber.foreground": "#858585",
-        "editorLineNumber.activeForeground": "#c6c6c6",
-        "editor.selectionHighlightBackground": "#add6ff26",
-        "editor.wordHighlightBackground": "#49483E",
-        "editor.wordHighlightStrongBackground": "#49483E",
-        "editorBracketMatch.background": "#0d3a58",
-        "editorBracketMatch.border": "#569cd6",
-        "editorGutter.background": "#0c0c0d",
-        "editorRuler.foreground": "#ffffff0d",
-        "editorWidget.background": "#0c0c0d",
-        "editorWidget.border": "#ffffff12",
-        "input.background": "#0a0a0b",
-        "input.border": "#ffffff12",
-        "input.foreground": "#d4d4d4",
-        "list.activeSelectionBackground": "#094771",
-        "list.hoverBackground": "#2a2d2e",
-        "scrollbar.shadow": "#00000000",
-        "scrollbarSlider.background": "#ffffff20",
-        "scrollbarSlider.hoverBackground": "#ffffff30",
-        "scrollbarSlider.activeBackground": "#ffffff40",
-        "minimap.background": "#0a0a0b",
-      },
+    // Configure dark theme (once, skip if already registered)
+    const themeName = "agentic-dark"
+    if (!languageRegistrationGuard) {
+      languageRegistrationGuard = true
+      monaco.editor.defineTheme(themeName, {
+        base: "vs-dark",
+        inherit: true,
+        rules: [
+          { token: "comment", foreground: "6A9955", fontStyle: "italic" },
+          { token: "keyword", foreground: "569CD6" },
+          { token: "string", foreground: "CE9178" },
+          { token: "number", foreground: "B5CEA8" },
+          { token: "type", foreground: "4EC9B0" },
+          { token: "function", foreground: "DCDCAA" },
+          { token: "variable", foreground: "9CDCFE" },
+          { token: "constant", foreground: "4FC1FF" },
+          { token: "regexp", foreground: "D16969" },
+        ],
+        colors: {
+          "editor.background": "#0a0a0b",
+          "editor.foreground": "#d4d4d4",
+          "editor.lineHighlightBackground": "#ffffff08",
+          "editor.selectionBackground": "#264f78",
+          "editor.inactiveSelectionBackground": "#3a3d41",
+          "editorCursor.foreground": "#569CD6",
+          "editorLineNumber.foreground": "#858585",
+          "editorLineNumber.activeForeground": "#c6c6c6",
+          "editor.selectionHighlightBackground": "#add6ff26",
+          "editor.wordHighlightBackground": "#49483E",
+          "editor.wordHighlightStrongBackground": "#49483E",
+          "editorBracketMatch.background": "#0d3a58",
+          "editorBracketMatch.border": "#569cd6",
+          "editorGutter.background": "#0c0c0d",
+          "editorRuler.foreground": "#ffffff0d",
+          "editorWidget.background": "#0c0c0d",
+          "editorWidget.border": "#ffffff12",
+          "input.background": "#0a0a0b",
+          "input.border": "#ffffff12",
+          "input.foreground": "#d4d4d4",
+          "list.activeSelectionBackground": "#094771",
+          "list.hoverBackground": "#2a2d2e",
+          "scrollbar.shadow": "#00000000",
+          "scrollbarSlider.background": "#ffffff20",
+          "scrollbarSlider.hoverBackground": "#ffffff30",
+          "scrollbarSlider.activeBackground": "#ffffff40",
+          "minimap.background": "#0a0a0b",
+        },
+      })
+    }
+    monaco.editor.setTheme(themeName)
+
+    // ── Sync cursor position to workspace store ──
+    editor.onDidChangeCursorPosition((e) => {
+      setCursorPosition(e.position.lineNumber, e.position.column)
     })
-    const ed = monaco.editor
-    ed.setTheme("agentic-dark")
+
+    // ── Sync selection to workspace store ──
+    editor.onDidChangeCursorSelection((e) => {
+      const model = editor.getModel()
+      if (model) {
+        const selection = e.selection
+        const selected = model.getValueInRange(selection)
+        setSelectedText(selected)
+      }
+    })
+
+    // ── Sync visible range to workspace store ──
+    editor.onDidScrollChange(() => {
+      const visibleRange = editor.getVisibleRanges()
+      if (visibleRange.length > 0) {
+        setVisibleRange(visibleRange[0].startLineNumber, visibleRange[0].endLineNumber)
+      }
+    })
+
+    // ── Track user focus/activity ──
+    editor.onDidFocusEditorText(() => {
+      setUserActive(true)
+    })
+    editor.onDidBlurEditorText(() => {
+      setUserActive(false)
+    })
 
     // Keyboard shortcuts
     editor.addAction({
@@ -373,6 +466,42 @@ export function CodeWorkspace() {
       run: () => { setShowMinimap((p) => !p) },
     })
   }, [])
+
+  // ── Use cached model for the active file — instant tab switching ──
+  useEffect(() => {
+    const ed = editorRef.current
+    const monaco = monacoRef.current
+    if (!ed || !monaco || !activeFile) return
+
+    const language = getMonacoLang(activeFile.name)
+    const model = getOrCreateModel(monaco, activeFile.path, activeFile.content, language)
+
+    // Save current editor view state before switching models
+    const currentModel = ed.getModel()
+    if (currentModel) {
+      const currentPath = currentModel.uri.path.replace('/workspace/', '')
+      const position = ed.getPosition()
+      if (position) {
+        editorViewStateCache.set(currentPath, {
+          cursor: { lineNumber: position.lineNumber, column: position.column },
+          scrollTop: ed.getScrollTop(),
+          scrollLeft: ed.getScrollLeft(),
+        })
+      }
+    }
+
+    // Switch to the cached model
+    ed.setModel(model)
+
+    // Restore cursor and scroll for the new file from cache
+    const restored = editorViewStateCache.get(activeFile.path)
+    if (restored) {
+      ed.setPosition(restored.cursor)
+      ed.setScrollTop(restored.scrollTop)
+      ed.setScrollLeft(restored.scrollLeft)
+      ed.revealPositionInCenterIfOutsideViewport(restored.cursor)
+    }
+  }, [activeFilePath])
 
   // ── Update editor options when settings change ──
   useEffect(() => {
@@ -417,6 +546,9 @@ export function CodeWorkspace() {
     }
   }
 
+  // ── Debounced refresh on file content changes ──
+  const contentRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   // ── Content change handler ──
   const handleContentChange: OnChange = useCallback((value) => {
     if (!activeFile || value === undefined) return
@@ -424,6 +556,11 @@ export function CodeWorkspace() {
     if (current && current.content !== value) {
       updateFileContent(activeFile.path, value)
     }
+    // Debounced context refresh: AI sees the new content 2s after user stops typing
+    if (contentRefreshRef.current) clearTimeout(contentRefreshRef.current)
+    contentRefreshRef.current = setTimeout(() => {
+      requestRefresh("workspace_change")
+    }, 2000)
   }, [activeFile, updateFileContent])
 
   // ── Toggle AI context ──
@@ -461,6 +598,13 @@ export function CodeWorkspace() {
   const activeFileRef = useRef(activeFile)
   activeFileRef.current = activeFile
   const aiChangeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Clean up content-change debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (contentRefreshRef.current) clearTimeout(contentRefreshRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     const scheduler = RenderScheduler.getInstance()
@@ -514,6 +658,7 @@ export function CodeWorkspace() {
       <EditorTabs
         openFiles={openFiles}
         activeFilePath={activeFilePath}
+        liveEditingFile={liveEditingFile}
         onOpen={openFileInStore}
         onClose={closeFile}
       />
@@ -526,6 +671,59 @@ export function CodeWorkspace() {
           <span className="text-[10px] text-white/30">
             Ln {editorRef.current?.getPosition()?.lineNumber || 1}, Col {editorRef.current?.getPosition()?.column || 1}
           </span>
+
+          {/* ── AI writing indicator ── */}
+          {liveStreamActive && liveEditingFile === activeFilePath && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="flex items-center gap-1.5 rounded-full bg-green-500/15 border border-green-500/30 px-2 py-1"
+            >
+              <Pencil className="h-2.5 w-2.5 text-green-400" />
+              <motion.span
+                animate={{ opacity: [1, 0.4, 1] }}
+                transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+                className="text-[9px] font-medium text-green-400"
+              >
+                AI writing
+              </motion.span>
+            </motion.div>
+          )}
+
+          {/* ── AI writing to a different tab ── */}
+          {liveStreamActive && liveEditingFile && liveEditingFile !== activeFilePath && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="flex items-center gap-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 px-2 py-1"
+            >
+              <Pencil className="h-2.5 w-2.5 text-blue-400" />
+              <motion.span
+                animate={{ opacity: [1, 0.4, 1] }}
+                transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+                className="text-[9px] font-medium text-blue-400"
+              >
+                AI editing {liveEditingFile.split("/").pop()}
+              </motion.span>
+            </motion.div>
+          )}
+
+          {/* ── Session streaming counter ── */}
+          {sessionTokens > 0 && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="flex items-center gap-1 text-[9px] text-white/25 font-mono"
+            >
+              <span className="text-white/15 text-[8px]">|</span>
+                          <span className="tabular-nums">
+                {formatCount(sessionTokens)} tok · {formatCount(sessionChars)} chars
+              </span>
+            </motion.div>
+          )}
+
           {isInAiContext && (
             <Badge variant="info" size="sm">
               <Brain className="h-2.5 w-2.5 mr-0.5" /> AI Context
@@ -624,6 +822,20 @@ export function CodeWorkspace() {
               <Save className="h-3 w-3" />
             </motion.button>
           </Tooltip>
+        </div>
+      </div>
+
+      {/* ── AI streaming progress bar (gutter between toolbar and editor) ── */}
+      <div className="relative shrink-0">
+        <div className="h-[2px] bg-white/[0.03]">
+          {liveStreamActive && (
+            <motion.div
+              className="h-full bg-gradient-to-r from-green-500/80 via-emerald-400/60 to-green-500/80 rounded-full"
+              initial={{ width: "0%" }}
+              animate={{ width: `${Math.round(streamProgress * 100)}%` }}
+              transition={{ duration: 0.3, ease: "easeOut" }}
+            />
+          )}
         </div>
       </div>
 

@@ -2,7 +2,7 @@ import { useState, useMemo } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { cn } from "@/lib/utils"
 import type { AgentRoleConfig } from "@/types"
-import { Badge } from "@/components/ui/badge"
+import { Badge } from "@agentic-os/ui"
 import {
   Plus, Minus, Users, Brain, Code2, Eye, Search,
   Terminal, Globe, Zap, CheckCircle2, Palette,

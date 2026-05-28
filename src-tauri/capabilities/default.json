@@ -4,6 +4,10 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    {
+      "identifier": "http:default",
+      "allow": [{ "url": "https://**" }, { "url": "http://**" }]
+    },
     "core:window:default",
     "core:window:allow-close",
     "core:window:allow-set-size",

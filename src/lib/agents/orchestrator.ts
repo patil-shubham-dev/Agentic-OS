@@ -1,21 +1,22 @@
 import type { AgentRoleConfig, GatewayProvider } from "@/types"
-import type { ChatMessage, ChatResponse, UsageInfo } from "@/lib/ai-service"
+import type { ChatMessage, ChatResponse, UsageInfo, ToolCall } from "@agentic-os/providers"
 import { FAST_CHAT_PROMPT } from "@/runtime/runtime-role-registry"
 import { getTools } from "./agent-tools"
 import { normalizeRole } from "@/lib/role-identity"
 import { executeToolCall } from "@/lib/tool-executor"
-import { chatCompletion, streamChatCompletion, directChatCompletion, tauriStreamChatCompletion } from "@/lib/ai-service"
+import { ProviderTransport } from "@agentic-os/providers"
+import type { TransportAdapterConfig, CompletionRequest, TransportError } from "@agentic-os/providers"
 import { useLedgerStore } from "@/stores/ledger-store"
 import { useAgentStore } from "@/stores/agent-store"
 import { useWorkspaceRuntime } from "@/runtime/workspace-runtime"
-import { useWorkspaceStore } from "@/stores/workspace-store"
+import { useWorkspaceStore, getWorkspaceContextSnapshot } from "@/stores/workspace-store"
 import { useAppStore } from "@/stores/app-store"
 import { memoryLoader } from "@/runtime/project-memory/memory-loader"
 import { trace } from "@/lib/execution-trace"
 import { getEffectiveMaxTokens, clampOutputTokens } from "@/runtime/runtime-token-config"
 import type { ToolCallRecord, FileEditRecord } from "@/components/workspace/timeline/step-card"
-import type { ToolCall } from "@/lib/ai-service"
 import { ContextManager } from "@/runtime/context/ContextManager"
+import type { ContextAssemblyInput } from "@/runtime/context/context-types"
 import { PostWriteVerifier } from "@/runtime/PostWriteVerifier"
 import type { ExecutionModeId } from "@/runtime/execution-mode"
 
@@ -26,6 +27,8 @@ export interface AgentConfig {
   runtime: string | null
   model: string
   maxTokens?: number
+  providerId?: string
+  providerName?: string
 }
 
 export interface AgentResult {
@@ -59,6 +62,27 @@ interface StreamRoundResult {
 
 const AGENT_EXECUTION_TIMEOUT_MS = 120_000   // 2 minutes hard cap
 const AGENT_SOFT_DEADLINE_MS = 60_000
+
+const transport = new ProviderTransport({
+  getApiKey: (providerId?: string) => {
+    if (providerId) {
+      const providers = useAppStore.getState().providers ?? []
+      const p = providers.find((p) => p.id === providerId)
+      return p?.apiKey
+    }
+    return undefined
+  },
+})
+
+function toAdapterConfig(config: AgentConfig): TransportAdapterConfig {
+  return {
+    baseUrl: config.endpoint,
+    apiKey: config.apiKey,
+    runtime: config.runtime,
+    providerId: config.providerId ?? config.role,
+    providerName: config.providerName ?? config.role,
+  }
+}
 
 function validateProviderConfig(config: AgentConfig): void {
   if (!config.apiKey || config.apiKey.trim() === "") {
@@ -120,13 +144,29 @@ export async function runAgent(
     }
   }
 
-  const assemblyInput = {
+  // Inject workspace context (active file, cursor, selection, open tabs) into assembly
+  const wsSnapshot = getWorkspaceContextSnapshot()
+  const assemblyInput: ContextAssemblyInput = {
     role: normalizedRole,
+    userMessage,
     executionMode,
     memorySummary: undefined,
     customInstructions: projectRules,
     environmentInfo: undefined,
-  } as any
+    activeFilePath: wsSnapshot.activeFilePath ?? undefined,
+    activeFileName: wsSnapshot.activeFileName ?? undefined,
+    activeFileLanguage: wsSnapshot.activeFileLanguage ?? undefined,
+    activeFileLines: wsSnapshot.activeFileLines > 0 ? wsSnapshot.activeFileLines : undefined,
+    openFiles: wsSnapshot.openFiles.length > 0 ? wsSnapshot.openFiles : undefined,
+    selectedText: wsSnapshot.selectedText || undefined,
+    cursorLine: wsSnapshot.cursorLine > 0 ? wsSnapshot.cursorLine : undefined,
+    cursorColumn: wsSnapshot.cursorColumn > 0 ? wsSnapshot.cursorColumn : undefined,
+    visibleRangeStart: wsSnapshot.visibleRangeStart > 0 ? wsSnapshot.visibleRangeStart : undefined,
+    visibleRangeEnd: wsSnapshot.visibleRangeEnd > 0 ? wsSnapshot.visibleRangeEnd : undefined,
+    unsavedChanges: wsSnapshot.unsavedChanges > 0 ? wsSnapshot.unsavedChanges : undefined,
+    recentEdits: wsSnapshot.recentEdits.length > 0 ? wsSnapshot.recentEdits : undefined,
+    fileTreeSummary: wsSnapshot.fileTreeSummary || undefined,
+  }
   const promptResult = await ContextManager.getInstance().assembleSystemPrompt(assemblyInput)
   const systemPrompt = promptResult.systemPrompt
   const contextResult = await ContextManager.getInstance().buildContext(userMessage, config.role)
@@ -215,45 +255,34 @@ export async function runAgent(
     }
 
     if (!res) {
-      // Fallback to non-streaming
-      // PRIMARY: Tauri IPC (CORS-immune for external providers)
-      const isLocalProvider = config.endpoint.includes("localhost") || config.endpoint.includes("127.0.0.1")
+      trace("runAgent", "transport_nonstream_start")
       try {
-        if (!isLocalProvider) {
-          trace("runAgent", "tauri_nonstream_start")
-          res = await chatCompletion(
-            config.endpoint, config.apiKey, config.runtime,
-            { model: config.model, messages: msgs, tools, maxTokens },
-            signal,
-          )
-          trace("runAgent", "tauri_nonstream_end", { success: true })
-        } else {
-          // Local providers (Ollama): browser fetch works fine, no CORS issue
-          throw new Error("LOCAL_PROVIDER_SKIP_TAURI")
+        const tcResult = await transport.chatCompletion(
+          toAdapterConfig(config),
+          { model: config.model, messages: msgs, tools, maxTokens, signal },
+        )
+        res = {
+          message: {
+            role: "assistant",
+            content: tcResult.content,
+            tool_calls: (tcResult.toolCalls ?? []) as ToolCall[],
+          },
+          finish_reason: tcResult.finishReason,
+          usage: tcResult.usage ? {
+            prompt_tokens: tcResult.usage.promptTokens,
+            completion_tokens: tcResult.usage.completionTokens,
+            total_tokens: tcResult.usage.totalTokens,
+          } : undefined,
         }
-      } catch (tauriErr) {
-        const tauriMsg = tauriErr instanceof Error ? tauriErr.message : String(tauriErr)
-        if (!isLocalProvider) {
-          console.warn(`${logTag} Tauri IPC failed (${tauriMsg}), falling back to browser fetch`)
-          trace("runAgent", "tauri_nonstream_fail", { error: tauriMsg })
-        }
-
-        // FALLBACK: browser fetch (works for localhost / non-Tauri environments)
-        try {
-          trace("runAgent", "direct_fallback_start")
-          res = await directChatCompletion(
-            config.endpoint, config.apiKey,
-            { model: config.model, messages: msgs, tools, maxTokens, stream: false },
-            signal,
-          )
-          trace("runAgent", "direct_fallback_end", { success: true })
-        } catch (directErr) {
-          const directMsg = directErr instanceof Error ? directErr.message : String(directErr)
-          trace("runAgent", "direct_fallback_fail", { error: directMsg })
-          throw new Error(`All fallbacks exhausted — Tauri: ${tauriMsg}, direct: ${directMsg}`)
-        }
+        trace("runAgent", "transport_nonstream_end", { success: true })
+      } catch (transportErr) {
+        const transportMsg = transportErr instanceof Error ? transportErr.message : String(transportErr)
+        trace("runAgent", "transport_nonstream_fail", { error: transportMsg })
+        throw new Error(`ProviderTransport chat completion failed: ${transportMsg}`)
       }
     }
+
+    if (!res) throw new Error("No response from provider")
 
     trace("runAgent", "non_streaming_end", { hasToolCalls: !!res.message.tool_calls?.length })
 
@@ -293,9 +322,9 @@ export async function runAgent(
       const editedFiles: string[] = []
 
       const settled = await Promise.allSettled(
-        res.message.tool_calls.map((tc) => executeToolCall(tc, config.role, callbacks?.stepId)),
+        res.message.tool_calls.map((tc: import("@agentic-os/providers").ToolCall) => executeToolCall(tc, config.role, callbacks?.stepId)),
       )
-      const toolResults: import("@/lib/ai-service").ChatMessage[] = settled.map((result, i) => {
+      const toolResults = settled.map((result, i) => {
         const tc = res.message.tool_calls![i]
         if (result.status === 'fulfilled') {
           callbacks?.onToolCallComplete?.(tc.id, result.value.content)
@@ -428,160 +457,56 @@ export async function runAgent(
   }
 }
 
-const FIRST_CHUNK_TIMEOUT_MS = 8_000    // 8 seconds to get first token
-const AGGRESSIVE_FALLBACK_MS = 45_000   // 45 seconds
-
 async function streamSingleRound(
   config: AgentConfig,
-  req: { model: string; messages: ChatMessage[]; tools?: import("@/lib/ai-service").ToolDef[]; maxTokens?: number },
+  req: { model: string; messages: ChatMessage[]; tools?: import("@agentic-os/providers").ToolDef[]; maxTokens?: number },
   signal: AbortSignal | undefined,
   onToken: (token: string) => void,
   onStreamReady?: () => void,
 ): Promise<StreamRoundResult | null> {
   const logTag = `[StreamRound:${config.role}]`
-  console.log(`${logTag} start`, { endpoint: config.endpoint?.slice(0, 40), model: req.model, firstChunkTimeout: AGGRESSIVE_FALLBACK_MS })
+  console.log(`${logTag} start`, { endpoint: config.endpoint?.slice(0, 40), model: req.model })
   trace("streamSingleRound", "start", { endpoint: config.endpoint?.slice(0, 40), model: req.model })
 
-  let cancelled = false
-  let firstChunkArrived = false
-  const autoAbort = new AbortController()
-  const abortHandler = () => { cancelled = true }
+  let streamedContent = ""
+  let pendingToolCalls: ToolCall[] = []
+  let streamError: Error | null = null
 
-  signal?.addEventListener("abort", abortHandler, { once: true })
-  if (cancelled) return null
-
-  const comboCtl = new AbortController()
-  if (signal) {
-    if (signal.aborted) comboCtl.abort()
-    else signal.addEventListener("abort", () => comboCtl.abort(), { once: true })
-  }
-  autoAbort.signal.addEventListener("abort", () => comboCtl.abort(), { once: true })
-  const streamSignal = comboCtl.signal
-
-  const aggressiveFallback = new Promise<null>((resolve) => {
-    setTimeout(() => {
-      if (!firstChunkArrived && !cancelled) {
-        console.log(`${logTag} AGGRESSIVE FALLBACK: No first chunk within ${AGGRESSIVE_FALLBACK_MS}ms`)
-        trace("streamSingleRound", "aggressive_fallback", { timeoutMs: AGGRESSIVE_FALLBACK_MS })
-        autoAbort?.abort()
-        resolve(null)
-      }
-    }, AGGRESSIVE_FALLBACK_MS)
-  })
-
-  const streamCall = new Promise<StreamRoundResult | null>(async (resolve, reject) => {
-    trace("streamSingleRound", "calling_streamChatCompletion")
-
-    // PRIMARY: Tauri IPC streaming (CORS-immune for external providers)
-    let streamedContent = ""
-    let pendingToolCalls: ToolCall[] = []
-
-    try {
-      console.log(`${logTag} Attempting Tauri-native streaming first`)
-      await tauriStreamChatCompletion(
-        config.endpoint,
-        config.apiKey,
-        config.model,
-        req.messages,
-        req.tools as any,
-        {
-          onToken: (token) => {
-            streamedContent += token
-            if (!firstChunkArrived) {
-              firstChunkArrived = true
-              console.log(`${logTag} First chunk received via Tauri stream`)
-              trace("streamSingleRound", "first_chunk_received")
-              onStreamReady?.()
-            }
-            if (!cancelled) onToken(token)
-          },
-          onToolCalls: (toolCalls) => {
-            pendingToolCalls = toolCalls
-          },
-          onDone: () => {
-            signal?.removeEventListener("abort", abortHandler)
-            trace("streamSingleRound", "stream_done", { length: streamedContent.length })
-            if (cancelled) { resolve(null); return }
-            resolve({
-              content: streamedContent,
-              toolCalls: pendingToolCalls,
-              finishReason: pendingToolCalls.length > 0 ? "tool_calls" : "stop",
-            })
-          },
-          onError: (err) => {
-            throw err
-          },
-        },
-        streamSignal,
-      )
-      return
-    } catch (tauriErr) {
-      // Tauri not available or failed — fall back to browser fetch
-      const tauriMsg = tauriErr instanceof Error ? tauriErr.message : String(tauriErr)
-      console.log(`${logTag} Tauri streaming unavailable (${tauriMsg}), falling back to browser fetch`)
-      trace("streamSingleRound", "tauri_stream_fallback", { error: tauriMsg })
-    }
-
-    // FALLBACK: browser fetch streaming (works in plain browser / localhost)
-    streamChatCompletion(
-      config.endpoint,
-      config.apiKey,
-      config.runtime,
-      req,
-      {
-        onReady: () => {
-          if (!cancelled) {
-            console.log(`${logTag} Stream connection established (browser fetch)`)
-            trace("streamSingleRound", "on_ready")
-            onStreamReady?.()
-          }
-        },
-        onToken: (token) => {
-          if (!firstChunkArrived) {
-            firstChunkArrived = true
-            console.log(`${logTag} First chunk received`)
-            trace("streamSingleRound", "first_chunk_received")
-          }
-          if (cancelled) return
-          onToken(token)
-        },
-        onDone: (fullContent: string, meta) => {
-          signal?.removeEventListener("abort", abortHandler)
-          trace("streamSingleRound", "stream_done", { length: fullContent.length })
-          if (cancelled) { resolve(null); return }
-          const toolCalls = meta?.toolCalls ?? []
-          if (!fullContent && !firstChunkArrived && toolCalls.length === 0) {
-            reject(new Error("STREAM_EMPTY: Stream completed with no content"))
-            return
-          }
-          resolve({
-            content: fullContent,
-            toolCalls,
-            finishReason: meta?.finishReason ?? null,
-          })
-        },
-        onError: (err: Error) => {
-          signal?.removeEventListener("abort", abortHandler)
-          trace("streamSingleRound", "stream_error", { error: err.message })
-          if (cancelled) { resolve(null); return }
-          reject(err)
-        },
+  await transport.streamChatCompletion(
+    toAdapterConfig(config),
+    { model: req.model, messages: req.messages, tools: req.tools, maxTokens: req.maxTokens, signal },
+    {
+      onToken: (token) => {
+        streamedContent += token
+        onToken(token)
       },
-      streamSignal,
-    )
-  })
+      onToolCallBegin: () => {},
+      onToolCallDelta: () => {},
+      onToolCallEnd: () => {},
+      onToolCallsComplete: (toolCalls) => {
+        pendingToolCalls = toolCalls.map((tc) => ({
+          id: tc.id,
+          type: "function" as const,
+          function: { name: tc.name, arguments: tc.arguments },
+        }))
+      },
+      onFinish: () => {},
+      onError: (error: TransportError) => {
+        streamError = new Error(error.message)
+      },
+      onDone: () => {
+        onStreamReady?.()
+      },
+    },
+  )
 
-  try {
-    const result = await Promise.race([streamCall, aggressiveFallback])
-    return result
-  } catch (err) {
-    signal?.removeEventListener("abort", abortHandler)
-    autoAbort?.abort()
-    const msg = err instanceof Error ? err.message : String(err)
-    console.log(`${logTag} Stream failed: ${msg}`)
-    trace("streamSingleRound", "exception", { error: msg })
-    if (cancelled) return null
-    throw err
+  if (streamError) throw streamError
+  if (!streamedContent && pendingToolCalls.length === 0) return null
+
+  return {
+    content: streamedContent,
+    toolCalls: pendingToolCalls,
+    finishReason: pendingToolCalls.length > 0 ? "tool_calls" : "stop",
   }
 }
 
@@ -615,6 +540,8 @@ export async function runWorkspaceAgent(
     runtime: provider.runtime,
     model,
     maxTokens,
+    providerId: provider.id,
+    providerName: provider.name,
   }
 
   return runAgent(agentConfig, userMessage, conversationHistory, onProgress, signal, onToken, onStreamReady, callbacks)
@@ -651,42 +578,64 @@ export async function fastChatCompletion(
   let content = ""
   let usage: UsageInfo = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
 
+  const fastConfig: AgentConfig = {
+    role: "fast-assistant",
+    endpoint,
+    apiKey,
+    runtime: null,
+    model,
+    maxTokens: 4096,
+  }
+
   // Try streaming first if onToken is provided
   if (onToken) {
     try {
-      const streamPromise = new Promise<void>((resolve, reject) => {
-        streamChatCompletion(
-          endpoint,
-          apiKey,
-          null,
-          { model, messages, maxTokens: 4096 },
-          {
-            onReady: () => onStreamReady?.(),
-            onToken: (token: string) => {
-              content += token
-              onToken(token)
-            },
-            onDone: (fullContent: string) => {
-              content = fullContent
-              resolve()
-            },
-            onError: (err: Error) => reject(err),
+      let streamError: Error | null = null
+      await transport.streamChatCompletion(
+        toAdapterConfig(fastConfig),
+        { model, messages, maxTokens: 4096, signal },
+        {
+          onToken: (token: string) => {
+            content += token
+            onToken(token)
           },
-          signal,
-        )
-      })
-      await streamPromise
+          onToolCallBegin: () => {},
+          onToolCallDelta: () => {},
+          onToolCallEnd: () => {},
+          onFinish: () => {},
+          onError: (error: TransportError) => {
+            streamError = new Error(error.message)
+          },
+          onDone: () => {
+            onStreamReady?.()
+          },
+        },
+      )
+      if (streamError) throw streamError
     } catch {
-      // Streaming failed — keep any partially accumulated content
       console.warn(`${logTag} streaming failed, falling back to non-streaming`)
     }
   }
 
-  // Fallback to non-streaming (either onToken wasn't provided or streaming yielded nothing)
+  // Fallback to non-streaming
   if (!content) {
-    const res = await directChatCompletion(endpoint, apiKey, { model, messages, maxTokens: 4096 }, signal)
-    content = res.message.content ?? ""
-    usage = res.usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+    try {
+      const result = await transport.chatCompletion(
+        toAdapterConfig(fastConfig),
+        { model, messages, maxTokens: 4096, signal },
+      )
+      content = result.content
+      if (result.usage) {
+        usage = {
+          prompt_tokens: result.usage.promptTokens,
+          completion_tokens: result.usage.completionTokens,
+          total_tokens: result.usage.totalTokens,
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      throw new Error(`Fast chat completion failed: ${msg}`)
+    }
   }
 
   const elapsed = Date.now() - startedAt
@@ -755,6 +704,8 @@ export async function runRuntimeAgent(
     runtime: provider.runtime,
     model: wired.model,
     maxTokens,
+    providerId: provider.id,
+    providerName: provider.name,
   }
 
   return runAgent(agentConfig, userMessage, conversationHistory, onProgress, signal, onToken, onStreamReady, callbacks)

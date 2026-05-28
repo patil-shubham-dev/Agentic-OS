@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
-import { ErrorBoundary } from "@/components/ui/error-boundary"
+import { ErrorBoundary } from "@agentic-os/ui"
 import type { RuntimeRole } from "@/types"
 import { useAppStore } from "@/stores/app-store"
 import { useAgentStore } from "@/stores/agent-store"

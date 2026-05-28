@@ -1,6 +1,6 @@
 import { create } from "zustand"
 import type { FileEntry, OpenFile, FileChangeEvent, RuntimeConfig } from "@/types"
-import { requestRefresh } from "@/runtime/runtime-coordinator"
+import { requestRefresh, flushDeferredRefresh } from "@/runtime/runtime-coordinator"
 
 export type ExecutionMode = "autonomous" | "fastest" | "most_accurate" | "research_heavy" | "human_guided" | "safe_mode"
 export type OrchestrationState = "idle" | "analyzing" | "planning" | "executing" | "reviewing" | "error"
@@ -58,10 +58,189 @@ interface WorkspaceStore {
   loadWorkspaceConfig: (path: string) => Promise<void>
   updateWorkspaceRuntimeConfig: (config: Partial<RuntimeConfig>) => void
 
+  // Editor cursor / selection tracking (synced from Monaco editor)
+  cursorLine: number
+  cursorColumn: number
+  selectedText: string
+  visibleRangeStart: number
+  visibleRangeEnd: number
+  setCursorPosition: (line: number, column: number) => void
+  setSelectedText: (text: string) => void
+  setVisibleRange: (start: number, end: number) => void
+
+  // User activity tracking
+  isUserActive: boolean
+  lastUserActivity: number
+  setUserActive: (active: boolean) => void
+
   // File edit notification (for auto-open after AI edits)
   notifyFileEdited: (path: string, newContent: string) => void
   lastEditedFile: string | null
   recordFileEdit: (path: string) => void
+}
+
+// ── Tree rendering limits (prevent context-window blowout) ──
+const MAX_TREE_DEPTH = 5
+const MAX_TREE_ENTRIES = 150
+
+/** Format a byte count into a human-readable string (e.g. 1234 → "1.2KB") */
+function formatSize(bytes: number): string {
+  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)}MB`
+  if (bytes >= 1_000) return `${(bytes / 1_000).toFixed(1)}KB`
+  return `${bytes}B`
+}
+
+/** Format a unix-epoch ms timestamp into a relative time string (e.g. "2m ago", "1h ago") */
+function formatRelativeTime(ms: number): string {
+  const seconds = Math.round((Date.now() - ms) / 1000)
+  if (seconds < 60) return `${seconds}s ago`
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.round(hours / 24)
+  return `${days}d ago`
+}
+
+/**
+ * Recursively formats a FileEntry[] into an ASCII tree string,
+ * mirroring what a developer sees in a file explorer sidebar.
+ * Directories are listed first, then files, alphabetically within each group.
+ * Respects depth and count limits to protect the context window.
+ */
+function formatFileTree(tree: FileEntry[], rootPath: string | null): string {
+  let entryCount = 0
+
+  function renderNode(entry: FileEntry, prefix: string, isLast: boolean, currentDepth: number): string[] {
+    if (entryCount >= MAX_TREE_ENTRIES) return []
+    if (currentDepth > MAX_TREE_DEPTH) {
+      entryCount++
+      const line = entry.is_dir
+        ? `${prefix}${isLast ? '└── ' : '├── '}${entry.name}/ (${entry.children.length} items)`
+        : `${prefix}${isLast ? '└── ' : '├── '}${entry.name}`
+      return [line]
+    }
+
+    entryCount++
+    const connector = isLast ? '└── ' : '├── '
+
+    // Build metadata suffix — compact and informative for AI prioritization
+    const metaParts: string[] = []
+    if (!entry.is_dir && entry.size !== undefined) {
+      metaParts.push(formatSize(entry.size))
+    }
+    if (entry.lastModified !== undefined) {
+      metaParts.push(formatRelativeTime(entry.lastModified))
+    }
+    const meta = metaParts.length > 0 ? ` [${metaParts.join(', ')}]` : ''
+
+    const line = `${prefix}${connector}${entry.name}${entry.is_dir ? '/' : ''}${meta}`
+    const result = [line]
+
+    if (entry.is_dir && entry.children.length > 0) {
+      const childPrefix = prefix + (isLast ? '    ' : '│   ')
+      const sorted = [...entry.children].sort((a, b) => {
+        if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1
+        return a.name.localeCompare(b.name)
+      })
+      for (let i = 0; i < sorted.length; i++) {
+        result.push(...renderNode(sorted[i], childPrefix, i === sorted.length - 1, currentDepth + 1))
+      }
+    }
+
+    return result
+  }
+
+  if (tree.length === 0) return ''
+
+  const header = rootPath ? `Workspace root: ${rootPath}` : 'Workspace files'
+  const lines: string[] = [header]
+
+  const sorted = [...tree].sort((a, b) => {
+    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1
+    return a.name.localeCompare(b.name)
+  })
+
+  for (let i = 0; i < sorted.length; i++) {
+    lines.push(...renderNode(sorted[i], '', i === sorted.length - 1, 0))
+  }
+
+  const truncated = entryCount >= MAX_TREE_ENTRIES
+    ? `\n_(${MAX_TREE_ENTRIES}+ entries shown; tree truncated for context budget)_`
+    : ''
+
+  return lines.join('\n') + truncated
+}
+
+/**
+ * Get a flat snapshot of workspace state for AI context injection.
+ * Called at request time — always reads fresh from the store.
+ */
+export function getWorkspaceContextSnapshot(): {
+  activeFilePath: string | null
+  activeFileName: string | null
+  activeFileLanguage: string | null
+  activeFileLines: number
+  openFiles: { path: string; name: string; isDirty: boolean; language: string }[]
+  selectedText: string
+  cursorLine: number
+  cursorColumn: number
+  visibleRangeStart: number
+  visibleRangeEnd: number
+  unsavedChanges: number
+  recentEdits: { path: string; timestamp: number }[]
+  fileTreeSummary: string
+  rootPath: string | null
+  isUserActive: boolean
+  lastUserActivity: number
+} {
+  const state = useWorkspaceStore.getState()
+  const activeFile = state.openFiles.find((f) => f.path === state.activeFilePath)
+  const ext = activeFile
+    ? (activeFile.name.split(".").pop()?.toLowerCase() ?? "")
+    : ""
+  const EXT_LANG_MAP: Record<string, string> = {
+    ts: "TypeScript", tsx: "TSX", js: "JavaScript", jsx: "JSX",
+    css: "CSS", scss: "SCSS", html: "HTML", json: "JSON",
+    md: "Markdown", py: "Python", rs: "Rust", toml: "TOML",
+    yaml: "YAML", yml: "YAML", sh: "Shell", bash: "Shell",
+    sql: "SQL", go: "Go", java: "Java", rb: "Ruby",
+  }
+  const language = EXT_LANG_MAP[ext] ?? "Text"
+
+  const unsavedCount = state.openFiles.filter((f) => f.isDirty).length
+  const recentEdits = state.recentlyModified.slice(0, 10).map((path) => ({
+    path,
+    timestamp: Date.now(),
+  }))
+
+  const treeSummary = state.fileTree.length > 0
+    ? formatFileTree(state.fileTree, state.rootPath)
+    : ""
+
+  return {
+    activeFilePath: state.activeFilePath,
+    activeFileName: activeFile?.name ?? null,
+    activeFileLanguage: language,
+    activeFileLines: activeFile ? activeFile.content.split("\n").length : 0,
+    openFiles: state.openFiles.map((f) => ({
+      path: f.path,
+      name: f.name,
+      isDirty: f.isDirty,
+      language: EXT_LANG_MAP[f.name.split(".").pop()?.toLowerCase() ?? ""] ?? "Text",
+    })),
+    selectedText: state.selectedText,
+    cursorLine: state.cursorLine,
+    cursorColumn: state.cursorColumn,
+    visibleRangeStart: state.visibleRangeStart,
+    visibleRangeEnd: state.visibleRangeEnd,
+    unsavedChanges: unsavedCount,
+    recentEdits,
+    fileTreeSummary: treeSummary,
+    rootPath: state.rootPath,
+    isUserActive: state.isUserActive,
+    lastUserActivity: state.lastUserActivity,
+  }
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
@@ -104,7 +283,14 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   openFile: (file) =>
     set((store) => {
       const exists = store.openFiles.find((f) => f.path === file.path)
-      if (exists) return { activeFilePath: file.path }
+      if (exists) {
+        // Only fire context refresh if the active file actually changes
+        if (store.activeFilePath !== file.path) {
+          requestRefresh("workspace_change")
+        }
+        return { activeFilePath: file.path }
+      }
+      requestRefresh("workspace_change")
       return { openFiles: [...store.openFiles, file], activeFilePath: file.path }
     }),
 
@@ -114,10 +300,20 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       const newActive = store.activeFilePath === path
         ? (filtered.length > 0 ? filtered[filtered.length - 1].path : null)
         : store.activeFilePath
+      // Refresh context if the active file changes (closing the current tab)
+      if (store.activeFilePath !== newActive && newActive !== null) {
+        requestRefresh("workspace_change")
+      }
       return { openFiles: filtered, activeFilePath: newActive }
     }),
 
-  setActiveFile: (path) => set({ activeFilePath: path }),
+  setActiveFile: (path) =>
+    set((store) => {
+      if (store.activeFilePath !== path) {
+        requestRefresh("workspace_change")
+      }
+      return { activeFilePath: path }
+    }),
 
   updateFileContent: (path, content) =>
     set((store) => ({
@@ -187,6 +383,29 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     set((store) => ({
       runtimeConfig: { ...store.runtimeConfig, ...config },
     })),
+
+  cursorLine: 1,
+  cursorColumn: 1,
+  selectedText: "",
+  visibleRangeStart: 1,
+  visibleRangeEnd: 1,
+
+  setCursorPosition: (line, column) => set({ cursorLine: line, cursorColumn: column }),
+  setSelectedText: (text) => set({ selectedText: text }),
+  setVisibleRange: (start, end) => set({ visibleRangeStart: start, visibleRangeEnd: end }),
+
+  isUserActive: false,
+  lastUserActivity: 0,
+  setUserActive: (active) => {
+    if (!active) {
+      // Flush any deferred AI context refreshes now that the editor is blurred
+      flushDeferredRefresh()
+    }
+    return set((s) => ({
+      isUserActive: active,
+      lastUserActivity: active ? Date.now() : s.lastUserActivity,
+    }))
+  },
 
   lastEditedFile: null,
 

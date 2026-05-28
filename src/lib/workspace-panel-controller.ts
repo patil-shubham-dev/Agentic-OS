@@ -7,8 +7,6 @@ export type TabInteractionEvent =
   | { type: "AUTO_ROUTE"; from: WorkspacePanel; to: WorkspacePanel; reason: string }
   | { type: "ROUTE_BLOCKED_BY_USER"; from: WorkspacePanel; to: WorkspacePanel; reason: string }
   | { type: "ROUTING_RESOLUTION"; userPanel: WorkspacePanel | null; runtimePanel: WorkspacePanel | null; resolved: WorkspacePanel }
-  | { type: "AUTO_CLOSE_SCHEDULED"; delayMs: number }
-  | { type: "AUTO_CLOSE_CANCELLED" }
 
 export interface PanelState {
   userTab: WorkspacePanel | null
@@ -50,7 +48,6 @@ export class WorkspacePanelController {
 
   private _state: PanelState
   private _disposables = new DisposableRegistry()
-  private _autoCloseTimer: ReturnType<typeof setTimeout> | null = null
   private _diagnostics: TabInteractionEvent[] = []
   private _maxDiagnostics = 50
 
@@ -79,6 +76,16 @@ export class WorkspacePanelController {
     return this._disposables
   }
 
+  /**
+   * Sync the controller's open state to match React state when the user
+   * toggles the panel via keyboard shortcut or toggle button (which bypass
+   * the controller). This prevents the controller's internal open state
+   * from desyncing from the actual UI state.
+   */
+  syncOpenState(open: boolean): void {
+    this._state.open = open
+  }
+
   setResolvedPanelChangeHandler(handler: ((panel: WorkspacePanel) => void) | null): void {
     this._onResolvedPanelChange = handler
   }
@@ -88,17 +95,11 @@ export class WorkspacePanelController {
   }
 
   handleManualTabClick(panel: WorkspacePanel): void {
-    const now = Date.now()
-    if (this._autoCloseTimer) {
-      clearTimeout(this._autoCloseTimer)
-      this._autoCloseTimer = null
-      this._emit({ type: "AUTO_CLOSE_CANCELLED" })
-    }
     this._state.userTab = panel
-    this._state.userTimestamp = now
+    this._state.userTimestamp = Date.now()
     this._state.resolvedTab = panel
     this._state.open = true
-    this._emit({ type: "TAB_CLICK", panel, timestamp: now })
+    this._emit({ type: "TAB_CLICK", panel, timestamp: this._state.userTimestamp })
     this._onResolvedPanelChange?.(panel)
     this._onOpenChange?.(true)
   }
@@ -128,18 +129,11 @@ export class WorkspacePanelController {
 
     if (resolved !== this._state.resolvedTab) {
       this._state.resolvedTab = resolved
-      if (!didOverride) {
-        this._state.open = true
-        this._onOpenChange?.(true)
-      }
+      // Never auto-open or auto-close the panel — open state is user-controlled only
       this._onResolvedPanelChange?.(resolved)
     }
 
     this._emit({ type: "ROUTING_RESOLUTION", userPanel: this._state.userTab, runtimePanel: runtimeTab, resolved })
-
-    if (!didOverride) {
-      this._handleAutoClose(agentState, recentlyManual)
-    }
   }
 
   clearDiagnostics(): void {
@@ -147,10 +141,6 @@ export class WorkspacePanelController {
   }
 
   destroy(): void {
-    if (this._autoCloseTimer) {
-      clearTimeout(this._autoCloseTimer)
-      this._autoCloseTimer = null
-    }
     this._disposables.clear()
     this._onResolvedPanelChange = null
     this._onOpenChange = null
@@ -188,26 +178,6 @@ export class WorkspacePanelController {
       case "design": return "design agent running"
       case "code": return "coder agent running"
       default: return ""
-    }
-  }
-
-  private _handleAutoClose(agentState: AgentStore, recentlyManual: boolean): void {
-    const hasRunningSteps = agentState.orchestrationSteps.some((s: OrchestrationStep) => s.status === "running")
-    const hasActiveAssignments = agentState.agentAssignments.some((a: AgentAssignment) => a.status === "active")
-
-    if (this._autoCloseTimer) {
-      clearTimeout(this._autoCloseTimer)
-      this._autoCloseTimer = null
-      this._emit({ type: "AUTO_CLOSE_CANCELLED" })
-    }
-
-    if (!recentlyManual && !hasRunningSteps && !hasActiveAssignments && !agentState.isProcessing && this._state.open) {
-      this._autoCloseTimer = setTimeout(() => {
-        this._autoCloseTimer = null
-        this._state.open = false
-        this._onOpenChange?.(false)
-      }, 10000)
-      this._emit({ type: "AUTO_CLOSE_SCHEDULED", delayMs: 10000 })
     }
   }
 

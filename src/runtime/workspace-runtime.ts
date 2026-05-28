@@ -7,7 +7,7 @@ import { requestRefresh, cancelPendingRefresh } from "./runtime-coordinator"
 import { trackMutation, detectCrossStoreChain, assertNoRenderWrite } from "./runtime-diagnostics"
 import { assertNoDuplicateSubscription, releaseSubscription, registerTimer, releaseTimer, assertTimersCleaned, assertNoOrphanSubscription } from "@/performance/runtime-assertions"
 import type { RuntimeRole } from "@/types"
-import { safeDetectRuntime } from "@/lib/provider-manager"
+import { safeDetectRuntime } from "@agentic-os/providers"
 
 export type { RuntimeStatus, RuntimeHealth, WiredAgent, BootStep }
 

@@ -103,8 +103,11 @@ export class UiSync {
     this.unsubscribers.push(
       this.eventBus.on("AGENT_ASSIGNED", (ev: any) => {
         schedule("high", () => {
+          const timelineStore = useTimelineStore.getState()
+          // Skip if session already exists (e.g., from optimistic creation in chat-panel)
+          if (timelineStore.agentSessions.has(ev.stepId)) return
           const session: AgentSession = {
-            stepId: `${ev.roleId}-${ev.timestamp}`,
+            stepId: ev.stepId,
             roleId: ev.roleId,
             roleName: ev.roleName,
             status: "running",
@@ -115,7 +118,7 @@ export class UiSync {
             modelName: ev.modelName,
             providerName: ev.providerName,
           }
-          useTimelineStore.getState().addAgentSession(session)
+          timelineStore.addAgentSession(session)
         })
       }),
     )

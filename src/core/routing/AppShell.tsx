@@ -1,7 +1,7 @@
 import { type ReactNode } from 'react'
 import { Outlet } from 'react-router-dom'
 import { NavigationRail } from '@/components/layout/navigation-rail'
-import { Toasts } from '@/components/ui/toast'
+import { Toasts } from '@agentic-os/ui'
 import { SafeErrorBoundary, SidebarBoundary, WorkspaceBoundary } from '../error-boundaries'
 import { useApprovalStore } from '../../runtime/approval-gate'
 import { useAgentStore } from '../../stores/agent-store'

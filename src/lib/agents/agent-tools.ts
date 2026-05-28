@@ -1,4 +1,4 @@
-import type { ToolDef } from "@/lib/ai-service"
+import type { ToolDef } from "@agentic-os/providers"
 import type { AgentTool } from "@/runtime/tools/core/AgentTool"
 import { buildTool } from "@/runtime/tools/core/AgentTool"
 import type { ToolContext } from "@/runtime/tools/core/ToolContext"

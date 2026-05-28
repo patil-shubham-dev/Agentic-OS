@@ -19,6 +19,21 @@ export type ResolutionContext = {
   hasBrowser: boolean
   environmentInfo?: Record<string, string>
   customInstructions?: string[]
+
+  // ── Workspace context (injected from workspace-store) ──
+  activeFilePath?: string
+  activeFileName?: string
+  activeFileLanguage?: string
+  activeFileLines?: number
+  openFiles?: { path: string; name: string; isDirty: boolean; language: string }[]
+  selectedText?: string
+  cursorLine?: number
+  cursorColumn?: number
+  visibleRangeStart?: number
+  visibleRangeEnd?: number
+  unsavedChanges?: number
+  recentEdits?: { path: string; timestamp: number }[]
+  fileTreeSummary?: string
 }
 
 export type CacheStrategy = 'none' | 'request' | 'task' | 'session' | 'workspace'
@@ -65,6 +80,20 @@ export function defaultContext(overrides?: Partial<ResolutionContext>): Resoluti
     hasBrowser: false,
     environmentInfo: undefined,
     customInstructions: undefined,
+    // Workspace defaults
+    activeFilePath: undefined,
+    activeFileName: undefined,
+    activeFileLanguage: undefined,
+    activeFileLines: undefined,
+    openFiles: undefined,
+    selectedText: undefined,
+    cursorLine: undefined,
+    cursorColumn: undefined,
+    visibleRangeStart: undefined,
+    visibleRangeEnd: undefined,
+    unsavedChanges: undefined,
+    recentEdits: undefined,
+    fileTreeSummary: undefined,
     ...overrides,
   }
 }

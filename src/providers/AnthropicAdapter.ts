@@ -71,28 +71,11 @@ export class AnthropicAdapter extends BaseProviderAdapter {
 
     const data = await this.fetchJson(url, body, signal) as Record<string, unknown>
 
-    // `fetchJson` routes through Tauri IPC for external providers, which
-    // returns a normalized ChatResponse { message: { role, content }, usage }.
-    // For local providers (fetch), it returns the raw Anthropic response.
-    if (this.isExternalProvider()) {
-      // Normalized format from Tauri IPC
-      const msg = (data as any).message as Record<string, unknown> | undefined
-      const content = (msg?.content as string) ?? ""
-      const usage = (data as any).usage as Record<string, unknown> | undefined
-      return {
-        content,
-        usage: usage
-          ? {
-              promptTokens: (usage.prompt_tokens as number) ?? 0,
-              completionTokens: (usage.completion_tokens as number) ?? 0,
-              totalTokens: (usage.total_tokens as number) ?? 0,
-            }
-          : null,
-      }
-    }
-
-    // Raw Anthropic response format (local fetch)
-    const content = ((data as any).content as Array<{ type: string; text: string }>)?.find((c) => c.type === "text")?.text ?? ""
+    // fetchJson() returns the raw Anthropic response — extract content
+    // from the Anthropic-specific format.
+    const contentBlock = ((data as any).content as Array<{ type: string; text: string }> | undefined)
+      ?.find((c: { type: string }) => c.type === "text")
+    const content = contentBlock?.text ?? ""
     const rawUsage = (data as any).usage as Record<string, unknown> | undefined
 
     return {
@@ -133,6 +116,14 @@ export class AnthropicAdapter extends BaseProviderAdapter {
       maxOutputTokens: 8192,
       supportsSystemMessages: true,
       supportsFunctionCalling: true,
+    }
+  }
+
+  protected buildHeaders(): Record<string, string> {
+    return {
+      "Content-Type": "application/json",
+      "x-api-key": this.apiKey,
+      "anthropic-version": this.apiVersion,
     }
   }
 

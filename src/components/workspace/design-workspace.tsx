@@ -2,7 +2,6 @@ import { useState, useMemo, useCallback, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { useDesignStore } from "@/stores/design-store"
 import { useWorkspaceStore } from "@/stores/workspace-store"
-import { useToastStore } from "@/stores/toast-store"
 import { cn } from "@/lib/utils"
 import { copyToClipboard } from "@/lib/clipboard"
 import { useHaptic } from "@/lib/haptics"
@@ -14,7 +13,7 @@ import {
   GitBranch, ChevronRight, ChevronDown, X,
   Search, AlertCircle, CheckCircle2,
   Maximize2, Minimize2, ArrowUpToLine,
-  Layers, RefreshCw,
+  Layers,
 } from "lucide-react"
 import { PremiumEmptyState, getDesignEmptyState } from "./premium-empty-state"
 

@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef, useMemo } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { cn } from "@/lib/utils"
-import { executionEngine, type ExecutionState, type ExecutionEvent, type ExecutionTrace } from "@/runtime/execution-engine"
+import { executionEngine, type ExecutionState, type ExecutionEvent } from "@/runtime/execution-engine"
 import { EXECUTION_MODES, type ExecutionModeId } from "@/runtime/execution-mode"
 import { useAgentStore } from "@/stores/agent-store"
 import { useWorkspaceRuntime } from "@/runtime/workspace-runtime"
 import {
-  Activity, Cpu, Brain, Loader2, CheckCircle2, XCircle, AlertTriangle,
-  ChevronDown, ChevronUp, Clock, BarChart3, Layers, Terminal, Zap,
+  Activity, Cpu, Brain, Loader2, AlertTriangle,
+  ChevronDown, ChevronUp, BarChart3, Layers, Terminal, Zap,
   Target, BookOpen, UserCheck, Shield,
 } from "lucide-react"
 

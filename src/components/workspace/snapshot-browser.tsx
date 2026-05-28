@@ -5,9 +5,9 @@ import { useWorkspaceStore } from "@/stores/workspace-store"
 import { useToastStore } from "@/stores/toast-store"
 import { useHaptic } from "@/lib/haptics"
 import type { FileSnapshot } from "@/lib/history"
-import { Button } from "@/components/ui/button"
+import { Button } from "@agentic-os/ui"
 import {
-  History, RotateCcw, FileCode, Clock, User, AlertTriangle,
+  History, RotateCcw, FileCode, Clock, AlertTriangle,
   Loader2, ChevronDown, Search, RefreshCw,
 } from "lucide-react"
 

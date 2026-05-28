@@ -12,6 +12,7 @@ import { defaultContext, type ResolutionContext } from '@/runtime/prompting/regi
 import { CapabilityResolver } from '@/runtime/prompting/providers/CapabilityResolver'
 import { getFormatterForProvider } from '@/runtime/prompting/formatters'
 import { RuntimeOS } from '@/runtime/RuntimeOS'
+import { getWorkspaceContextSnapshot } from '@/stores/workspace-store'
 
 export type ContextManagerConfig = {
   defaultModel?: string
@@ -89,6 +90,38 @@ export class ContextManager {
     this.compactor.resetCompactionCount()
   }
 
+  /**
+   * Read the current workspace state from the store and merge it into
+   * the ResolutionContext for prompt rendering. This is the single point
+   * where the editor's active file, cursor, selection, open tabs, etc.
+   * become visible to the prompt composition engine.
+   */
+  private readWorkspaceContext(): Partial<ResolutionContext> {
+    try {
+      const ws = getWorkspaceContextSnapshot()
+      if (!ws.activeFilePath && ws.openFiles.length === 0) return {}
+
+      return {
+        activeFilePath: ws.activeFilePath ?? undefined,
+        activeFileName: ws.activeFileName ?? undefined,
+        activeFileLanguage: ws.activeFileLanguage ?? undefined,
+        activeFileLines: ws.activeFileLines > 0 ? ws.activeFileLines : undefined,
+        openFiles: ws.openFiles.length > 0 ? ws.openFiles : undefined,
+        selectedText: ws.selectedText || undefined,
+        cursorLine: ws.cursorLine > 0 ? ws.cursorLine : undefined,
+        cursorColumn: ws.cursorColumn > 0 ? ws.cursorColumn : undefined,
+        visibleRangeStart: ws.visibleRangeStart > 0 ? ws.visibleRangeStart : undefined,
+        visibleRangeEnd: ws.visibleRangeEnd > 0 ? ws.visibleRangeEnd : undefined,
+        unsavedChanges: ws.unsavedChanges > 0 ? ws.unsavedChanges : undefined,
+        recentEdits: ws.recentEdits.length > 0 ? ws.recentEdits : undefined,
+        fileTreeSummary: ws.fileTreeSummary || undefined,
+      }
+    } catch {
+      // Workspace store may not be available (e.g. during SSR / testing)
+      return {}
+    }
+  }
+
   async assembleSystemPrompt(input: ContextAssemblyInput, options?: { cacheOptimize?: boolean }): Promise<ContextAssemblyResult> {
     const providerCapabilities = this.capabilityResolver.resolveFromModel(this.currentModel)
 
@@ -106,7 +139,8 @@ export class ContextManager {
     })
 
     const toolCount = this.runtimeOS?.toolRegistry.size().builtin ?? 0
-    const resolveCtxFinal: ResolutionContext = { ...resolveCtx, toolCount }
+    const workspaceCtx = this.readWorkspaceContext()
+    const resolveCtxFinal: ResolutionContext = { ...resolveCtx, toolCount, ...workspaceCtx }
 
     const plan = this.promptRegistry.plan(resolveCtxFinal)
 
@@ -139,7 +173,8 @@ export class ContextManager {
     })
 
     const toolCount = this.runtimeOS?.toolRegistry.size().builtin ?? 0
-    const resolveCtxFinal: ResolutionContext = { ...resolveCtx, toolCount }
+    const workspaceCtx = this.readWorkspaceContext()
+    const resolveCtxFinal: ResolutionContext = { ...resolveCtx, toolCount, ...workspaceCtx }
 
     const plan = this.promptRegistry.plan(resolveCtxFinal)
     const result = await this.compositionEngine.compose(plan, resolveCtxFinal)

@@ -6,13 +6,12 @@ import { RoleHierarchyTree } from "@/components/settings/agents/role-hierarchy-t
 import { RoleDependencyGraph } from "@/components/settings/agents/role-dependency-graph"
 import { useAppStore } from "@/stores/app-store"
 import { useIntegrity } from "@/lib/use-integrity"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
+import { Button, Badge } from "@agentic-os/ui"
 import { useLeakTracker } from "@/performance/leak-detector"
 import {
   Users, LayoutGrid, GitFork, Share2, Plus, Search,
   Settings2, AlertTriangle, CheckCircle2, Cpu, Brain,
-  Activity, RefreshCw, Sparkles, Wifi, WifiOff,
+  Activity, RefreshCw, Wifi, WifiOff,
 } from "lucide-react"
 
 type ViewMode = "grid" | "hierarchy" | "dependencies"

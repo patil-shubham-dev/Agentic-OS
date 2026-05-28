@@ -1,5 +1,5 @@
 import type { NormalizedChunk } from "./StreamNormalizer"
-import { invoke } from "@tauri-apps/api/core"
+// fetchStream and fetchJson use native fetch() — no Tauri IPC dependency
 
 export interface ProviderCapabilities {
   streaming: boolean
@@ -83,121 +83,13 @@ export abstract class BaseProviderAdapter {
     onError: (error: Error) => void,
     signal?: AbortSignal,
   ): Promise<void> {
-    // External providers: route through Tauri IPC (CORS-immune)
-    if (this.isExternalProvider()) {
-      try {
-        if (this.protocol === "anthropic") {
-          // Anthropic protocol: use the provider_gateway streaming path
-          // The Anthropic stream is handled in provider-gateway.ts which
-          // uses fetch() with Anthropic-specific headers and SSE parsing.
-          // Anthropic's API supports CORS, so fetch() works from any context.
-          const anthropicUrl = this.baseUrl.replace(/\/+$/, "") +
-            (this.baseUrl.endsWith("/v1") ? "/messages" : "/v1/messages")
-          const systemMessages = ((body as any).messages ?? []).filter(
-            (m: { role: string }) => m.role === "system"
-          )
-          const requestBody = {
-            model: (body as any).model ?? "unknown",
-            messages: ((body as any).messages ?? []).filter(
-              (m: { role: string }) => m.role !== "system"
-            ),
-            max_tokens: (body as any).max_tokens ?? 8192,
-            stream: true,
-            ...(systemMessages.length > 0 ? {
-              system: systemMessages.map((m: { content: string }) => m.content).join("\n")
-            } : {}),
-            ...((body as any).tools ? {
-              tools: (body as any).tools.map((t: any) => ({
-                name: t.function?.name ?? t.name,
-                description: t.function?.description ?? t.description,
-                input_schema: t.function?.parameters ?? t.parameters,
-              }))
-            } : {}),
-          }
-
-          const response = await fetch(anthropicUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-api-key": this.apiKey.trim(),
-              "anthropic-version": "2023-06-01",
-            },
-            body: JSON.stringify(requestBody),
-            signal,
-          })
-
-          if (!response.ok) {
-            const text = await response.text().catch(() => "")
-            onError(new Error(`Anthropic API error ${response.status}: ${text.slice(0, 200)}`))
-            return
-          }
-
-          if (!response.body) {
-            onError(new Error("Response body is null"))
-            return
-          }
-
-          const reader = response.body.getReader()
-          const decoder = new TextDecoder()
-          let buffer = ""
-          let currentEvent = ""
-
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-
-            buffer += decoder.decode(value, { stream: true })
-            const lines = buffer.split("\n")
-            buffer = lines.pop() ?? ""
-
-            for (const line of lines) {
-              const trimmed = line.replace(/\r$/, "")
-              if (!trimmed) continue
-
-              if (trimmed.startsWith("event: ")) {
-                currentEvent = trimmed.slice(7)
-                continue
-              }
-
-              if (trimmed.startsWith("data: ")) {
-                const dataStr = trimmed.slice(6)
-                if (dataStr) {
-                  // Pass the raw data line to the normalizer
-                  onLine(`data: ${dataStr}`)
-                }
-                currentEvent = ""
-              }
-            }
-          }
-
-          if (buffer.trim()) {
-            const trimmed = buffer.replace(/\r$/, "").trim()
-            if (trimmed.startsWith("data: ")) {
-              onLine(trimmed)
-            }
-          }
-        } else {
-          // OpenAI-compatible: route through stream_openai_chat Tauri IPC
-          await invoke("stream_openai_chat", {
-            endpoint: url,
-            apiKey: this.apiKey.trim(),
-            model: (body as any).model ?? "unknown",
-            messages: (body as any).messages ?? [],
-            tools: (body as any).tools ?? null,
-            streamId: `adapter_stream_${Date.now()}`,
-          })
-        }
-      } catch (err) {
-        onError(err instanceof Error ? err : new Error(String(err)))
-      }
-      return
-    }
-
+    // Raw SSE stream transport using fetch() — works in both Tauri WebView and browser.
+    // Passes each SSE line to the onLine callback for protocol-specific parsing.
     try {
       const response = await fetch(url, {
         method: "POST",
         headers: this.buildHeaders(),
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...body, stream: true }),
         signal,
       })
 
@@ -225,12 +117,16 @@ export abstract class BaseProviderAdapter {
         buffer = lines.pop() ?? ""
 
         for (const line of lines) {
-          onLine(line)
+          const trimmed = line.replace(/\r$/, "")
+          if (trimmed) {
+            onLine(trimmed)
+          }
         }
       }
 
+      // Drain remaining buffer
       if (buffer.trim()) {
-        onLine(buffer)
+        onLine(buffer.trim())
       }
     } catch (err) {
       onError(err instanceof Error ? err : new Error(String(err)))
@@ -242,31 +138,21 @@ export abstract class BaseProviderAdapter {
     body: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<Record<string, unknown>> {
-    // External providers: route through Tauri IPC (CORS-immune)
-    if (this.isExternalProvider()) {
-      // Pass the correct runtime key so the Rust backend uses the right protocol
-      const runtime = this.protocol === "anthropic" ? "Anthropic" : null
-      return await invoke("provider_chat_completion", {
-        baseUrl: this.baseUrl,
-        apiKey: this.apiKey.trim(),
-        runtime,
-        request: body,
-      }) as Record<string, unknown>
-    }
-
-    const response = await fetch(url, {
+    // Raw JSON POST transport using fetch() — returns the provider's raw response.
+    // Works in both Tauri WebView and browser environments.
+    const resp = await fetch(url, {
       method: "POST",
       headers: this.buildHeaders(),
       body: JSON.stringify(body),
       signal,
     })
 
-    if (!response.ok) {
-      const text = await response.text().catch(() => "")
-      throw new Error(`HTTP ${response.status}: ${text.slice(0, 300)}`)
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "")
+      throw new Error(`HTTP ${resp.status}: ${text.slice(0, 300)}`)
     }
 
-    return response.json()
+    return resp.json()
   }
 
   /**

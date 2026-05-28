@@ -29,6 +29,7 @@ import { PluginRegistry } from './plugins/PluginRegistry'
 import { PluginLifecycle } from './plugins/PluginLifecycle'
 import { PluginLoader } from './plugins/PluginLoader'
 import { registerBuiltinTools } from '@/lib/agents/agent-tools'
+import { RuntimeCleanupManager } from "./RuntimeCleanupManager"
 
 export class RuntimeOS {
   private static instance: RuntimeOS
@@ -63,6 +64,8 @@ export class RuntimeOS {
   readonly pluginLifecycle: PluginLifecycle
   readonly pluginLoader: PluginLoader
 
+  private unsubCleanup: (() => void) | null = null
+
   private constructor() {
     this.toolRegistry = new ToolRegistry()
     this.toolResolver = new ToolResolver(this.toolRegistry)
@@ -94,6 +97,12 @@ export class RuntimeOS {
     this.pluginRegistry = new PluginRegistry()
     this.pluginLifecycle = new PluginLifecycle(this.pluginRegistry)
     this.pluginLoader = new PluginLoader(this.pluginRegistry, this.pluginLifecycle)
+
+    // Register with cleanup manager
+    const cm = RuntimeCleanupManager.getInstance()
+    this.unsubCleanup = cm.onShutdown("runtime-os", async () => {
+      await this.shutdown()
+    })
   }
 
   static getInstance(): RuntimeOS {

@@ -1,4 +1,4 @@
-import { resolveByBaseUrl } from "./provider-registry"
+import { resolveByBaseUrl } from "@agentic-os/providers"
 
 export const CURRENT_CONFIG_VERSION = 1
 

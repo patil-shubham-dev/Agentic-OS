@@ -1,28 +1,24 @@
 import { useState, useRef, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { cn } from "@/lib/utils"
-import type { GatewayProvider } from "@/types"
-import { Badge } from "@/components/ui/badge"
-import { Tooltip } from "@/components/ui/tooltip"
-import type { ConnectionTest } from "../providers-tab"
+import type { GatewayProvider, ProviderModel } from "@/types"
+import type { ValidationResult } from "@/types"
 import {
   Globe, Eye, EyeOff, MoreHorizontal, Activity,
-  Trash2, Clock, Box, Wifi, WifiOff, Loader2, Zap, AlertTriangle, RefreshCw, Check,
-  ChevronDown, ChevronRight, Shield, Server, Terminal,
+  Trash2, Clock, Box, Loader2, Zap,
+  AlertTriangle, RefreshCw, Check, ChevronDown, ChevronRight,
+  Shield, Server, Terminal, Radio, BarChart3,
+  CircleDot, Copy, ExternalLink, Wifi, WifiOff,
+  Cpu, BookOpen, Layers, Gauge, Bug, List,
 } from "lucide-react"
-import { safeValidateProvider } from "@/lib/provider-manager"
-import { chatCompletion } from "@/lib/ai-service"
-import { providerStreamChatCompletion } from "@/lib/provider-gateway"
+import { safeValidateProvider } from "@agentic-os/providers"
 import { useAppStore } from "@/stores/app-store"
-import type { ValidationResult } from "@/types"
+import { PROVIDER_HEALTH_META, type ProviderHealthState } from "@agentic-os/providers"
+import { getHealthInfo, getProviderDiagnostics } from "@agentic-os/providers"
 
-// ── Secure API key masking ──
-
-function maskApiKey(key: string): string {
+export function maskApiKey(key: string): string {
   if (!key || key.length < 8) return key
-  // Show last 4 chars, mask everything before them
   const visible = key.slice(-4)
-  // Find a logical prefix boundary (last dash before the payload, or just first 4 chars)
   const dashIndex = key.slice(0, -4).lastIndexOf("-")
   const prefixLen = dashIndex >= 0 ? dashIndex + 1 : Math.min(4, key.length - 4)
   const prefix = key.slice(0, prefixLen)
@@ -30,43 +26,60 @@ function maskApiKey(key: string): string {
   return `${prefix}${"•".repeat(dots)}${visible}`
 }
 
-// ── Health status helpers ──
-
-type HealthLevel = "healthy" | "degraded" | "unhealthy" | "unknown"
-
-function getHealthFromLatency(latencyMs: number): HealthLevel {
-  if (latencyMs === 0) return "unknown"
-  if (latencyMs < 500) return "healthy"
-  if (latencyMs < 2000) return "degraded"
-  return "unhealthy"
+function HealthDot({ state, pulse = false }: { state: ProviderHealthState; pulse?: boolean }) {
+  const meta = PROVIDER_HEALTH_META[state] ?? PROVIDER_HEALTH_META.unknown
+  return (
+    <span
+      className={cn(
+        "inline-block h-2 w-2 rounded-full",
+        meta.dot,
+        pulse && (state === "validating" || state === "reconnecting") && "animate-pulse",
+      )}
+    />
+  )
 }
 
-const HEALTH_META: Record<HealthLevel, { color: string; dot: string; label: string }> = {
-  healthy: { color: "text-green-400", dot: "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]", label: "Healthy" },
-  degraded: { color: "text-amber-400", dot: "bg-amber-500 shadow-[0_0_8px_rgba(251,191,36,0.6)]", label: "Degraded" },
-  unhealthy: { color: "text-red-400", dot: "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]", label: "Unhealthy" },
-  unknown: { color: "text-white/30", dot: "bg-white/20", label: "Unknown" },
+function ModelChip({ model }: { model: ProviderModel }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md bg-white/[0.04] border border-white/5 px-2 py-1 text-[10px] font-mono text-white/50 hover:bg-white/[0.06] hover:text-white/70 transition-all">
+      <CircleDot className="h-2 w-2 text-white/20 shrink-0" />
+      <span className="truncate max-w-[120px]">{model.name}</span>
+      {model.supportsTools && <span className="text-[8px] text-green-400/40">t</span>}
+      {model.supportsVision && <span className="text-[8px] text-purple-400/40">v</span>}
+    </span>
+  )
+}
+
+function StatCell({ label, value, icon: Icon, color }: { label: string; value: string; icon: React.ElementType; color: string }) {
+  return (
+    <div className="flex items-center gap-1.5 rounded-lg bg-white/[0.02] border border-white/5 px-2.5 py-2 text-xs transition-all hover:bg-white/[0.03]">
+      <Icon className={cn("h-3 w-3 shrink-0", color)} />
+      <div className="min-w-0">
+        <span className={cn("block font-mono font-medium leading-tight", color)}>{value}</span>
+        <span className="block text-[9px] text-white/20 leading-tight">{label}</span>
+      </div>
+    </div>
+  )
 }
 
 export function ProviderCard({
   provider,
-  connectionTest,
   onRetest,
   onEdit,
   onDelete,
   expanded: controlledExpanded,
+  onOpenDiagnostics,
 }: {
   provider: GatewayProvider
-  connectionTest?: ConnectionTest
   onRetest?: () => void
   onEdit: () => void
   onDelete: () => void
   expanded?: boolean
+  onOpenDiagnostics?: () => void
 }) {
   const [internalExpanded, setInternalExpanded] = useState(false)
   const expanded = controlledExpanded !== undefined ? controlledExpanded : internalExpanded
 
-  // Sync internal state when controlled prop changes
   const prevControlled = useRef(controlledExpanded)
   useEffect(() => {
     if (controlledExpanded !== undefined && controlledExpanded !== prevControlled.current) {
@@ -74,6 +87,7 @@ export function ProviderCard({
       setInternalExpanded(controlledExpanded)
     }
   }, [controlledExpanded])
+
   const [showKey, setShowKey] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -82,16 +96,30 @@ export function ProviderCard({
 
   const updateProvider = useAppStore((s) => s.updateProvider)
 
-  const healthLevel: HealthLevel = connectionTest?.status === "success"
-    ? getHealthFromLatency(testResult?.latencyMs ?? 0)
-    : connectionTest?.status === "error"
-    ? "unhealthy"
-    : "unknown"
+  const healthInfo = getHealthInfo(provider.baseUrl, provider.id)
+  const diagnostics = getProviderDiagnostics(provider.baseUrl)
+  const healthMeta = PROVIDER_HEALTH_META[healthInfo.state] ?? PROVIDER_HEALTH_META.unknown
 
-  const healthMeta = HEALTH_META[healthLevel]
+  const hasApiKey = provider.apiKey.length > 0
+  const modelCount = provider.models.length
+  const firstModels = provider.models.slice(0, 4)
+
+  const isConnected = healthInfo.state === "connected"
+  const streamingOk = diagnostics?.lastValidationRun?.steps?.find(s => s.step === "streaming")?.passed ?? false
+  const toolSupport = provider.models.some((m) => m.supportsTools)
+  const visionSupport = provider.models.some((m) => m.supportsVision)
+  const maxCtx = Math.max(...provider.models.map((m) => m.contextWindow ?? 0), 0)
+
+  const isAnthropic = provider.baseUrl.includes("anthropic.com")
+  const isGemini = provider.baseUrl.includes("googleapis.com") || provider.baseUrl.includes("generativelanguage")
+  const isOllama = provider.baseUrl.includes("11434")
+  const isNvidia = provider.baseUrl.includes("nvidia.com")
+
+  const providerIcon = isAnthropic ? "A" : isGemini ? "G" : isOllama ? "O" : isNvidia ? "N" : provider.name[0]
 
   async function runHealthCheck() {
     setTesting(true)
+    const t0 = performance.now()
     try {
       const result = await safeValidateProvider(provider.baseUrl, provider.apiKey)
       if (!mountedRef.current) return
@@ -102,83 +130,11 @@ export function ProviderCard({
     } catch (err) {
       if (!mountedRef.current) return
       const msg = err instanceof Error ? err.message : "Health check failed"
-      setTestResult({ success: false, runtime: null, latencyMs: 0, error: msg })
+      setTestResult({ success: false, runtime: null, latencyMs: Math.round(performance.now() - t0), error: msg })
     } finally {
       if (mountedRef.current) setTesting(false)
     }
   }
-
-  const [modelTesting, setModelTesting] = useState(false)
-  const [modelTestResult, setModelTestResult] = useState<{ success: boolean; latencyMs?: number; error?: string } | null>(null)
-
-  async function runModelTest() {
-    const model = provider.models[0]?.id
-    if (!model) return
-    setModelTesting(true)
-    setModelTestResult(null)
-    try {
-      const start = Date.now()
-      const res = await chatCompletion(
-        provider.baseUrl, provider.apiKey, provider.runtime,
-        { model, messages: [{ role: "user", content: "Say 'ok' and nothing else." }] },
-      )
-      if (!mountedRef.current) return
-      setModelTestResult({ success: true, latencyMs: Date.now() - start })
-    } catch (err) {
-      if (!mountedRef.current) return
-      const msg = err instanceof Error ? err.message : "Model test failed"
-      setModelTestResult({ success: false, error: msg })
-    } finally {
-      if (mountedRef.current) setModelTesting(false)
-    }
-  }
-
-  const [streamTesting, setStreamTesting] = useState(false)
-  const [streamTestResult, setStreamTestResult] = useState<{ success: boolean; ttfbMs?: number; charsPerSec?: number; totalMs?: number; chars?: number; error?: string } | null>(null)
-
-  async function runStreamTest() {
-    const model = provider.models[0]?.id
-    if (!model) return
-    setStreamTesting(true)
-    setStreamTestResult(null)
-    try {
-      const start = performance.now()
-      let ttfb: number | null = null
-      let totalChars = 0
-      await providerStreamChatCompletion(
-        provider.baseUrl, provider.apiKey, provider.runtime,
-        { model, messages: [{ role: "user", content: "Count from 1 to 5, one number per line." }] },
-        {
-          onReady: () => {},
-          onToken: (token) => {
-            if (ttfb === null) ttfb = performance.now() - start
-            totalChars += token.length
-          },
-          onDone: () => {
-            if (!mountedRef.current) return
-            const total = performance.now() - start
-            const cps = total > 0 ? Math.round((totalChars / total) * 1000) : 0
-            setStreamTestResult({ success: true, ttfbMs: Math.round(ttfb ?? total), charsPerSec: cps, totalMs: Math.round(total), chars: totalChars })
-          },
-          onError: (err) => {
-            if (!mountedRef.current) return
-            setStreamTestResult({ success: false, error: err.message })
-          },
-        },
-      )
-    } catch (err) {
-      if (!mountedRef.current) return
-      const msg = err instanceof Error ? err.message : "Stream test failed"
-      setStreamTestResult({ success: false, error: msg })
-    } finally {
-      if (mountedRef.current) setStreamTesting(false)
-    }
-  }
-
-  const hasApiKey = provider.apiKey.length > 0
-  const modelCount = provider.models.length
-  const firstModels = provider.models.slice(0, 3)
-  const isConnected = connectionTest?.status === "success"
 
   return (
     <motion.div
@@ -190,90 +146,113 @@ export function ProviderCard({
       className={cn(
         "group relative overflow-hidden rounded-2xl border backdrop-blur-xl transition-all duration-200",
         expanded
-          ? "border-white/10 bg-gradient-to-br from-white/[0.05] to-white/[0.02]"
+          ? cn(healthMeta.border, "bg-gradient-to-br from-white/[0.05] to-white/[0.02]")
           : "border-white/5 bg-gradient-to-br from-white/[0.04] to-white/[0.02] hover:border-white/10 hover:-translate-y-0.5",
       )}
     >
-      {/* Status bar */}
-      <motion.div
-        animate={{ opacity: isConnected ? 1 : 0.4 }}
-        className={cn(
-          "absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r",
-          isConnected ? "from-green-500/50 to-emerald-500/50" : "from-white/10 to-white/5",
-        )}
-      />
+      {/* Health gradient bar */}
+      <div className={cn(
+        "absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r transition-opacity duration-500",
+        isConnected ? "from-green-500/50 to-green-500/10" :
+        healthInfo.state === "invalid_auth" ? "from-red-500/50 to-red-500/10" :
+        healthInfo.state === "offline" || healthInfo.state === "timeout" ? "from-orange-500/50 to-orange-500/10" :
+        "from-white/10 to-transparent",
+      )} />
 
-      {/* ── Collapsible header ── */}
+      {/* ── Header ── */}
       <button
         onClick={() => setInternalExpanded(!expanded)}
         className="relative w-full p-4 text-left focus:outline-none"
       >
         <div className="flex items-start gap-3">
-          {/* Avatar */}
+          {/* Provider avatar */}
           <div className={cn(
-            "flex items-center justify-center h-10 w-10 rounded-xl border transition-all shrink-0",
-            isConnected
-              ? "border-green-500/20 bg-gradient-to-br from-green-500/20 to-emerald-500/10"
-              : "border-white/10 bg-gradient-to-br from-blue-500/20 to-purple-500/10",
+            "relative flex items-center justify-center h-10 w-10 rounded-xl border transition-all shrink-0 overflow-hidden",
+            isConnected ? "border-green-500/20 bg-gradient-to-br from-green-500/20 to-emerald-500/10" :
+            healthInfo.state === "invalid_auth" ? "border-red-500/20 bg-gradient-to-br from-red-500/20 to-rose-500/10" :
+            healthInfo.state === "offline" || healthInfo.state === "timeout" ? "border-orange-500/20 bg-gradient-to-br from-orange-500/20 to-amber-500/10" :
+            "border-white/10 bg-gradient-to-br from-blue-500/20 to-purple-500/10",
           )}>
-            <span className="text-lg font-bold text-white/80">{provider.name[0]}</span>
+            <span className="text-lg font-bold text-white/80">{providerIcon}</span>
+            <span className={cn(
+              "absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-[#0a0a14]",
+              healthMeta.dot,
+              (healthInfo.state === "validating" || healthInfo.state === "reconnecting") && "animate-pulse",
+            )} />
           </div>
 
+          {/* Name + type + health row */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <h3 className="text-sm font-semibold text-white truncate">{provider.name}</h3>
               {provider.runtime && (
-                <Badge variant={provider.isLocal ? "success" : "info"} size="sm">
+                <span className={cn(
+                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-medium",
+                  provider.isLocal ? "bg-green-500/10 text-green-400 border border-green-500/20" : "bg-blue-500/10 text-blue-400 border border-blue-500/20",
+                )}>
+                  <Server className="h-2.5 w-2.5" />
                   {provider.runtime}
-                </Badge>
+                </span>
               )}
               {provider.isLocal && (
-                <Badge variant="purple" size="sm">Local</Badge>
+                <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                  <WifiOff className="h-2.5 w-2.5" />
+                  Local
+                </span>
               )}
             </div>
             <div className="flex items-center gap-2 mt-0.5">
               <span className="text-[10px] text-white/30 font-mono truncate">
                 {provider.isOpenAiCompatible ? "OpenAI-compatible" : provider.runtime || "Unknown"}
               </span>
-              {/* Connection status badge */}
+              {/* Health label */}
               <span className={cn(
                 "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium",
-                connectionTest?.status === "success" ? "bg-green-500/10 text-green-400" :
-                connectionTest?.status === "error" ? "bg-red-500/10 text-red-400" :
-                "bg-white/5 text-white/30",
+                healthMeta.bg, healthMeta.color,
               )}>
-                <span className={cn("h-1.5 w-1.5 rounded-full", healthMeta.dot)} />
-                {connectionTest?.status === "pending" ? "Checking..." :
-                 connectionTest?.status === "success" ? "Online" :
-                 connectionTest?.status === "error" ? "Error" : "Unknown"}
+                <HealthDot state={healthInfo.state} />
+                {healthMeta.label}
               </span>
+              {/* Latency */}
+              {healthInfo.latencyMs > 0 && (
+                <span className="inline-flex items-center gap-1 text-[9px] text-white/30 font-mono">
+                  <Zap className="h-2 w-2" />
+                  {healthInfo.latencyMs}ms
+                </span>
+              )}
             </div>
           </div>
 
-          {/* Quick actions */}
+          {/* Right actions */}
           <div className="flex items-center gap-1 shrink-0">
-            <Tooltip content={connectionTest?.status === "success" ? `${testResult?.latencyMs ?? "?"}ms latency` : "Connection status"}>
-              <div className={cn(
-                "flex items-center gap-1.5 rounded-lg px-2 py-1 text-[10px] font-mono border transition-all",
-                isConnected
-                  ? "bg-green-500/5 border-green-500/15 text-green-400"
-                  : connectionTest?.status === "error"
-                  ? "bg-red-500/5 border-red-500/15 text-red-400"
-                  : "bg-white/[0.02] border-white/5 text-white/30",
-              )}>
-                {connectionTest?.status === "pending" ? (
-                  <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                ) : (
-                  <Zap className="h-2.5 w-2.5" />
-                )}
-                {connectionTest?.status === "success" ? `${testResult?.latencyMs ?? "?"}ms` :
-                 connectionTest?.status === "error" ? "ERR" : "—"}
-              </div>
-            </Tooltip>
-            <div
-              onClick={(e) => e.stopPropagation()}
-              className="relative"
-            >
+            {/* Status indicator */}
+            <div className={cn(
+              "flex items-center gap-1.5 rounded-lg px-2 py-1 text-[10px] font-mono border transition-all",
+              healthMeta.bg, healthMeta.border, healthMeta.color,
+            )}>
+              {testing ? (
+                <Loader2 className="h-2.5 w-2.5 animate-spin" />
+              ) : isConnected ? (
+                <Wifi className="h-2.5 w-2.5" />
+              ) : (
+                <Activity className="h-2.5 w-2.5" />
+              )}
+              {healthInfo.latencyMs > 0 ? `${healthInfo.latencyMs}ms` : "—"}
+            </div>
+
+            {/* Diagnostics */}
+            {onOpenDiagnostics && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onOpenDiagnostics() }}
+                className="rounded-lg p-1.5 text-white/30 hover:text-cyan-400 hover:bg-white/5 transition-all"
+                title="Diagnostics console"
+              >
+                <Terminal className="h-4 w-4" />
+              </button>
+            )}
+
+            {/* Menu */}
+            <div onClick={(e) => e.stopPropagation()} className="relative">
               <button
                 onClick={() => setMenuOpen(!menuOpen)}
                 className="rounded-lg p-1.5 text-white/30 hover:text-white hover:bg-white/5 transition-all"
@@ -286,22 +265,30 @@ export function ProviderCard({
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="absolute right-0 top-full mt-1 w-44 rounded-xl border border-white/10 bg-black/90 backdrop-blur-2xl p-1 shadow-2xl z-20"
+                    className="absolute right-0 top-full mt-1 w-48 rounded-xl border border-white/10 bg-black/90 backdrop-blur-2xl p-1 shadow-2xl z-20"
                   >
-                    <button onClick={() => { onEdit(); setMenuOpen(false) }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-white/70 hover:bg-white/5 hover:text-white transition-all">
-                      <Activity className="h-3.5 w-3.5" /> Edit
+                    <button onClick={() => { onEdit(); setMenuOpen(false) }}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-white/70 hover:bg-white/5 hover:text-white transition-all">
+                      <Activity className="h-3.5 w-3.5" /> Edit Provider
                     </button>
-                    <button onClick={() => { runHealthCheck(); setMenuOpen(false) }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-white/70 hover:bg-white/5 hover:text-white transition-all">
-                      <RefreshCw className="h-3.5 w-3.5" /> Test Connection
+                    <button onClick={() => { onRetest?.(); setMenuOpen(false) }}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-white/70 hover:bg-white/5 hover:text-white transition-all">
+                      <RefreshCw className="h-3.5 w-3.5" /> Refresh Models
                     </button>
-                    {provider.models.length > 0 && (
-                      <button onClick={() => { runModelTest(); setMenuOpen(false) }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-white/70 hover:bg-white/5 hover:text-white transition-all">
-                        <Zap className="h-3.5 w-3.5" /> Test Model
+                    <button onClick={() => { runHealthCheck(); setMenuOpen(false) }}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-white/70 hover:bg-white/5 hover:text-white transition-all">
+                      <Zap className="h-3.5 w-3.5" /> Validate Connection
+                    </button>
+                    {onOpenDiagnostics && (
+                      <button onClick={() => { onOpenDiagnostics(); setMenuOpen(false) }}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-white/70 hover:bg-white/5 hover:text-white transition-all">
+                        <Bug className="h-3.5 w-3.5" /> View Diagnostics
                       </button>
                     )}
                     <div className="my-1 border-t border-white/5" />
-                    <button onClick={() => { onDelete(); setMenuOpen(false) }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 transition-all">
-                      <Trash2 className="h-3.5 w-3.5" /> Remove
+                    <button onClick={() => { onDelete(); setMenuOpen(false) }}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 transition-all">
+                      <Trash2 className="h-3.5 w-3.5" /> Remove Provider
                     </button>
                   </motion.div>
                 )}
@@ -316,43 +303,30 @@ export function ProviderCard({
           </div>
         </div>
 
-        {/* Summary metrics row (always visible) */}
-        <div className="flex items-center gap-3 mt-3 text-[10px]">
-          {/* API key masked */}
-          <div className="flex items-center gap-1.5 text-white/30 font-mono min-w-0">
-            <Shield className="h-3 w-3 shrink-0" />
-            <span className="truncate">
-              {hasApiKey ? maskApiKey(provider.apiKey) : "No API key"}
-            </span>
-          </div>
-
-          <span className="text-white/10">|</span>
-
-          {/* Models count */}
-          <div className="flex items-center gap-1 text-white/30">
-            <Box className="h-3 w-3" />
-            <span>{modelCount} model{modelCount !== 1 ? "s" : ""}</span>
-          </div>
-
-          {testResult?.latencyMs && testResult.latencyMs > 0 && (
-            <>
-              <span className="text-white/10">|</span>
-              <div className="flex items-center gap-1 text-white/30">
-                <Clock className="h-3 w-3" />
-                <span>{testResult.latencyMs}ms</span>
-              </div>
-            </>
-          )}
-
-          {/* Endpoint URL (collapsed) */}
-          <span className="hidden md:inline-flex items-center gap-1 text-white/20 ml-auto truncate max-w-[200px]">
-            <Globe className="h-3 w-3 shrink-0" />
-            <span className="truncate">{provider.baseUrl}</span>
-          </span>
+        {/* Metrics bar (always visible) */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
+          <StatCell label="Latency" value={healthInfo.latencyMs > 0 ? `${healthInfo.latencyMs}ms` : "—"} icon={Zap} color="text-white/70" />
+          <StatCell label="Models" value={String(modelCount)} icon={Box} color="text-white/70" />
+          <StatCell label="Streaming" value={streamingOk ? "✓" : "—"} icon={Radio} color={streamingOk ? "text-green-400" : "text-white/30"} />
+          <StatCell label="Runtime" value={provider.runtime ?? "—"} icon={Cpu} color="text-white/70" />
         </div>
+
+        {/* Model chips (collapsed) */}
+        {modelCount > 0 && !expanded && (
+          <div className="flex flex-wrap gap-1 mt-2">
+            {firstModels.slice(0, 3).map((m) => (
+              <ModelChip key={m.id} model={m} />
+            ))}
+            {modelCount > 3 && (
+              <span className="inline-flex items-center text-[9px] text-white/20 px-1">
+                +{modelCount - 3} more
+              </span>
+            )}
+          </div>
+        )}
       </button>
 
-      {/* ── Expanded content ── */}
+      {/* ── Expanded Content ── */}
       <AnimatePresence initial={false}>
         {expanded && (
           <motion.div
@@ -364,186 +338,181 @@ export function ProviderCard({
             className="overflow-hidden border-t border-white/5"
           >
             <div className="p-4 pt-3 space-y-4">
-              {/* Endpoint URL (expanded) */}
-              <div className="flex items-center gap-2 text-xs text-white/30 font-mono bg-white/[0.02] rounded-lg px-3 py-2 border border-white/5">
-                <Globe className="h-3 w-3 shrink-0" />
-                <span className="truncate">{provider.baseUrl}</span>
-                {provider.runtime && (
-                  <Badge variant={provider.isLocal ? "success" : "info"} size="sm" className="shrink-0 ml-auto">
-                    <Server className="h-2.5 w-2.5 mr-0.5" />{provider.runtime}
-                  </Badge>
-                )}
+              {/* Info rows */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex items-center gap-2 text-xs text-white/30 font-mono bg-white/[0.02] rounded-xl px-3 py-2.5 border border-white/5 col-span-2">
+                  <Globe className="h-3.5 w-3.5 shrink-0 text-white/20" />
+                  <span className="truncate flex-1">{provider.baseUrl}</span>
+                  {provider.runtime && (
+                    <span className={cn(
+                      "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-medium shrink-0",
+                      provider.isLocal ? "bg-green-500/10 text-green-400" : "bg-blue-500/10 text-blue-400",
+                    )}>
+                      <Server className="h-2.5 w-2.5" />{provider.runtime}
+                    </span>
+                  )}
+                </div>
               </div>
 
               {/* API key */}
               <div className="flex items-center gap-2">
-                <Tooltip content={hasApiKey ? "API key configured" : "No API key set"}>
-                  <div className="flex-1 flex items-center gap-2 rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2.5">
-                    <Shield className="h-3.5 w-3.5 text-white/20 shrink-0" />
-                    {hasApiKey ? (
-                      <code className="text-xs text-white/40 font-mono select-all">
-                        {showKey ? provider.apiKey : maskApiKey(provider.apiKey)}
-                      </code>
-                    ) : (
-                      <span className="text-xs text-amber-400/60">No API key set</span>
-                    )}
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setShowKey(!showKey) }}
-                      className="ml-auto rounded p-0.5 text-white/20 hover:text-white hover:bg-white/5 transition-all"
-                    >
-                      {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                    </button>
-                  </div>
-                </Tooltip>
-              </div>
-
-              {/* Health metrics grid */}
-              <div className="grid grid-cols-3 gap-2">
-                <Tooltip content={connectionTest?.error || "Connection status"}>
-                  <div className="flex items-center gap-1.5 rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2 text-xs">
-                    {testing ? (
-                      <Loader2 className="h-3 w-3 animate-spin text-white/40 shrink-0" />
-                    ) : testResult?.success ? (
-                      <Wifi className="h-3 w-3 text-green-400 shrink-0" />
-                    ) : testResult ? (
-                      <WifiOff className="h-3 w-3 text-red-400 shrink-0" />
-                    ) : (
-                      <Activity className="h-3 w-3 text-white/30 shrink-0" />
-                    )}
-                    <span className={cn(
-                      "truncate",
-                      testing ? "text-white/40" : testResult?.success ? "text-green-400" : testResult ? "text-red-400" : "text-white/40",
-                    )}>
-                      {testing ? "Testing" : testResult?.success ? "Online" : testResult ? "Error" : "Unknown"}
-                    </span>
-                  </div>
-                </Tooltip>
-                <Tooltip content="Response time">
-                  <div className="flex items-center gap-1.5 rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2 text-xs text-white/40">
-                    <Clock className="h-3 w-3 shrink-0" />
-                    <span className="font-mono">{testResult ? `${testResult.latencyMs}ms` : "—"}</span>
-                  </div>
-                </Tooltip>
-                <Tooltip content="Discovered models">
-                  <div className="flex items-center gap-1.5 rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2 text-xs text-white/40">
-                    <Box className="h-3 w-3 shrink-0" />
-                    <span className="font-mono">{modelCount} model{modelCount !== 1 ? "s" : ""}</span>
-                  </div>
-                </Tooltip>
-              </div>
-
-              {/* Model chips */}
-              {modelCount > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {firstModels.map((m) => (
-                    <span key={m.id} className="inline-flex items-center gap-1 rounded-full bg-white/[0.04] border border-white/5 px-2 py-0.5 text-[9px] font-mono text-white/40">
-                      {m.name}
-                    </span>
-                  ))}
-                  {modelCount > 3 && (
-                    <span className="inline-flex items-center text-[9px] text-white/20 px-1">
-                      +{modelCount - 3} more
-                    </span>
+                <div className="flex-1 flex items-center gap-2 rounded-xl bg-white/[0.02] border border-white/5 px-3 py-2.5 hover:bg-white/[0.03] transition-all">
+                  <Shield className="h-3.5 w-3.5 text-white/20 shrink-0" />
+                  {hasApiKey ? (
+                    <code className="text-xs text-white/40 font-mono select-all flex-1 truncate">
+                      {showKey ? provider.apiKey : maskApiKey(provider.apiKey)}
+                    </code>
+                  ) : (
+                    <span className="text-xs text-amber-400/60">No API key set</span>
                   )}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setShowKey(!showKey) }}
+                    className="rounded p-0.5 text-white/20 hover:text-white hover:bg-white/5 transition-all shrink-0"
+                  >
+                    {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  </button>
+                  {hasApiKey && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(provider.apiKey) }}
+                      className="rounded p-0.5 text-white/20 hover:text-white hover:bg-white/5 transition-all shrink-0"
+                      title="Copy API key"
+                    >
+                      <Copy className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Health metrics */}
+              <div className="grid grid-cols-4 gap-2">
+                <StatCell label="Status" value={healthMeta.label} icon={Activity} color={healthMeta.color} />
+                <StatCell label="Avg Latency" value={diagnostics?.avgLatencyMs ? `${diagnostics.avgLatencyMs}ms` : "—"} icon={Gauge} color="text-white/70" />
+                <StatCell label="Uptime" value={diagnostics ? `${diagnostics.uptimePercent}%` : "—"} icon={BarChart3} color={(diagnostics?.uptimePercent ?? 0) >= 80 ? "text-green-400" : (diagnostics?.uptimePercent ?? 0) >= 50 ? "text-amber-400" : "text-white/30"} />
+                <StatCell label="Failures" value={diagnostics ? String(diagnostics.failureCount) : "—"} icon={AlertTriangle} color={diagnostics?.failureCount ? "text-red-400" : "text-white/30"} />
+              </div>
+
+              {/* P50/P95 */}
+              {diagnostics && (diagnostics.p50LatencyMs > 0 || diagnostics.p95LatencyMs > 0) && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="flex items-center gap-2 rounded-xl bg-white/[0.02] border border-white/5 px-3 py-2">
+                    <div className="h-6 w-6 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                      <Clock className="h-3 w-3 text-blue-400" />
+                    </div>
+                    <div>
+                      <span className="block text-xs text-white/70 font-mono">P50: {diagnostics.p50LatencyMs}ms</span>
+                      <span className="block text-[9px] text-white/20">Median latency</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-xl bg-white/[0.02] border border-white/5 px-3 py-2">
+                    <div className="h-6 w-6 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
+                      <Activity className="h-3 w-3 text-amber-400" />
+                    </div>
+                    <div>
+                      <span className="block text-xs text-white/70 font-mono">P95: {diagnostics.p95LatencyMs}ms</span>
+                      <span className="block text-[9px] text-white/20">95th percentile</span>
+                    </div>
+                  </div>
                 </div>
               )}
 
-              {/* Test buttons */}
+              {/* Capability badges */}
+              <div className="flex flex-wrap gap-1">
+                {streamingOk && <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-medium bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"><Radio className="h-2.5 w-2.5" />Streaming</span>}
+                {toolSupport && <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-medium bg-green-500/10 text-green-400 border border-green-500/20"><Zap className="h-2.5 w-2.5" />Tools</span>}
+                {visionSupport && <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20"><Eye className="h-2.5 w-2.5" />Vision</span>}
+                {maxCtx > 100000 && <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20"><BookOpen className="h-2.5 w-2.5" />{(maxCtx / 1000).toFixed(0)}K ctx</span>}
+              </div>
+
+              {/* Validation steps */}
+              {diagnostics?.lastValidationRun?.steps && diagnostics.lastValidationRun.steps.length > 0 && (
+                <div className="rounded-xl bg-white/[0.02] border border-white/5 p-3 space-y-1.5">
+                  <p className="text-[9px] text-white/30 font-medium uppercase tracking-wider flex items-center gap-1.5">
+                    <RefreshCw className="h-2.5 w-2.5" />
+                    Last Validation — {diagnostics.lastValidationRun.overall}
+                  </p>
+                  <div className="space-y-1">
+                    {diagnostics.lastValidationRun.steps.map((step, i) => (
+                      <div key={i} className="flex items-center gap-2 text-[10px]">
+                        <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", step.passed ? "bg-green-500" : "bg-red-500")} />
+                        <span className="text-white/40 w-20 uppercase text-[9px] font-medium">{step.step}</span>
+                        <span className={cn("font-mono", step.passed ? "text-green-400/60" : "text-red-400/60")}>
+                          {step.passed ? "✓ " : "✗ "}{step.latencyMs}ms
+                        </span>
+                        {step.statusCode && <span className="text-[9px] text-white/30">HTTP {step.statusCode}</span>}
+                        {!step.passed && step.error && (
+                          <span className="text-red-400/50 truncate max-w-[150px] text-[9px]" title={step.error}>{step.error}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="text-[9px] text-white/20 pt-1 border-t border-white/5 mt-1.5">
+                    Total: {diagnostics.lastValidationRun.totalLatencyMs}ms · {diagnostics.lastValidationRun.overall}
+                  </div>
+                </div>
+              )}
+
+              {/* Models list */}
+              {modelCount > 0 && (
+                <div>
+                  <div className="flex items-center gap-1 mb-1.5">
+                    <Box className="h-2.5 w-2.5 text-white/20" />
+                    <span className="text-[9px] text-white/30 font-medium uppercase tracking-wider">Models ({modelCount})</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                    {provider.models.map((m) => (
+                      <ModelChip key={m.id} model={m} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Error banner */}
+              {healthInfo.lastError && healthInfo.state !== "connected" && (
+                <div className="flex items-start gap-2 rounded-xl bg-red-500/5 border border-red-500/10 px-3 py-2.5">
+                  <AlertTriangle className="h-3.5 w-3.5 text-red-400 shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[10px] text-red-400/80 font-medium">Error</p>
+                    <p className="text-[9px] text-red-400/50 truncate">{healthInfo.lastError}</p>
+                  </div>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); runHealthCheck() }}
+                    className="shrink-0 rounded px-2 py-1 text-[9px] text-red-400/60 hover:text-red-400 hover:bg-red-500/10 transition-all"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              {/* Action buttons */}
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   onClick={(e) => { e.stopPropagation(); runHealthCheck() }}
                   disabled={testing}
                   className={cn(
-                    "flex-1 min-w-[120px] h-8 text-[10px] rounded-xl border transition-all flex items-center justify-center gap-1.5 disabled:opacity-40",
-                    testing
-                      ? "border-blue-500/20 text-blue-400"
-                      : testResult?.success
-                      ? "border-green-500/20 text-green-400 hover:bg-green-500/5"
-                      : "border-white/10 text-white/50 hover:text-white hover:bg-white/5",
+                    "flex-1 min-w-[80px] h-8 text-[10px] rounded-xl border transition-all flex items-center justify-center gap-1.5 disabled:opacity-40",
+                    testing ? "border-blue-500/20 text-blue-400" :
+                    testResult?.success ? "border-green-500/20 text-green-400 hover:bg-green-500/5" :
+                    "border-white/10 text-white/50 hover:text-white hover:bg-white/5",
                   )}
                 >
                   {testing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
-                  {testing ? "Testing..." : testResult?.success ? `Online (${testResult.latencyMs}ms)` : "Test Connection"}
+                  {testing ? "Testing..." : testResult?.success ? `Online (${testResult.latencyMs}ms)` : "Validate"}
                 </button>
-                {provider.models.length > 0 && (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); runModelTest() }}
-                    disabled={modelTesting}
-                    className={cn(
-                      "flex-1 min-w-[100px] h-8 text-[10px] rounded-xl border transition-all flex items-center justify-center gap-1.5 disabled:opacity-40",
-                      modelTesting
-                        ? "border-blue-500/20 text-blue-400"
-                        : modelTestResult?.success
-                        ? "border-green-500/20 text-green-400 hover:bg-green-500/5"
-                        : "border-white/10 text-white/50 hover:text-white hover:bg-white/5",
-                    )}
-                  >
-                    {modelTesting ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : modelTestResult?.success ? (
-                      <Check className="h-3 w-3" />
-                    ) : (
-                      <Terminal className="h-3 w-3" />
-                    )}
-                    {modelTesting ? "Testing..." : modelTestResult?.success ? `${modelTestResult.latencyMs}ms` : "Test Model"}
-                  </button>
-                )}
-                {provider.models.length > 0 && (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); runStreamTest() }}
-                    disabled={streamTesting}
-                    className={cn(
-                      "flex-1 min-w-[120px] h-8 text-[10px] rounded-xl border transition-all flex items-center justify-center gap-1.5 disabled:opacity-40",
-                      streamTesting
-                        ? "border-blue-500/20 text-blue-400"
-                        : streamTestResult?.success
-                        ? "border-green-500/20 text-green-400 hover:bg-green-500/5"
-                        : "border-white/10 text-white/50 hover:text-white hover:bg-white/5",
-                    )}
-                  >
-                    {streamTesting ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : streamTestResult?.success ? (
-                      <Check className="h-3 w-3" />
-                    ) : (
-                      <Activity className="h-3 w-3" />
-                    )}
-                    {streamTesting ? "Streaming..." : streamTestResult?.success ? `${streamTestResult.charsPerSec}c/s` : "Test Stream"}
-                  </button>
-                )}
-
-                {/* Error indicators */}
-                {testResult && !testResult.success && testResult.error && (
-                  <Tooltip content={testResult.error}>
-                    <AlertTriangle className="h-3.5 w-3.5 text-red-400/60 shrink-0" />
-                  </Tooltip>
-                )}
-                {modelTestResult && !modelTestResult.success && modelTestResult.error && (
-                  <Tooltip content={modelTestResult.error}>
-                    <AlertTriangle className="h-3.5 w-3.5 text-red-400/60 shrink-0" />
-                  </Tooltip>
-                )}
-                {streamTestResult && !streamTestResult.success && streamTestResult.error && (
-                  <Tooltip content={streamTestResult.error}>
-                    <AlertTriangle className="h-3.5 w-3.5 text-red-400/60 shrink-0" />
-                  </Tooltip>
-                )}
+                <button
+                  onClick={(e) => { e.stopPropagation(); onEdit() }}
+                  className="flex-1 min-w-[80px] h-8 text-[10px] rounded-xl border border-white/10 text-white/50 hover:text-white hover:bg-white/5 transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Activity className="h-3 w-3" />
+                  Edit
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onDelete() }}
+                  className="flex-1 min-w-[80px] h-8 text-[10px] rounded-xl border border-red-500/20 text-red-400/60 hover:text-red-400 hover:bg-red-500/5 transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  Remove
+                </button>
               </div>
-
-              {/* Stream test results detail */}
-              {streamTestResult?.success && (
-                <div className="grid grid-cols-3 gap-2 text-[10px]">
-                  <div className="rounded-lg bg-green-500/5 border border-green-500/10 px-3 py-2 text-green-400/80">
-                    TTFB: <span className="font-mono">{streamTestResult.ttfbMs}ms</span>
-                  </div>
-                  <div className="rounded-lg bg-blue-500/5 border border-blue-500/10 px-3 py-2 text-blue-400/80">
-                    Speed: <span className="font-mono">{streamTestResult.charsPerSec} c/s</span>
-                  </div>
-                  <div className="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2 text-white/40">
-                    Total: <span className="font-mono">{streamTestResult.totalMs}ms</span>
-                  </div>
-                </div>
-              )}
             </div>
           </motion.div>
         )}

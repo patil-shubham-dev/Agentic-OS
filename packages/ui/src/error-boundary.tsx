@@ -70,4 +70,7 @@ class AppErrorBoundary extends React.Component<
   }
 }
 
-export { AppErrorBoundary }
+// Backward-compatible alias
+const ErrorBoundary = AppErrorBoundary
+
+export { AppErrorBoundary, ErrorBoundary }

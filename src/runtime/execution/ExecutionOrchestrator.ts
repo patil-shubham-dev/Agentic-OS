@@ -17,7 +17,7 @@ import { EventBus } from "@/runtime/render-engine/event-bus"
 import { SynthesisEngine } from "@/runtime/execution/SynthesisEngine"
 import { RuntimeSupervisor } from "@/runtime/RuntimeSupervisor"
 import { startTrace, trace, endTrace } from "@/lib/execution-trace"
-import { safeValidateProvider } from "@/lib/provider-manager"
+import { safeValidateProvider } from "@agentic-os/providers"
 import { normalizeRole } from "@/lib/role-identity"
 import { fastChatCompletion } from "@/lib/agents/orchestrator"
 import type { AgentCallbacks } from "@/lib/agents/orchestrator"
@@ -105,7 +105,6 @@ export class ExecutionOrchestrator {
 
     const store = useAgentStore.getState()
     const activeRole_ = activeRole
-    store.addMessage(activeRole_, { role: "user", content: input, timestamp: Date.now() })
     executionEngine.startTask(traceId)
 
     const runtimeState = useWorkspaceRuntime.getState()
@@ -336,10 +335,22 @@ export class ExecutionOrchestrator {
         spanProcessor.endSpan(fastChatSpan, "ok")
         spanProcessor.endSpan(directSpan, "ok")
 
+        eventBus.emit({
+          type: "AGENT_COMPLETE",
+          stepId,
+          role: wiredForFastChat.runtimeRole,
+          status: "complete",
+        })
         store.addMessage(activeRole, { role: "assistant", content: result.response, timestamp: Date.now() })
         return { traceId, success: true, failures: 0, totalDurationMs: Math.round(performance.now() - t0), filesEdited: 0, commandsRun: 0, browserActions: 0 }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
+        eventBus.emit({
+          type: "AGENT_COMPLETE",
+          stepId,
+          role: wiredForFastChat.runtimeRole,
+          status: "error",
+        })
         spanProcessor.endSpan(fastChatSpan, "error", msg)
         spanProcessor.endSpan(directSpan, "error", msg)
         throw err

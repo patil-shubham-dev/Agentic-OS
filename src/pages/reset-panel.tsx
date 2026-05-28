@@ -1,8 +1,8 @@
 import { useState } from "react"
-import { Card, CardContent, CardHeader, CardTitle } from "@agentic-os/ui"
+import { Card, CardContent } from "@agentic-os/ui"
 import {
-  Trash2, AlertTriangle, RotateCcw, Eraser,
-  ShieldCheck, Loader2, CheckCircle2, HardDrive, Brain, Database, Settings2,
+  Trash2, AlertTriangle, Eraser,
+  ShieldCheck, Loader2, CheckCircle2, Brain, Database, Settings2,
 } from "lucide-react"
 
 interface ResetAction {

@@ -1,6 +1,6 @@
 import { create } from "zustand"
 import type { RuntimeRole } from "@/types"
-import type { ChatMessage } from "@/lib/ai-service"
+import type { ChatMessage } from "@agentic-os/providers"
 
 export type ExecutionMode = "autonomous" | "fastest" | "most_accurate" | "research_heavy" | "human_guided" | "safe_mode"
 

@@ -7,14 +7,13 @@ import { ExecutionSessionManager, type ExecutionSession } from "@/runtime/sessio
 import { EXECUTION_MODES } from "@/runtime/execution-mode"
 import { useRuntimeProjectionStore } from "@/stores/runtime-projections-store"
 import { cn } from "@/lib/utils"
-import { ExecutionTimeline } from "./timeline/execution-timeline"
+import { ConversationTimeline, Composer } from "./timeline/conversation"
 import { ContextBar } from "./timeline/context-bar"
-import { AssistantInput } from "./timeline/assistant-input"
 import { SessionBar } from "./timeline/SessionBar"
 import { ApprovalGate } from "./approval-gate"
 import {
   Bot, ChevronDown, Cpu, Zap, Target, BookOpen, UserCheck, Shield,
-  AlertTriangle,
+  AlertTriangle, Sparkles,
 } from "lucide-react"
 
 const MODE_ICONS: Record<string, typeof Cpu> = {
@@ -74,7 +73,9 @@ export function ChatPanel() {
     if (!input.trim() || isProcessing) return
 
     const userInput = input.trim()
-    addMessage(activeRole, { role: "user", content: userInput, timestamp: Date.now() })
+    const ts = Date.now()
+
+    addMessage(activeRole, { role: "user", content: userInput, timestamp: ts })
     setInput("")
     useAgentStore.getState().setProcessing(true)
 
@@ -106,86 +107,89 @@ export function ChatPanel() {
 
   return (
     <div className="flex h-full flex-col bg-gradient-to-b from-[#0a0a0b] to-[#09090a]">
-      {/* Premium header with glass effect */}
-      <div className="relative border-b border-white/[0.06] bg-gradient-to-r from-[#0c0c0d] via-[#0c0c0d] to-[#0b0b0c]">
-        <div className="absolute inset-0 bg-gradient-to-r from-blue-500/[0.02] to-transparent" />
-        <div className="relative flex items-center justify-between px-3 py-2">
+      {/* Minimal header with status */}
+      <div className="relative border-b border-white/[0.05]">
+        <div className="flex items-center justify-between px-3 py-2">
           <div className="flex items-center gap-2">
-            <motion.div
-              animate={{
-                scale: isProcessing ? [1, 1.05, 1] : 1,
-              }}
-              transition={{ duration: 2, repeat: isProcessing ? Infinity : 0 }}
-              className={cn(
-                "flex items-center justify-center h-5 w-5 rounded-lg shrink-0 transition-all duration-300",
-                isProcessing
-                  ? "bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-blue-500/20"
-                  : "bg-blue-500/10 border border-blue-500/10",
-              )}
-            >
-              <Bot className={cn(
-                "h-2.5 w-2.5 transition-all duration-300",
-                isProcessing ? "text-blue-400" : "text-blue-400/70",
-              )} />
-            </motion.div>
-            <span className={cn(
-              "text-[11px] font-semibold transition-all duration-300",
-              isProcessing ? "text-white/80" : "text-white/70",
-            )}>
-              Assistant
+            <div className="relative shrink-0">
+              <motion.div
+                animate={{
+                  scale: isProcessing ? [1, 1.05, 1] : 1,
+                }}
+                transition={{ duration: 1.5, repeat: isProcessing ? Infinity : 0, ease: "easeInOut" }}
+                className={cn(
+                  "flex items-center justify-center h-6 w-6 rounded-lg shrink-0 transition-all duration-300",
+                  isProcessing
+                    ? "bg-gradient-to-br from-blue-500/20 to-purple-500/20"
+                    : "bg-blue-500/8",
+                )}
+              >
+                <Bot className={cn(
+                  "h-3 w-3 transition-all duration-300",
+                  isProcessing ? "text-blue-400" : "text-blue-400/50",
+                )} />
+              </motion.div>
               {isProcessing && (
-                <span className="inline-flex items-center gap-1 ml-2 text-[9px] font-normal">
-                  <span className="inline-flex gap-0.5">
-                    <span className="h-1 w-1 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <span className="h-1 w-1 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <span className="h-1 w-1 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: '300ms' }} />
-                  </span>
-                  <span className="text-blue-400/60 font-medium">
-                    {streamState === "streaming" ? "Streaming" : "Processing"}
-                  </span>
+                <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5">
+                  <span className="absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75 animate-ping" />
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-blue-500" />
                 </span>
               )}
-            </span>
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className={cn(
+                  "text-[11px] font-semibold transition-all duration-300",
+                  isProcessing ? "text-white/80" : "text-white/65",
+                )}>
+                  Assistant
+                </span>
+                <span className="text-[8px] text-white/15 font-mono bg-white/[0.02] rounded px-1 py-0.5 border border-white/[0.03]">
+                  {activeRole}
+                </span>
+              </div>
+              {isProcessing && (
+                <span className="flex items-center gap-1 text-[9px] text-blue-400/50 mt-0.5">
+                  <span className="thinking-dots">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                  {streamState === "streaming" ? "Streaming" : "Processing"}
+                </span>
+              )}
+            </div>
 
-            {/* Memory Pressure Indicator — premium gradient badge */}
-            {memoryPressure > 70 && (
+            {memoryPressure > 75 && (
               <motion.div
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
                 className={cn(
-                  "flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-md border",
+                  "flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded-lg border shrink-0",
                   memoryPressure > 90
-                    ? "bg-gradient-to-r from-red-500/10 to-red-600/5 border-red-500/15"
-                    : "bg-gradient-to-r from-amber-500/10 to-amber-600/5 border-amber-500/15",
+                    ? "border-red-500/15 bg-red-500/[0.04] text-red-400/60"
+                    : "border-amber-500/10 bg-amber-500/[0.03] text-amber-400/50",
                 )}
               >
-                <AlertTriangle className={cn(
-                  "h-2.5 w-2.5",
-                  memoryPressure > 90 ? "text-red-400 animate-pulse" : "text-amber-400",
-                )} />
-                <span className={cn(
-                  "font-medium",
-                  memoryPressure > 90 ? "text-red-400/80" : "text-amber-400/80",
-                )}>
-                  {memoryPressure}% mem
-                </span>
+                <AlertTriangle className="h-2 w-2" />
+                {memoryPressure}%
               </motion.div>
             )}
           </div>
 
+          {/* Mode selector */}
           <div className="relative">
             <button
               onClick={() => setModeSelectorOpen(!modeSelectorOpen)}
               className={cn(
-                "flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[9px] font-medium transition-all",
-                "bg-gradient-to-r from-blue-500/[0.04] to-purple-500/[0.04]",
-                "border-white/[0.06] text-white/50",
-                "hover:from-blue-500/[0.08] hover:to-purple-500/[0.08] hover:text-white/70",
+                "flex items-center gap-1 rounded-lg border px-2 py-1 text-[9px] font-medium transition-all",
+                "bg-white/[0.02] border-white/[0.05] text-white/40",
+                "hover:bg-white/[0.04] hover:text-white/60",
               )}
             >
-              <Cpu className={cn("h-2.5 w-2.5", MODE_CONFIG[executionMode].color)} />
+              <Zap className={cn("h-2.5 w-2.5", MODE_CONFIG[executionMode].color)} />
               <span>{MODE_CONFIG[executionMode].label}</span>
-              <ChevronDown className="h-2 w-2 text-white/30" />
+              <ChevronDown className="h-2 w-2 text-white/20" />
             </button>
             <AnimatePresence>
               {modeSelectorOpen && (
@@ -194,7 +198,7 @@ export function ChatPanel() {
                   animate={{ opacity: 1, scale: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.94, y: -4 }}
                   transition={{ duration: 0.12, ease: "easeOut" }}
-                  className="absolute right-0 top-full mt-1 w-48 rounded-2xl border border-white/[0.08] bg-[#0d0d0e]/98 backdrop-blur-2xl shadow-2xl p-1.5 z-50"
+                  className="absolute right-0 top-full mt-1 w-44 rounded-xl border border-white/[0.06] bg-[#0d0d0e]/98 backdrop-blur-2xl shadow-2xl p-1 z-50"
                 >
                   {Object.entries(MODE_CONFIG).map(([key, config]) => {
                     const Icon = config.icon
@@ -203,24 +207,16 @@ export function ChatPanel() {
                         key={key}
                         onClick={() => { setExecutionMode(key as any); setModeSelectorOpen(false) }}
                         className={cn(
-                          "flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-[10px] transition-all",
+                          "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[10px] transition-all",
                           executionMode === key
-                            ? "bg-gradient-to-r from-blue-500/10 to-purple-500/10 text-blue-400 border border-blue-500/10"
-                            : "text-white/40 hover:bg-white/[0.04] hover:text-white/70 border border-transparent"
+                            ? "bg-blue-500/10 text-blue-400 border border-blue-500/8"
+                            : "text-white/35 hover:bg-white/[0.03] hover:text-white/60 border border-transparent",
                         )}
                       >
-                        <div className={cn(
-                          "flex items-center justify-center h-6 w-6 rounded-lg shrink-0",
-                          executionMode === key ? "bg-blue-500/15" : "bg-white/[0.04]",
-                        )}>
-                          <Icon className={cn("h-3 w-3", config.color)} />
-                        </div>
-                        <div className="text-left flex-1 min-w-0">
-                          <div className="font-semibold">{config.label}</div>
-                          <div className="text-[8px] text-white/30 truncate">{config.desc}</div>
-                        </div>
+                        <Icon className={cn("h-3 w-3", config.color)} />
+                        <span className="font-medium">{config.label}</span>
                         {executionMode === key && (
-                          <span className="h-1.5 w-1.5 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 shrink-0" />
+                          <span className="ml-auto h-1.5 w-1.5 rounded-full bg-blue-500" />
                         )}
                       </button>
                     )
@@ -233,8 +229,13 @@ export function ChatPanel() {
       </div>
 
       <SessionBar />
-      <ExecutionTimeline onSendMessage={sendMessage} />
 
+      {/* Conversation area - takes remaining space */}
+      <div className="flex-1 overflow-hidden relative">
+        <ConversationTimeline onSendMessage={sendMessage} />
+      </div>
+
+      {/* Context bar */}
       <ContextBar
         workspaceName={workspaceName}
         activeRole={activeRole}
@@ -247,14 +248,14 @@ export function ChatPanel() {
         onModeClick={() => setModeSelectorOpen(!modeSelectorOpen)}
       />
 
-      {/* Approval Gate — appears when execution mode requires user approval */}
+      {/* Approval Gate */}
       <div className="px-3 pt-2">
         <ApprovalGate />
       </div>
 
-      <div className="relative border-t border-white/[0.04] bg-gradient-to-t from-[#0a0a0b] via-[#0b0b0c] to-transparent px-3 pt-2 pb-3">
-        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-blue-500/10 to-transparent" />
-        <AssistantInput
+      {/* Composer - floating bottom */}
+      <div className="px-3 pb-2 pt-1">
+        <Composer
           input={input}
           onInputChange={setInput}
           onSend={sendMessage}

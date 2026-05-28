@@ -103,6 +103,8 @@ export interface FileEntry {
   name: string
   path: string
   is_dir: boolean
+  size?: number
+  lastModified?: number
   children: FileEntry[]
 }
 

@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { useBrowserStore } from "@/stores/browser-store"
 import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
-import { Tooltip } from "@/components/ui/tooltip"
+import { Button } from "@agentic-os/ui"
+import { TooltipSimple as Tooltip } from "@agentic-os/ui"
 import { BrowserActivityStream } from "./browser-activity-stream"
 import { getTitle as rawBrowserGetTitle } from "@/lib/browser"
 import { useHaptic } from "@/lib/haptics"
@@ -23,7 +23,7 @@ import {
   MousePointer, Type, Terminal, RefreshCw, RotateCcw,
   PanelRightOpen, PanelRightClose,
   ChevronDown, ChevronUp, Sparkles, List,
-  AlertTriangle, CheckCircle2,
+  AlertTriangle,
 } from "lucide-react"
 import { PremiumEmptyState, getBrowserEmptyState } from "../premium-empty-state"
 

@@ -4,7 +4,7 @@ import { useWorkspaceRuntime } from "@/runtime/workspace-runtime"
 import { cn } from "@/lib/utils"
 import {
   Cpu, Brain, Wifi, WifiOff, Users, Activity,
-  ArrowRight, CheckCircle2, AlertTriangle, XCircle,
+  ArrowRight, CheckCircle2, AlertTriangle,
 } from "lucide-react"
 
 export function ExecutionTopology({ className }: { className?: string }) {

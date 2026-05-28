@@ -1,4 +1,3 @@
-export { StreamingTextMem } from "./streaming-text"
-export { LiveToolStream } from "./live-tool-stream"
-export { MessageActions } from "./message-actions"
-export { MessageMetrics } from "./message-metrics"
+// All step-card sub-components have been migrated into conversation/ components.
+// This barrel exists only for backward compat; new code imports from conversation/ directly.
+export {}

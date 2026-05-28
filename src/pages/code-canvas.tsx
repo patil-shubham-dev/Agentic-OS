@@ -18,12 +18,11 @@ import { RuntimeStatusBar } from "@/components/runtime/RuntimeStatusBar"
 import { ExecutionDock } from "@/components/runtime/ExecutionDock"
 import { ErrorBoundary } from "@/components/runtime/ErrorBoundary"
 import { RuntimeProjectionBridge } from "@/runtime/sessions/RuntimeProjectionBridge"
-import { Button } from "@/components/ui/button"
+import { Button, TooltipSimple as Tooltip } from "@agentic-os/ui"
 import { cn } from "@/lib/utils"
 import { useToastStore } from "@/stores/toast-store"
 import { WorkspacePanelController, type WorkspacePanel } from "@/lib/workspace-panel-controller"
 import { useLeakTracker } from "@/performance/leak-detector"
-import { Tooltip } from "@/components/ui/tooltip"
 import {
   PanelRightClose, PanelRight, PanelLeftClose, PanelLeft,
   FileCode, Globe,
@@ -51,6 +50,24 @@ const WORKSPACE_PANEL_OPTIONS: { id: WorkspacePanel; label: string; icon: typeof
   { id: "design", label: "Design", icon: Palette },
   { id: "history", label: "History", icon: History },
 ]
+
+const PANEL_STORAGE_KEY_PREFIX = "aos-panel-"
+
+function loadPanelState<T>(key: string, defaultVal: T): T {
+  try {
+    const raw = localStorage.getItem(`${PANEL_STORAGE_KEY_PREFIX}${key}`)
+    if (raw === null) return defaultVal
+    return JSON.parse(raw) as T
+  } catch {
+    return defaultVal
+  }
+}
+
+function persistPanelState(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(`${PANEL_STORAGE_KEY_PREFIX}${key}`, JSON.stringify(value))
+  } catch { /* quota exceeded — ignore */ }
+}
 
 const ORCHESTRATION_LABELS: Record<string, { label: string; color: string }> = {
   idle: { label: "Idle", color: "text-white/30" },
@@ -108,12 +125,12 @@ export function CodeCanvasPage() {
 
   const unlistenRef = useRef<(() => void) | null>(null)
 
-  // ── Panel state ──
-  const [explorerOpen, setExplorerOpen] = useState(true)
-  const [explorerWidth, setExplorerWidth] = useState(240)
-  const [workspacePanel, setWorkspacePanel] = useState<WorkspacePanel>("code")
-  const [workspacePanelOpen, setWorkspacePanelOpen] = useState(true)
-  const [workspacePanelWidth, setWorkspacePanelWidth] = useState(420)
+  // ── Panel state (persisted to localStorage) ──
+  const [explorerOpen, setExplorerOpen] = useState(() => loadPanelState("explorerOpen", true))
+  const [explorerWidth, setExplorerWidth] = useState(() => loadPanelState("explorerWidth", 240))
+  const [workspacePanel, setWorkspacePanel] = useState<WorkspacePanel>(() => loadPanelState("workspacePanel", "code"))
+  const [workspacePanelOpen, setWorkspacePanelOpen] = useState(() => loadPanelState("workspacePanelOpen", true))
+  const [workspacePanelWidth, setWorkspacePanelWidth] = useState(() => loadPanelState("workspacePanelWidth", 420))
   const [showModeSelector, setShowModeSelector] = useState(false)
   const [explorerCreating, setExplorerCreating] = useState<{ type: "file" | "folder"; parent: string | null } | null>(null)
 
@@ -322,7 +339,11 @@ export function CodeCanvasPage() {
       }
       if ((e.metaKey || e.ctrlKey) && e.key === "j") {
         e.preventDefault()
-        setWorkspacePanelOpen((p) => !p)
+        setWorkspacePanelOpen((p) => {
+          const next = !p
+          panelCtrlRef.current?.syncOpenState(next)
+          return next
+        })
       }
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "e") {
         e.preventDefault()
@@ -370,6 +391,13 @@ export function CodeCanvasPage() {
     window.addEventListener("keydown", handleKey)
     return () => window.removeEventListener("keydown", handleKey)
   }, [rootPath])
+
+    // ── Persist panel state on change ──
+  useEffect(() => { persistPanelState("explorerOpen", explorerOpen) }, [explorerOpen])
+  useEffect(() => { persistPanelState("explorerWidth", explorerWidth) }, [explorerWidth])
+  useEffect(() => { persistPanelState("workspacePanel", workspacePanel) }, [workspacePanel])
+  useEffect(() => { persistPanelState("workspacePanelOpen", workspacePanelOpen) }, [workspacePanelOpen])
+  useEffect(() => { persistPanelState("workspacePanelWidth", workspacePanelWidth) }, [workspacePanelWidth])
 
   // ── Resize drag cleanup on unmount — guarantees no leaked listeners or body styles ──
   useEffect(() => {
@@ -759,7 +787,11 @@ export function CodeCanvasPage() {
 
               {/* Toggle docking area */}
               <button
-                onClick={() => setWorkspacePanelOpen(!workspacePanelOpen)}
+                onClick={() => {
+                  const next = !workspacePanelOpen
+                  setWorkspacePanelOpen(next)
+                  panelCtrlRef.current?.syncOpenState(next)
+                }}
                 className="rounded-md p-1 text-white/40 hover:text-white/70 hover:bg-white/[0.06] transition-all"
                 title="Toggle docking area (⌘J)"
                 aria-label={workspacePanelOpen ? "Close docking area" : "Open docking area"}

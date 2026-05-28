@@ -1,11 +1,6 @@
 import { useState } from "react"
 import { cn } from "@/lib/utils"
-import { Badge } from "@/components/ui/badge"
-import { Separator } from "@/components/ui/separator"
-import { Switch } from "@/components/ui/switch"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { Badge, Separator, Switch, Button, Input, Label } from "@agentic-os/ui"
 import { useAppStore } from "@/stores/app-store"
 import type { RuntimeConfig } from "@/types"
 import {
@@ -106,7 +101,7 @@ export function RuntimeTab() {
                   {config.sandboxEnabled ? <Lock className="h-4 w-4 text-green-400" /> : <Unlock className="h-4 w-4 text-white/30" />}
                   <span className="text-xs text-white/60">Sandbox Isolation</span>
                 </div>
-                <Switch checked={config.sandboxEnabled} onCheckedChange={(v) => setConfig({ ...config, sandboxEnabled: v })} size="md" />
+                <Switch checked={config.sandboxEnabled} onCheckedChange={(v) => setConfig({ ...config, sandboxEnabled: v })} size="default" />
               </div>
               <p className="text-[10px] text-white/30">When enabled, all agent code execution is isolated in a secure sandbox environment</p>
 

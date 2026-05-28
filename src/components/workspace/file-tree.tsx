@@ -8,7 +8,7 @@ import {
   Trash2, Edit3, FilePlus, FolderPlus,
   Copy, ClipboardPaste, Scissors,
 } from "lucide-react"
-import { Skeleton } from "@/components/ui/skeleton"
+import { Skeleton } from "@agentic-os/ui"
 import { cn } from "@/lib/utils"
 import { useToastStore } from "@/stores/toast-store"
 

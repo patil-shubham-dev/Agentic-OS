@@ -5,8 +5,8 @@ import { Toasts } from '@agentic-os/ui'
 import { SafeErrorBoundary, SidebarBoundary, WorkspaceBoundary } from '../error-boundaries'
 import { useApprovalStore } from '../../runtime/approval-gate'
 import { useAgentStore } from '../../stores/agent-store'
-import { agentExecutionService } from '../../runtime/AgentExecutionService'
 import { useLeakTracker } from '@/performance/leak-detector'
+import { ExecutionOrchestrator } from '@/runtime/execution/ExecutionOrchestrator'
 
 function ApprovalToast() {
   const { pending, approve, reject } = useApprovalStore()
@@ -47,7 +47,6 @@ function ApprovalToast() {
 
 function AgentActivityBadge() {
   const isProcessing = useAgentStore(s => s.isProcessing)
-  const processingRole = useAgentStore(s => s.processingRole)
   if (!isProcessing) return null
 
   return (
@@ -63,11 +62,9 @@ function AgentActivityBadge() {
         display: 'inline-block', animation: 'pulse 1.5s infinite',
       }} />
       <span>
-        {processingRole
-          ? `${processingRole.charAt(0).toUpperCase() + processingRole.slice(1)} working...`
-          : 'Agent working...'}
+        Agent working...
       </span>
-      <button onClick={() => agentExecutionService.cancel()} style={{
+      <button onClick={() => ExecutionOrchestrator.cancelCurrent()} style={{
         background: 'none', border: '1px solid #555', borderRadius: '12px',
         color: '#888', cursor: 'pointer', fontSize: '11px', padding: '2px 8px',
       }}>Cancel</button>

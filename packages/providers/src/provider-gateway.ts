@@ -788,6 +788,40 @@ export async function providerChatCompletion(
 ): Promise<ChatResponse> {
   const cleanUrl = baseUrl.replace(/\/+$/, "")
   const isAnthropic = runtime === "Anthropic" || cleanUrl.includes("anthropic.com")
+  const isGemini = runtime === "Google Gemini" || isGeminiUrl(cleanUrl)
+  
+  if (isGemini) {
+    const url = buildGeminiChatUrl(cleanUrl, request.model)
+    const body = JSON.stringify({
+      contents: convertToGeminiMessages(request.messages),
+      generationConfig: {
+        maxOutputTokens: request.maxTokens ?? 8192,
+        temperature: request.temperature,
+        topP: request.top_p,
+      },
+    })
+    const resp = await tauriFetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body,
+      signal,
+    })
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "")
+      throw new Error(`Gemini API error ${resp.status}: ${text.slice(0, 300)}`)
+    }
+    const json = await resp.json()
+    const candidates = json.candidates
+    const content = candidates?.[0]?.content?.parts?.map((p: any) => p.text).join("") ?? ""
+    return {
+      message: { role: "assistant", content, tool_calls: [] },
+      finish_reason: parseGeminiFinishReason(candidates?.[0]?.finishReason ?? null),
+      usage: parseGeminiUsage(json),
+    }
+  }
   
   if (isAnthropic) {
     // Anthropic protocol
@@ -1123,6 +1157,202 @@ async function streamAnthropicChatCompletion(
   callbacks.onDone(fullContent, { finishReason })
 }
 
+// ── Gemini Helpers ──
+
+type GeminiContent = { role: string; parts: { text: string }[] }
+
+function isGeminiUrl(baseUrl: string): boolean {
+  const url = baseUrl.toLowerCase()
+  return url.includes("googleapis.com") || url.includes("generativelanguage")
+}
+
+function buildGeminiStreamUrl(baseUrl: string, model: string): string {
+  const clean = baseUrl.replace(/\/+$/, "")
+  return `${clean}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`
+}
+
+function buildGeminiChatUrl(baseUrl: string, model: string): string {
+  const clean = baseUrl.replace(/\/+$/, "")
+  return `${clean}/models/${encodeURIComponent(model)}:generateContent`
+}
+
+function convertToGeminiMessages(messages: ChatMessage[]): GeminiContent[] {
+  return messages
+    .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "model")
+    .map((m) => ({
+      role: m.role === "assistant" ? "model" : m.role,
+      parts: [{ text: m.content ?? "" }],
+    }))
+}
+
+function parseGeminiFinishReason(raw: string | null): string | null {
+  if (!raw) return null
+  const upper = raw.toUpperCase()
+  if (upper === "STOP") return "stop"
+  if (upper === "MAX_TOKENS") return "length"
+  if (upper === "SAFETY") return "content_filter"
+  if (upper === "RECITATION") return "content_filter"
+  if (upper === "OTHER") return "stop"
+  return raw.toLowerCase()
+}
+
+function parseGeminiUsage(json: any): UsageInfo | undefined {
+  if (!json.usageMetadata) return undefined
+  return {
+    prompt_tokens: json.usageMetadata.promptTokenCount ?? 0,
+    completion_tokens: json.usageMetadata.candidatesTokenCount ?? 0,
+    total_tokens: json.usageMetadata.totalTokenCount ?? 0,
+  }
+}
+
+/**
+ * Gemini SSE streaming parser.
+ * Each data: line contains a full response JSON with candidates[0].content.parts[0].text
+ */
+async function streamGeminiChatCompletion(
+  baseUrl: string,
+  apiKey: string,
+  request: ChatRequest,
+  callbacks: StreamCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  const t0 = performance.now()
+  const url = buildGeminiStreamUrl(baseUrl, request.model)
+
+  const body = JSON.stringify({
+    contents: convertToGeminiMessages(request.messages),
+    generationConfig: {
+      maxOutputTokens: request.maxTokens ?? 8192,
+      temperature: request.temperature,
+      topP: request.top_p,
+    },
+  })
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-goog-api-key": apiKey,
+  }
+
+  console.log(`${LOG_PREFIX_STREAM} [Gemini] sending streaming request to ${url}`)
+
+  const ctrl = new AbortController()
+  if (signal) {
+    if (signal.aborted) {
+      callbacks.onError(new DOMException("Cancelled before start", "AbortError"))
+      return
+    }
+    const abortListener = () => {
+      ctrl.abort()
+      callbacks.onError(new DOMException("Request cancelled", "AbortError"))
+    }
+    signal.addEventListener("abort", abortListener, { once: true })
+  }
+
+  let response: Response
+  try {
+    response = await tauriFetch(url, {
+      method: "POST",
+      headers,
+      body,
+      signal: ctrl.signal,
+    })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.log(`${LOG_PREFIX_STREAM} [Gemini] fetch FAILED: ${msg}`)
+    recordProviderFailure(baseUrl)
+    callbacks.onError(err instanceof Error ? err : new Error(msg))
+    return
+  }
+
+  if (!response.ok) {
+    let text = ""
+    try { text = await response.text() } catch {}
+    console.log(`${LOG_PREFIX_STREAM} [Gemini] HTTP ${response.status}: ${text.slice(0, 200)}`)
+    recordProviderFailure(baseUrl)
+    callbacks.onError(new Error(`Gemini API returned ${response.status}: ${text.slice(0, 200)}`))
+    return
+  }
+
+  if (!response.body) {
+    recordProviderFailure(baseUrl)
+    callbacks.onError(new Error("STREAM_NO_BODY: Response body is null"))
+    return
+  }
+
+  callbacks.onReady()
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ""
+  let fullContent = ""
+  let chunkCount = 0
+  let contentLength = 0
+  let finishReason: string | null = null
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      chunkCount++
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split("\n")
+      buffer = lines.pop() ?? ""
+
+      for (const line of lines) {
+        const trimmed = line.replace(/\r$/, "")
+        if (!trimmed) continue
+
+        if (trimmed.startsWith("data: ")) {
+          const dataStr = trimmed.slice(6).trim()
+          if (!dataStr) continue
+
+          try {
+            const parsed = JSON.parse(dataStr)
+            const candidates = parsed.candidates
+            if (!candidates || !Array.isArray(candidates) || candidates.length === 0) continue
+
+            const candidate = candidates[0]
+            const parts = candidate.content?.parts
+            if (parts && Array.isArray(parts)) {
+              for (const part of parts) {
+                if (part.text) {
+                  fullContent += part.text
+                  contentLength += part.text.length
+                  callbacks.onToken(part.text)
+                }
+              }
+            }
+
+            if (candidate.finishReason) {
+              finishReason = parseGeminiFinishReason(candidate.finishReason)
+            }
+          } catch {
+            // skip unparseable SSE data
+          }
+        }
+      }
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.log(`${LOG_PREFIX_STREAM} [Gemini] read error after ${contentLength} chars: ${msg}`)
+    if (contentLength > 0) {
+      recordProviderSuccess(baseUrl, parseFloat((performance.now() - t0).toFixed(0)), true)
+      callbacks.onDone(fullContent, { finishReason })
+      return
+    }
+    recordProviderFailure(baseUrl)
+    callbacks.onError(err instanceof Error ? err : new Error(msg))
+    return
+  }
+
+  const elapsed = (performance.now() - t0).toFixed(0)
+  console.log(`${LOG_PREFIX_STREAM} [Gemini] stream complete: ${chunkCount} chunks, ${contentLength} chars in ${elapsed}ms`)
+
+  recordProviderSuccess(baseUrl, parseFloat(elapsed), true)
+  callbacks.onDone(fullContent, { finishReason })
+}
+
 export async function providerStreamChatCompletion(
   baseUrl: string,
   apiKey: string,
@@ -1135,6 +1365,11 @@ export async function providerStreamChatCompletion(
   // ── Anthropic protocol routing ──
   if (runtime === "Anthropic") {
     return streamAnthropicChatCompletion(baseUrl, apiKey, request, callbacks, signal)
+  }
+
+  // ── Gemini protocol routing ──
+  if (runtime === "Google Gemini" || isGeminiUrl(baseUrl)) {
+    return streamGeminiChatCompletion(baseUrl, apiKey, request, callbacks, signal)
   }
 
   // ── OpenAI-compatible (default) ──
@@ -1254,8 +1489,8 @@ export async function providerStreamChatCompletion(
             contentLength += content.length
             callbacks.onToken(content)
           }
-        } catch {
-          // skip unparseable SSE lines
+        } catch (parseErr) {
+          console.warn(`${LOG_PREFIX_STREAM} unparseable SSE line: "${trimmed.slice(0, 80)}" — ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`)
         }
       }
     }
@@ -1263,8 +1498,8 @@ export async function providerStreamChatCompletion(
     const msg = err instanceof Error ? err.message : String(err)
     console.log(`${LOG_PREFIX_STREAM} read error after ${contentLength} chars: ${msg}`)
     if (contentLength > 0) {
-      recordProviderSuccess(baseUrl, parseFloat((performance.now() - t0).toFixed(0)), true)
-      callbacks.onDone(fullContent, { finishReason })
+      recordProviderFailure(baseUrl)
+      callbacks.onError(new Error(`Stream interrupted after ${contentLength} chars: ${msg}`))
       return
     }
     recordProviderFailure(baseUrl)
@@ -1306,7 +1541,9 @@ export async function providerStreamChatCompletion(
           contentLength += content.length
           callbacks.onToken(content)
         }
-      } catch { /* skip */ }
+      } catch (drainErr) {
+          console.warn(`${LOG_PREFIX_STREAM} unparseable drain buffer: "${trimmed.slice(0, 80)}" — ${drainErr instanceof Error ? drainErr.message : String(drainErr)}`)
+        }
     }
   }
 

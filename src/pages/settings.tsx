@@ -7,7 +7,6 @@ import { UpdatePanel } from "@/pages/update-panel"
 import { ResetPanel } from "@/pages/reset-panel"
 import { ProvidersTab } from "@/components/settings/providers-tab"
 import { ModelsTab } from "@/components/settings/models-tab"
-import { MemoryTab } from "@/components/settings/memory-tab"
 import { ToolsTab } from "@/components/settings/tools-tab"
 import { RuntimeTab } from "@/components/settings/runtime-tab"
 import {
@@ -28,14 +27,13 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { id: "providers", label: "Providers", icon: Cpu, shortcut: "1", description: "AI model providers & API keys" },
-  { id: "models", label: "Models", icon: Box, shortcut: "2", description: "Model configuration & benchmarking" },
-  { id: "memory", label: "Memory", icon: Brain, shortcut: "3", description: "Context & knowledge management" },
-  { id: "tools", label: "Tools & MCP", icon: Wrench, shortcut: "4", description: "Tool integrations & MCP servers" },
-  { id: "runtime", label: "Runtime", icon: Terminal, shortcut: "5", description: "Execution environment & sandbox" },
-  { id: "install", label: "Installation", icon: Package, shortcut: "6", description: "App install info & storage", path: "/settings/install" },
-  { id: "update", label: "Updates", icon: ArrowUpCircle, shortcut: "7", description: "App updates & auto-update", path: "/settings/update" },
-  { id: "reset", label: "Delete & Reset", icon: Trash2, shortcut: "8", description: "Clear data & reset settings", path: "/settings/reset" },
+  { id: "providers", label: "Providers", icon: Cpu, shortcut: "1", description: "AI providers, API keys & endpoints" },
+  { id: "models", label: "Models", icon: Box, shortcut: "2", description: "Model selection, config & benchmarks" },
+  { id: "tools", label: "MCP Servers", icon: Wrench, shortcut: "3", description: "MCP server connections & tools" },
+  { id: "runtime", label: "Runtime", icon: Terminal, shortcut: "4", description: "Execution environment & sandbox config" },
+  { id: "install", label: "Installation", icon: Package, shortcut: "5", description: "Install info, storage & shell integration", path: "/settings/install" },
+  { id: "update", label: "Updates", icon: ArrowUpCircle, shortcut: "6", description: "App updates & auto-update", path: "/settings/update" },
+  { id: "reset", label: "Reset", icon: Trash2, shortcut: "7", description: "Clear data & factory reset", path: "/settings/reset" },
 ]
 
 export function SettingsPage() {
@@ -274,7 +272,6 @@ export function SettingsPage() {
             >
               {activeTab === "providers" && <div className="p-6 max-w-6xl mx-auto"><ProvidersTab /></div>}
               {activeTab === "models" && <div className="p-6 max-w-6xl mx-auto"><ModelsTab /></div>}
-              {activeTab === "memory" && <div className="p-6 max-w-6xl mx-auto"><MemoryTab /></div>}
               {activeTab === "tools" && <div className="p-6 max-w-6xl mx-auto"><ToolsTab /></div>}
               {activeTab === "runtime" && <div className="p-6 max-w-6xl mx-auto"><RuntimeTab /></div>}
               {activeTab === "install" && <InstallPanel />}

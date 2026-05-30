@@ -69,11 +69,6 @@ export function ProviderDrawer({ open, onClose, editProvider }: ProviderDrawerPr
   const [rawTestResult, setRawTestResult] = useState<string | null>(null)
   const [rawTesting, setRawTesting] = useState(false)
 
-  // Advanced settings
-  const [timeout, setTimeout_] = useState(30)
-  const [maxRetries, setMaxRetries] = useState(3)
-  const [customHeaders, setCustomHeaders] = useState("")
-
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [activeSection, setActiveSection] = useState<string | null>("general")
@@ -132,9 +127,6 @@ export function ProviderDrawer({ open, onClose, editProvider }: ProviderDrawerPr
       setShowSuggestions(false)
       setDiagnosticsOpen(false)
       setActiveSection("general")
-      setTimeout_(30)
-      setMaxRetries(3)
-      setCustomHeaders("")
       cancelPendingValidation()
       cancelPendingDiscovery()
       return
@@ -293,8 +285,13 @@ export function ProviderDrawer({ open, onClose, editProvider }: ProviderDrawerPr
     const models = availableModels.filter((m) => selectedModels.includes(m.id))
     const runtime = runtimeInfo?.runtime ?? null
     const adapter = resolveAdapter(baseUrl)
+
+    function generateId(): string {
+      return editProvider?.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    }
+
     const provider: GatewayProvider = {
-      id: editProvider?.id || "",
+      id: generateId(),
       name,
       baseUrl,
       apiKey,
@@ -667,50 +664,6 @@ export function ProviderDrawer({ open, onClose, editProvider }: ProviderDrawerPr
                       </div>
                     </Section>
                   )}
-
-                  {/* ── Section: Advanced ── */}
-                  <Section id="advanced" label="Advanced" icon={Sliders}>
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-1">
-                          <label className={LABEL_CLASS}>Timeout (s)</label>
-                          <div className="relative">
-                            <Timer className="absolute left-3 top-1/2 -translate-y-1/2 h-3 w-3 text-white/20 pointer-events-none" />
-                            <input
-                              type="number"
-                              value={timeout}
-                              onChange={(e) => setTimeout_(Number(e.target.value))}
-                              min={5} max={120}
-                              className="w-full h-9 rounded-lg border border-white/10 bg-white/[0.03] pl-9 pr-3 text-sm text-white outline-none placeholder:text-white/20 focus:border-white/20 transition-all font-mono"
-                            />
-                          </div>
-                        </div>
-                        <div className="space-y-1">
-                          <label className={LABEL_CLASS}>Max Retries</label>
-                          <div className="relative">
-                            <RefreshCw className="absolute left-3 top-1/2 -translate-y-1/2 h-3 w-3 text-white/20 pointer-events-none" />
-                            <input
-                              type="number"
-                              value={maxRetries}
-                              onChange={(e) => setMaxRetries(Number(e.target.value))}
-                              min={0} max={10}
-                              className="w-full h-9 rounded-lg border border-white/10 bg-white/[0.03] pl-9 pr-3 text-sm text-white outline-none placeholder:text-white/20 focus:border-white/20 transition-all font-mono"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                      <div className="space-y-1">
-                        <label className={LABEL_CLASS}>Custom Headers (JSON)</label>
-                        <textarea
-                          value={customHeaders}
-                          onChange={(e) => setCustomHeaders(e.target.value)}
-                          placeholder='{"X-Custom-Header": "value"}'
-                          rows={3}
-                          className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-[10px] text-white outline-none placeholder:text-white/20 focus:border-white/20 transition-all font-mono resize-none"
-                        />
-                      </div>
-                    </div>
-                  </Section>
 
                   {/* Validation error */}
                   {(validationState === "failed" || isTimeout) && validationResult && (

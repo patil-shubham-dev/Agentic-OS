@@ -23,5 +23,15 @@ export interface TerminalRecord {
   command: string
   output: string
   exitCode?: number
-  status: "running" | "success" | "error"
+  status: "running" | "success" | "error" | "cancelled"
+  durationMs?: number
+  cwd?: string
+}
+
+export interface FileOpRecord {
+  path: string
+  operation: "read" | "write" | "create" | "delete"
+  additions?: number
+  deletions?: number
+  content?: string
 }

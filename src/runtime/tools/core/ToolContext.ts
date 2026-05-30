@@ -10,4 +10,6 @@ export type ToolContext = {
   messageHistory?: Array<{ role: string; content: string }>
   setProgress?: (msg: string) => void
   appendSystemMessage?: (msg: string) => void
+  /** Called incrementally for streaming tool output (e.g., per command line). */
+  onOutput?: (output: string) => void
 }

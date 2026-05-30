@@ -3,6 +3,7 @@ import { shallow } from "zustand/shallow"
 import { useAppStore } from "@/stores/app-store"
 import { useAgentStore } from "@/stores/agent-store"
 import { computeGraphWithLogging, type RuntimeStatus, type RuntimeHealth, type WiredAgent, type BootStep, type RuntimeGraph } from "./runtime-engine"
+import { emitTelemetry } from "@/lib/telemetry"
 import { requestRefresh, cancelPendingRefresh } from "./runtime-coordinator"
 import { trackMutation, detectCrossStoreChain, assertNoRenderWrite } from "./runtime-diagnostics"
 import { assertNoDuplicateSubscription, releaseSubscription, registerTimer, releaseTimer, assertTimersCleaned, assertNoOrphanSubscription } from "@/performance/runtime-assertions"
@@ -226,6 +227,7 @@ export const useWorkspaceRuntime = create<WorkspaceRuntimeState>((set, get) => (
 
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
+      emitTelemetry({ type: "workspace_failure", timestamp: Date.now(), error: msg, metadata: { phase: "initialize" } })
       set({ status: "error", statusMessage: "Runtime initialization failed", error: msg })
       mark(0, "failed")
     }

@@ -1,3 +1,17 @@
+import { PromptCompositionEngine } from '../prompting/composition/PromptCompositionEngine'
+import { PromptRegistry } from '../prompting/registry/PromptRegistry'
+import { registerDefaultSections } from '../prompting/sections'
+import { defaultContext } from '../prompting/registry/SectionDefinition'
+
+let _registry: PromptRegistry | null = null
+function ensureRegistry(): PromptRegistry {
+  if (!_registry) {
+    _registry = new PromptRegistry()
+    registerDefaultSections(_registry)
+  }
+  return _registry
+}
+
 export const EXPLORE_AGENT_PROMPT = `You are a file search specialist for AgenticOS. You excel at thoroughly navigating and exploring codebases.
 
 === CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===
@@ -252,7 +266,40 @@ export interface FactoryOptions {
   providerName?: string
 }
 
+/**
+ * Build a system prompt using the PromptCompositionEngine (async).
+ * This is the new canonical path. Falls back to buildSystemPrompt if engine fails.
+ */
+export async function buildSystemPromptFromEngine(options: FactoryOptions): Promise<string> {
+  try {
+    const registry = ensureRegistry()
+    const ctx = defaultContext({
+      role: options.role,
+      isAutonomous: options.includeAutonomous ?? false,
+      customInstructions: options.customInstructions ? [options.customInstructions] : undefined,
+    })
+    const engine = new PromptCompositionEngine(registry)
+    const plan = registry.plan(ctx)
+    const result = await engine.compose(plan, ctx)
+    let text = result.promptText
+    if (options.modelName) {
+      text += `\n\n## Model\nYou are powered by ${options.modelName}${options.modelId ? ` (${options.modelId})` : ""}${options.providerName ? ` via ${options.providerName}` : ""}.`
+    }
+    return text
+  } catch {
+    return buildSystemPrompt(options)
+  }
+}
+
+/**
+ * Legacy synchronous system prompt builder.
+ * @deprecated Use buildSystemPromptFromEngine for new code paths.
+ */
 export function buildSystemPrompt(options: FactoryOptions): string {
+  return buildLegacySystemPrompt(options)
+}
+
+function buildLegacySystemPrompt(options: FactoryOptions): string {
   const {
     role,
     includeSafety = true,

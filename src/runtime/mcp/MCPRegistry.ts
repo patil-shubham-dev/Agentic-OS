@@ -1,3 +1,4 @@
+import { useToastStore } from "@/stores/toast-store"
 import { MCPClient, MCPClientStatus, type MCPClientConfig } from './MCPClient'
 import type { AgentTool } from '../tools/core/AgentTool'
 
@@ -39,7 +40,9 @@ export class MCPRegistry {
     for (let i = 0; i < results.length; i++) {
       const result = results[i]
       if (result.status === 'rejected') {
-        console.warn(`[MCP] Failed to connect client: ${result.reason}`)
+        const reason = result.reason?.message ?? String(result.reason)
+        console.warn(`[MCP] Failed to connect client: ${reason}`)
+        useToastStore.getState().addToast(`MCP server connection failed: ${reason}`, "error", 5000)
       }
     }
   }

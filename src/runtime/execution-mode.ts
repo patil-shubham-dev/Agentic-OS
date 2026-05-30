@@ -9,7 +9,7 @@
  * - Whether rollback is automatic or manual
  */
 
-import { executionEngine } from "./execution-engine"
+
 
 export type ExecutionModeId =
   | "autonomous"
@@ -171,6 +171,7 @@ export function getAllModes(): ExecutionModeConfig[] {
 export function applyModeConstraints(
   mode: ExecutionModeId,
   roles: string[],
+  intent?: string,
 ): string[] {
   const config = getModeConfig(mode)
 
@@ -183,7 +184,7 @@ export function applyModeConstraints(
     roles = roles.filter((r) => r !== "browser")
   }
 
-  if (config.includeQAByDefault && !roles.includes("qa")) {
+  if (config.includeQAByDefault && !roles.includes("qa") && intent !== "conversation") {
     roles.push("qa")
   }
 

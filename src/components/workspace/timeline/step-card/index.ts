@@ -1,3 +1,4 @@
-// All step-card sub-components have been migrated into conversation/ components.
-// This barrel exists only for backward compat; new code imports from conversation/ directly.
-export {}
+// Re-export step-card types for backward compatibility.
+// New code should import from ./types or ./step-card.tsx directly.
+export type { StepCardStatus, ToolCallRecord } from "../types"
+export type { FileEditRecord, FileEditVerification, TerminalRecord } from "../step-card"

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { cn } from "@/lib/utils"
 import { RolesTab } from "@/components/settings/roles-tab"
@@ -11,7 +11,7 @@ import { useLeakTracker } from "@/performance/leak-detector"
 import {
   Users, LayoutGrid, GitFork, Share2, Plus, Search,
   Settings2, AlertTriangle, CheckCircle2, Cpu, Brain,
-  Activity, RefreshCw, Wifi, WifiOff,
+  Activity, RefreshCw, Wifi, WifiOff, Loader2,
 } from "lucide-react"
 
 type ViewMode = "grid" | "hierarchy" | "dependencies"
@@ -24,6 +24,12 @@ export function AgentsPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("grid")
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
+  const [pageLoading, setPageLoading] = useState(true)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setPageLoading(false), 300)
+    return () => clearTimeout(timer)
+  }, [])
 
   const stats = useMemo(() => {
     const enabled = roleConfigs.filter((r) => r.isEnabled)
@@ -85,6 +91,21 @@ export function AgentsPage() {
     { mode: "dependencies", label: "Dependencies", icon: Share2, desc: "Role relationship map" },
   ]
 
+  if (pageLoading) {
+    return (
+      <div className="h-full overflow-y-auto bg-[#0a0a0b]">
+        <div className="p-6 max-w-6xl mx-auto space-y-6">
+          <div className="flex items-center justify-center h-64">
+            <div className="flex flex-col items-center gap-3">
+              <Loader2 className="h-8 w-8 text-blue-400 animate-spin" />
+              <p className="text-sm text-white/40">Loading agent workforce...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="h-full overflow-y-auto bg-[#0a0a0b]">
       <div className="p-6 max-w-6xl mx-auto space-y-6">
@@ -124,6 +145,25 @@ export function AgentsPage() {
         </div>
 
         {/* ── Stats Bar ── */}
+        {roleConfigs.length === 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex flex-col items-center py-12 text-center"
+          >
+            <div className="flex items-center justify-center h-14 w-14 rounded-2xl bg-gradient-to-br from-blue-500/15 to-purple-500/10 border border-white/10 mb-4">
+              <Users className="h-7 w-7 text-blue-400" />
+            </div>
+            <h2 className="text-lg font-semibold text-white mb-1">Welcome to Agent Workforce</h2>
+            <p className="text-sm text-white/40 max-w-md mb-6">
+              Create agent roles to build your AI workforce. Each role can be configured with a model, capabilities, and collaboration rules.
+            </p>
+            <Button onClick={handleCreateRole} size="sm" className="h-8 text-xs">
+              <Plus className="h-3 w-3 mr-1" /> Create Your First Role
+            </Button>
+          </motion.div>
+        )}
+
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
           {[
             { label: "Total Roles", value: stats.total, icon: Users, color: "text-blue-400" },

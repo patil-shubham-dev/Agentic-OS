@@ -10,9 +10,6 @@ import {
 export function ExecutionTopology({ className }: { className?: string }) {
   const rootPath = useWorkspaceStore((s) => s.rootPath)
   const runtimeConfig = useWorkspaceStore((s) => s.runtimeConfig)
-  const orchestrationState = useWorkspaceStore((s) => s.orchestrationState)
-  const executionMode = useWorkspaceStore((s) => s.executionMode)
-  const isManagerProcessing = useAgentStore((s) => s.isManagerProcessing)
 
   // Runtime state
   const runtimeStatus = useWorkspaceRuntime((s) => s.status)
@@ -91,17 +88,6 @@ export function ExecutionTopology({ className }: { className?: string }) {
           )}
         </div>
 
-        <div className="flex items-center justify-between">
-          <span className="text-muted-foreground">Mode</span>
-          <span className="font-medium capitalize">{executionMode.replace(/_/g, " ")}</span>
-        </div>
-
-        <div className="flex items-center justify-between">
-          <span className="text-muted-foreground">State</span>
-          <span className={cn("font-medium", stateColor[orchestrationState] || "text-muted-foreground")}>
-            {orchestrationState}
-          </span>
-        </div>
       </div>
 
       {/* Wired agents list */}

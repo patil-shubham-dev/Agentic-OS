@@ -9,10 +9,10 @@ import { useLedgerStore } from './stores/ledger-store'
 import { useAppStore } from './stores/app-store'
 import { useWorkspaceRuntime } from './runtime/workspace-runtime'
 import { useTimelineStore } from './components/workspace/timeline/timeline-store'
+import { persistChatState, loadPersistedChatState, clearPersistedChatState } from './components/workspace/timeline/chat-persistence'
 import { cancelPendingRefresh } from './runtime/runtime-coordinator'
 import { bootRuntime, shutdownRuntime, getKernel } from './core/kernel/startup'
 import { isInSafeMode } from './core/crash-handling/safe-mode'
-import { PrefetchScheduler } from './runtime/prefetch/prefetch-scheduler'
 import { RuntimeCleanupManager } from './runtime/RuntimeCleanupManager'
 import { tauriFetch } from '@agentic-os/providers/http-client'
 import './index.css'
@@ -78,28 +78,11 @@ function Root() {
         console.error('[Boot] Kernel boot DEGRADED — some services failed')
       }
 
-      // Phase 3: warm providers (fire-and-forget via PrefetchScheduler)
-      if (!cancelled && !isInSafeMode()) {
-        const prefetchScheduler = PrefetchScheduler.getInstance()
-        const providers = useAppStore.getState().providers
-        for (const p of providers) {
-          if (p.apiKey) {
-            const warmUrl = p.isOpenAiCompatible
-              ? `${p.baseUrl.replace(/\/+$/, '')}/v1/models`
-              : p.baseUrl
-            prefetchScheduler.enqueue({
-              id: `warm-provider:${p.id}`,
-              priority: "low",
-              label: `Warm provider ${p.name}`,
-              execute: async () => {
-                await tauriFetch(warmUrl, {
-                  method: 'GET',
-                  headers: { Authorization: `Bearer ${p.apiKey}` },
-                  signal: AbortSignal.timeout(4000),
-                })
-              },
-            })
-          }
+      // Phase 3: restore persisted chat state
+      if (!cancelled) {
+        const saved = loadPersistedChatState()
+        if (saved) {
+          useTimelineStore.getState().restoreState(saved)
         }
       }
 
@@ -113,6 +96,19 @@ function Root() {
         unsubs.push(
           useLedgerStore.subscribe(() => {
             persistLedger()
+          }),
+        )
+
+        // Debounced timeline persistence — persists 2s after last change
+        let timelineTimer: ReturnType<typeof setTimeout> | null = null
+        unsubs.push(
+          useTimelineStore.subscribe(() => {
+            if (timelineTimer) clearTimeout(timelineTimer)
+            timelineTimer = setTimeout(() => {
+              timelineTimer = null
+              const s = useTimelineStore.getState()
+              persistChatState(s.events, s.agentSessions, s.streamingTexts, s.sessionOrder, s.sessionCreatedAtEventCount, s.collapsedSections)
+            }, 2000)
           }),
         )
       }

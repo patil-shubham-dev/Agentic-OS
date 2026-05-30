@@ -14,9 +14,6 @@
  */
 
 import { EventBus } from "./EventBus"
-import { StreamMultiplexer } from "./StreamMultiplexer"
-import { RuntimeOS } from "./RuntimeOS"
-import { SessionManager } from "./sessions/SessionManager"
 import { cancelPendingRefresh } from "./runtime-coordinator"
 
 export type CleanupResource =
@@ -38,7 +35,7 @@ type ShutdownListener = (phase: ShutdownPhase) => void | Promise<void>
 export type ShutdownPhase =
   | "initiating"
   | "aborting-operations"
-  | "cancelling-tasks"
+
   | "disposing-streams"
   | "cleaning-sessions"
   | "destroying-eventbus"
@@ -210,38 +207,7 @@ export class RuntimeCleanupManager {
       }
     })
 
-    // Phase 3: Cancel all running tasks via TaskCancellation
-    await phase("cancelling-tasks", async () => {
-      try {
-        const runtimeOS = RuntimeOS.getInstance()
-        const cancelled = runtimeOS.taskCancellation.cancelAll("Runtime shutdown")
-        resourcesCleaned += cancelled.length
-      } catch (e) {
-        errors.push(`[cancel-tasks] ${e instanceof Error ? e.message : String(e)}`)
-      }
-    })
-
-    // Phase 4: Clean sessions
-    await phase("cleaning-sessions", async () => {
-      try {
-        SessionManager.getInstance().destroyAll()
-        resourcesCleaned++
-      } catch (e) {
-        errors.push(`[clean-sessions] ${e instanceof Error ? e.message : String(e)}`)
-      }
-    })
-
-    // Phase 5: Dispose streams
-    await phase("disposing-streams", async () => {
-      try {
-        StreamMultiplexer.getInstance().destroy()
-        resourcesCleaned++
-      } catch (e) {
-        errors.push(`[dispose-streams] ${e instanceof Error ? e.message : String(e)}`)
-      }
-    })
-
-    // Phase 6: Clean all remaining resources
+    // Phase 3: Clean all remaining resources
     await phase("destroying-eventbus", async () => {
       // Clear pending refreshes
       cancelPendingRefresh()

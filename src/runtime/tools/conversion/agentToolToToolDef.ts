@@ -26,6 +26,7 @@ export function agentToolsToToolDefsForRole(tools: AgentTool[], role: string): T
     .filter(t => {
       const modes = t.supportedModes()
       if (modes.length === 0) return true
+      if (modes.includes('*')) return true
       return rolePrefixes.some(p => modes.some(m => m === p || m === 'default'))
     })
     .map(agentToolToToolDef)

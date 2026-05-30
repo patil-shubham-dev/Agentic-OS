@@ -1,10 +1,6 @@
-/**
- * Hierarchical memory loader for AgenticOS.
- * Loads memory files in order: global → project → local → path-scoped rules.
- * Adapted from Claude Code's CLAUDE.md architecture.
- */
-
 import type { MemoryFile } from "./memory-types"
+import { isTauri, getRuntimeEnvironment } from "@/runtime/environment"
+import { withTimeoutFallback } from "@/runtime/with-timeout"
 
 const DEFAULT_MEMORY_FILES = [
   { path: "~/.agentic-os/CLAUDE.md", source: "global" as const, priority: 0 },
@@ -18,12 +14,20 @@ export interface MemoryLoadResult {
   rules: MemoryFile[]
 }
 
+const MEMORY_TIMEOUT_MS = 3_000
+
 export class MemoryLoader {
   private cachedFiles: Map<string, string> = new Map()
-  private cacheDurationMs = 30_000 // 30 second cache
+  private cacheDurationMs = 30_000
   private lastLoadTime = 0
 
   async load(projectPath: string): Promise<MemoryLoadResult> {
+    const env = getRuntimeEnvironment()
+    if (env === "browser") {
+      console.log("[MemoryLoader] Browser environment — no filesystem access, returning empty memory")
+      return { files: [], combined: "", rules: [] }
+    }
+
     const now = Date.now()
     if (now - this.lastLoadTime < this.cacheDurationMs && this.cachedFiles.size > 0) {
       return this.buildResult()
@@ -33,15 +37,25 @@ export class MemoryLoader {
     const loaded: MemoryFile[] = []
 
     for (const def of DEFAULT_MEMORY_FILES) {
-      const content = await this.tryRead(resolvePath(def.path, projectPath))
+      const resolvedPath = resolvePath(def.path, projectPath)
+      const content = await withTimeoutFallback(
+        this.readFile(resolvedPath),
+        `read memory file: ${def.path}`,
+        null,
+        MEMORY_TIMEOUT_MS,
+      )
       if (content) {
         loaded.push({ ...def, content })
       }
     }
 
-    // Load path-scoped rules from .agentic-os/memory/rules/
     const rulesDir = `${projectPath}/.agentic-os/memory/rules`
-    const rules = await this.loadRules(rulesDir)
+    const rules = await withTimeoutFallback(
+      this.loadRules(rulesDir),
+      `load memory rules: ${rulesDir}`,
+      [],
+      MEMORY_TIMEOUT_MS,
+    )
     loaded.push(...rules)
 
     this.cachedFiles = new Map(loaded.map((f) => [f.path, f.content]))
@@ -68,28 +82,43 @@ export class MemoryLoader {
     return { files, combined, rules }
   }
 
+  private async readFile(path: string): Promise<string | null> {
+    try {
+      if (isTauri()) {
+        const { readTextFile } = await import("@tauri-apps/plugin-fs")
+        return await readTextFile(path)
+      }
+      return null
+    } catch {
+      return null
+    }
+  }
+
   private async loadRules(rulesDir: string): Promise<MemoryFile[]> {
     try {
-      // Try to list rule files
-      const fs = await import("fs/promises")
-      const entries = await fs.readdir(rulesDir).catch(() => [])
-      const files: MemoryFile[] = []
-      for (const entry of entries) {
-        if (!entry.endsWith(".md")) continue
-        const content = await fs.readFile(`${rulesDir}/${entry}`, "utf-8").catch(() => "")
-        if (!content) continue
-        // Parse YAML frontmatter for path pattern
-        const pathPattern = this.extractPathPattern(content)
-        files.push({
-          path: `${rulesDir}/${entry}`,
-          source: "rules",
-          content,
-          priority: 3,
-          pathPattern,
-        })
+      if (isTauri()) {
+        const { readDir, readTextFile } = await import("@tauri-apps/plugin-fs")
+        const entries = await readDir(rulesDir)
+        const files: MemoryFile[] = []
+        for (const entry of entries) {
+          if (!entry.name || !entry.name.endsWith(".md")) continue
+          const filePath = `${rulesDir}/${entry.name}`
+          const content = await readTextFile(filePath).catch(() => "")
+          if (!content) continue
+          const pathPattern = this.extractPathPattern(content)
+          files.push({
+            path: filePath,
+            source: "rules",
+            content,
+            priority: 3,
+            pathPattern,
+          })
+        }
+        return files
       }
-      return files
+      return []
     } catch {
+      console.warn(`[MemoryLoader] Failed to load rules from ${rulesDir} — continuing without rules`)
       return []
     }
   }
@@ -99,24 +128,11 @@ export class MemoryLoader {
     return match?.[1]
   }
 
-  private async tryRead(path: string): Promise<string | null> {
-    try {
-      const fs = await import("fs/promises")
-      return await fs.readFile(path, "utf-8")
-    } catch {
-      return null
-    }
-  }
-
   invalidateCache(): void {
     this.cachedFiles.clear()
     this.lastLoadTime = 0
   }
 
-  /**
-   * Get memory content filtered by file path pattern.
-   * Used to inject only relevant rules for a given file being edited.
-   */
   getRelevantRules(filePath: string, rules: MemoryFile[]): string {
     return rules
       .filter((r) => r.pathPattern && filePath.match(new RegExp(r.pathPattern.replace(/\*/g, ".*"))))
@@ -127,8 +143,7 @@ export class MemoryLoader {
 
 function resolvePath(path: string, projectPath: string): string {
   if (path.startsWith("~")) {
-    const home = process.env.HOME || process.env.USERPROFILE || ""
-    return path.replace("~", home)
+    return `${projectPath}/.agentic-os/global/CLAUDE.md`
   }
   if (path.startsWith("/")) return path
   return `${projectPath}/${path}`

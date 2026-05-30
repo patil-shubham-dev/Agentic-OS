@@ -9,6 +9,7 @@ import { streamingTransportFetch, SseParser } from "./streaming-transport"
 import { TransportError, classifyNetworkError, classifyHttpError } from "./transport-errors"
 import { tauriFetch } from "./http-client"
 
+
 export interface TransportOptions {
   config?: Partial<TransportConfig>
   getApiKey?: (providerId?: string) => string | undefined
@@ -157,9 +158,15 @@ export class ProviderTransport {
       onToolCallDelta: callbacks.onToolCallDelta ?? (() => {}),
       onToolCallEnd: callbacks.onToolCallEnd ?? (() => {}),
       onToolCallsComplete: callbacks.onToolCallsComplete,
-      onFinish: callbacks.onFinish,
-      onError: callbacks.onError,
-      onDone: callbacks.onDone,
+      onFinish: (reason) => {
+        callbacks.onFinish(reason)
+      },
+      onError: (error) => {
+        callbacks.onError(error)
+      },
+      onDone: () => {
+        callbacks.onDone()
+      },
     }
 
     await streamingTransportFetch(

@@ -7,13 +7,14 @@ import { Switch, Badge, Separator, Button, Label, TooltipSimple as Tooltip } fro
 import type { AgentRoleConfig, RoleRuntimeState } from "@/types"
 import { useIntegrity } from "@/lib/use-integrity"
 import {
-  Plus, Search, Copy, Settings2,
+  Plus, Search, Copy, Settings2, Wand2,
   Trash2, GripVertical, Code2, Globe, Brain,
   Wifi, FileCode, Unlock, GitBranch,
   Thermometer, Maximize2, Terminal, ChevronDown,
   Eye, CheckCircle2, Sparkles, AlertTriangle,
   Cpu, Layers, RefreshCw, Users, Network,
 } from "lucide-react"
+import { AgentConfigurator } from "./agents/AgentConfigurator"
 import { WiringIndicator } from "./wiring-indicator"
 
 const MEMORY_SCOPES = [
@@ -452,88 +453,20 @@ function RoleCard({
                 <p className="text-[10px] text-white/20 mt-1">Assigning a parent creates a hierarchical dependency — child roles inherit context from parents.</p>
               </div>
 
-              {/* Provider & Model */}
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-white/60">Provider</Label>
-                  <select
-                    value={role.providerId || ""}
-                    onChange={(e) => onUpdate({ providerId: e.target.value || undefined })}
-                    className="h-9 w-full rounded-xl border border-white/10 bg-white/[0.03] px-3 text-xs text-white outline-none focus:border-white/20"
-                  >
-                    <option value="" className="bg-black">None</option>
-                    {providers.map((p) => (
-                      <option key={p.id} value={p.id} className="bg-black">{p.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-white/60">Model</Label>
-                  <select
-                    value={role.model || ""}
-                    onChange={(e) => onUpdate({ model: e.target.value })}
-                    className="h-9 w-full rounded-xl border border-white/10 bg-white/[0.03] px-3 text-xs text-white outline-none focus:border-white/20"
-                  >
-                    <option value="" className="bg-black">None</option>
-                    {modelOptions.map((m) => (
-                      <option key={m.id} value={m.id} className="bg-black">{m.name} ({m.provider})</option>
-                    ))}
-                  </select>
-                  {modelOptions.length > 0 && !role.model && (
-                    <button
-                      onClick={() => { const m = modelOptions[0]; if (m) onUpdate({ model: m.id }); }}
-                      className="text-[10px] text-blue-400/60 hover:text-blue-400 transition-colors"
-                    >
-                      <Sparkles className="h-2.5 w-2.5 inline mr-0.5" />
-                      Select first available model
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Fallback Model */}
+              {/* Preset-based configurator */}
               <div className="mb-4">
-                <Label className="text-xs text-white/60">Fallback Model (optional)</Label>
-                <select
-                  value={role.fallbackModel || ""}
-                  onChange={(e) => onUpdate({ fallbackModel: e.target.value || undefined })}
-                  className="h-9 w-full rounded-xl border border-white/10 bg-white/[0.03] px-3 text-xs text-white outline-none focus:border-white/20 mt-1.5"
-                >
-                  <option value="" className="bg-black">None</option>
-                  {modelOptions.filter((m) => m.id !== role.model).map((m) => (
-                    <option key={m.id} value={m.id} className="bg-black">{m.name} ({m.provider})</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Temperature & Max Tokens */}
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-white/60">Temperature</Label>
-                  <div className="flex items-center gap-2">
-                    <Thermometer className="h-3.5 w-3.5 text-white/30" />
-                    <input
-                      type="range" min="0" max="2" step="0.1"
-                      value={role.temperature}
-                      onChange={(e) => onUpdate({ temperature: parseFloat(e.target.value) })}
-                      className="flex-1 accent-blue-500 h-1"
-                    />
-                    <span className="text-xs font-mono text-white/60 w-8 text-right">{role.temperature.toFixed(1)}</span>
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-white/60">Max Tokens</Label>
-                  <div className="flex items-center gap-2">
-                    <Maximize2 className="h-3.5 w-3.5 text-white/30" />
-                    <input
-                      type="range" min="1024" max="65536" step="1024"
-                      value={role.maxTokens}
-                      onChange={(e) => onUpdate({ maxTokens: parseInt(e.target.value) })}
-                      className="flex-1 accent-blue-500 h-1"
-                    />
-                    <span className="text-xs font-mono text-white/60 w-16 text-right">{(role.maxTokens / 1024).toFixed(0)}K</span>
-                  </div>
-                </div>
+                <Label className="text-xs text-white/60 mb-2 block">Configuration</Label>
+                <AgentConfigurator
+                  temperature={role.temperature}
+                  maxTokens={role.maxTokens}
+                  providerId={role.providerId}
+                  model={role.model}
+                  fallbackModel={role.fallbackModel}
+                  providers={providers}
+                  models={modelOptions}
+                  onApply={(updates) => onUpdate(updates)}
+                  onCancel={() => {}}
+                />
               </div>
 
               {/* Collaboration Tags */}
@@ -629,9 +562,9 @@ function RoleCard({
                       {perm}
                     </span>
                   ))}
-                  <button className="inline-flex items-center gap-1 rounded-full border border-dashed border-white/10 px-2.5 py-1 text-[10px] text-white/30 hover:text-white/50 hover:border-white/20 transition-all">
+                  <span className="inline-flex items-center gap-1 rounded-full border border-dashed border-white/5 px-2.5 py-1 text-[10px] text-white/20">
                     <Plus className="h-2.5 w-2.5" /> Add
-                  </button>
+                  </span>
                 </div>
               </div>
             </motion.div>

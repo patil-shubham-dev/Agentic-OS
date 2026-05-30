@@ -2,7 +2,6 @@ import { create } from "zustand"
 import type { FileEntry, OpenFile, FileChangeEvent, RuntimeConfig } from "@/types"
 import { requestRefresh, flushDeferredRefresh } from "@/runtime/runtime-coordinator"
 
-export type ExecutionMode = "autonomous" | "fastest" | "most_accurate" | "research_heavy" | "human_guided" | "safe_mode"
 export type OrchestrationState = "idle" | "analyzing" | "planning" | "executing" | "reviewing" | "error"
 export type AiContextFile = { path: string; name: string; relevance: number; addedAt: number }
 
@@ -23,9 +22,7 @@ interface WorkspaceStore {
   changedFiles: Set<string>
   isLoading: boolean
 
-  // Orchestration state (runtime state lives in workspace-runtime)
-  executionMode: ExecutionMode
-  orchestrationState: OrchestrationState
+  // Orchestration metadata
   aiContextFiles: AiContextFile[]
   suggestedFiles: string[]
   recentlyModified: string[]
@@ -46,8 +43,6 @@ interface WorkspaceStore {
   clearChangedFiles: () => void
 
   // Orchestration actions
-  setExecutionMode: (mode: ExecutionMode) => void
-  setOrchestrationState: (state: OrchestrationState) => void
   addAiContextFile: (path: string, name: string, relevance: number) => void
   removeAiContextFile: (path: string) => void
   clearAiContext: () => void
@@ -77,6 +72,10 @@ interface WorkspaceStore {
   notifyFileEdited: (path: string, newContent: string) => void
   lastEditedFile: string | null
   recordFileEdit: (path: string) => void
+
+  // State persistence (open files, cursor, scroll)
+  persistWorkspaceState: () => void
+  restoreWorkspaceState: () => void
 }
 
 // ── Tree rendering limits (prevent context-window blowout) ──
@@ -251,8 +250,6 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   changedFiles: new Set(),
   isLoading: false,
 
-  executionMode: "autonomous",
-  orchestrationState: "idle",
   aiContextFiles: [],
   suggestedFiles: [],
   recentlyModified: [],
@@ -278,7 +275,18 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 
   setFileTree: (tree) => set({ fileTree: tree, isLoading: false }),
 
-  setLoading: (loading) => set({ isLoading: loading }),
+  setLoading: (loading) => {
+    set({ isLoading: loading })
+    if (loading) {
+      // Auto-reset loading after 30s to prevent stuck spinner
+      setTimeout(() => {
+        const current = useWorkspaceStore.getState().isLoading
+        if (current) {
+          set({ isLoading: false })
+        }
+      }, 30000)
+    }
+  },
 
   openFile: (file) =>
     set((store) => {
@@ -342,8 +350,6 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 
   clearChangedFiles: () => set({ changedFiles: new Set() }),
 
-  setExecutionMode: (mode) => set({ executionMode: mode }),
-  setOrchestrationState: (state) => set({ orchestrationState: state }),
   addAiContextFile: (path, name, relevance) =>
     set((store) => {
       if (store.aiContextFiles.some((f) => f.path === path)) return store
@@ -432,4 +438,46 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
 
   recordFileEdit: (path) => set({ lastEditedFile: path }),
+
+  persistWorkspaceState: () => {
+    const { openFiles, activeFilePath, cursorLine, cursorColumn, visibleRangeStart, visibleRangeEnd } = get()
+    const persistData = {
+      openFiles: openFiles.map(f => ({ path: f.path, name: f.name })),
+      activeFilePath,
+      cursorLine,
+      cursorColumn,
+      visibleRangeStart,
+      visibleRangeEnd,
+    }
+    try {
+      localStorage.setItem('agentic-workspace-state', JSON.stringify(persistData))
+    } catch { /* quota exceeded, ignore */ }
+  },
+
+  restoreWorkspaceState: () => {
+    try {
+      const raw = localStorage.getItem('agentic-workspace-state')
+      if (!raw) return
+      const data = JSON.parse(raw) as {
+        openFiles: { path: string; name: string }[]
+        activeFilePath: string | null
+        cursorLine: number
+        cursorColumn: number
+        visibleRangeStart: number
+        visibleRangeEnd: number
+      }
+      // Only restore if the root path matches (per-workspace)
+      const storedRoot = localStorage.getItem('agentic-workspace-root')
+      if (storedRoot !== get().rootPath) return
+      set({
+        activeFilePath: data.activeFilePath,
+        cursorLine: data.cursorLine ?? 1,
+        cursorColumn: data.cursorColumn ?? 1,
+        visibleRangeStart: data.visibleRangeStart ?? 1,
+        visibleRangeEnd: data.visibleRangeEnd ?? 1,
+        // Reconstruct openFiles from stored paths — content is loaded on open
+        openFiles: data.openFiles.map(f => ({ path: f.path, name: f.name, content: '', isDirty: false })),
+      })
+    } catch { /* ignore corrupt data */ }
+  },
 }))

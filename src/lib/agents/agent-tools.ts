@@ -6,11 +6,10 @@ import type { ToolResult } from "@/runtime/tools/core/ToolResult"
 import { agentToolsToToolDefs } from "@/runtime/tools/conversion/agentToolToToolDef"
 import { RuntimeOS } from "@/runtime/RuntimeOS"
 import { useWorkspaceStore } from "@/stores/workspace-store"
+import { normalizeError } from "@/lib/normalize-error"
+import { emitTelemetry } from "@/lib/telemetry"
 import {
   implGrepFiles, implGlobFiles, implReadFile, implWriteFile, implEditFile, implRunCommand,
-  implLaunchBrowser, implBrowserNavigate, implBrowserScreenshot, implBrowserClick,
-  implBrowserFill, implBrowserExecuteJs, implBrowserGetTitle, implBrowserClose,
-  implBrowserGetText, implBrowserWait,
   implDesignCreateArtifact, implDesignAddVersion, implDesignGeneratePreview,
   implDelegateSubtask, implRunSkill,
 } from "@/lib/tool-executor"
@@ -200,7 +199,7 @@ const BUILTIN_TOOLS: BuiltinToolDef[] = [
   },
   {
     name: "browser_click",
-    description: "Click an element in the browser page matched by a CSS selector",
+    description: "Click an element in the browser page matching a CSS selector",
     parameters: {
       type: "object",
       properties: {
@@ -213,12 +212,12 @@ const BUILTIN_TOOLS: BuiltinToolDef[] = [
   },
   {
     name: "browser_fill",
-    description: "Fill a form field with a value",
+    description: "Fill an input field in the browser page",
     parameters: {
       type: "object",
       properties: {
         session_id: { type: "string", description: "Browser session ID" },
-        selector: { type: "string", description: "CSS selector for the input field" },
+        selector: { type: "string", description: "CSS selector for the input element" },
         value: { type: "string", description: "Value to type into the field" },
       },
       required: ["session_id", "selector", "value"],
@@ -227,7 +226,7 @@ const BUILTIN_TOOLS: BuiltinToolDef[] = [
   },
   {
     name: "browser_execute_js",
-    description: "Execute JavaScript in the browser page and return the result as a string",
+    description: "Execute JavaScript in the browser page context",
     parameters: {
       type: "object",
       properties: {
@@ -240,7 +239,19 @@ const BUILTIN_TOOLS: BuiltinToolDef[] = [
   },
   {
     name: "browser_get_title",
-    description: "Get the current page title from the browser",
+    description: "Get the title of the current browser page",
+    parameters: {
+      type: "object",
+      properties: {
+        session_id: { type: "string", description: "Browser session ID" },
+      },
+      required: ["session_id"],
+    },
+    roles: ["browser", "qa", "design"],
+  },
+  {
+    name: "browser_close",
+    description: "Close an active browser session",
     parameters: {
       type: "object",
       properties: {
@@ -252,7 +263,7 @@ const BUILTIN_TOOLS: BuiltinToolDef[] = [
   },
   {
     name: "browser_get_text",
-    description: "Get the text content of an element matched by CSS selector",
+    description: "Get the text content of an element in the browser page",
     parameters: {
       type: "object",
       properties: {
@@ -265,27 +276,15 @@ const BUILTIN_TOOLS: BuiltinToolDef[] = [
   },
   {
     name: "browser_wait",
-    description: "Wait for an element to appear in the DOM (useful for page transitions)",
+    description: "Wait for a CSS selector to appear in the browser page",
     parameters: {
       type: "object",
       properties: {
         session_id: { type: "string", description: "Browser session ID" },
         selector: { type: "string", description: "CSS selector to wait for" },
-        timeout: { type: "number", description: "Max wait time in milliseconds (default 5000)" },
+        timeout: { type: "number", description: "Maximum wait time in ms (default: 5000)" },
       },
       required: ["session_id", "selector"],
-    },
-    roles: ["browser", "qa", "design"],
-  },
-  {
-    name: "browser_close",
-    description: "Close a browser session and release resources",
-    parameters: {
-      type: "object",
-      properties: {
-        session_id: { type: "string", description: "Browser session ID to close" },
-      },
-      required: ["session_id"],
     },
     roles: ["browser", "qa", "design"],
   },
@@ -357,18 +356,7 @@ function createAgentTool(def: BuiltinToolDef): AgentTool {
         write_file: async (_, i) => implWriteFile(rootPath, String(i.path ?? ''), String(i.content ?? '')),
         edit_file: async (_, i) => implEditFile(rootPath, i as any),
 
-        run_command: async (c, i) => implRunCommand(rootPath, c.role ?? 'coder', crypto.randomUUID(), String(i.command ?? ''), i.args as string[] | undefined),
-
-        launch_browser: async (_, i) => implLaunchBrowser(String(i.url ?? '')),
-        browser_navigate: async (_, i) => implBrowserNavigate(String(i.session_id ?? ''), String(i.url ?? '')),
-        browser_screenshot: async (_, i) => implBrowserScreenshot(String(i.session_id ?? '')),
-        browser_click: async (_, i) => implBrowserClick(String(i.session_id ?? ''), String(i.selector ?? '')),
-        browser_fill: async (_, i) => implBrowserFill(String(i.session_id ?? ''), String(i.selector ?? ''), String(i.value ?? '')),
-        browser_execute_js: async (_, i) => implBrowserExecuteJs(String(i.session_id ?? ''), String(i.js ?? '')),
-        browser_get_title: async (_, i) => implBrowserGetTitle(String(i.session_id ?? '')),
-        browser_close: async (_, i) => implBrowserClose(String(i.session_id ?? '')),
-        browser_get_text: async (_, i) => implBrowserGetText(String(i.session_id ?? ''), String(i.selector ?? '')),
-        browser_wait: async (_, i) => implBrowserWait(String(i.session_id ?? ''), String(i.selector ?? ''), i.timeout as number | undefined),
+        run_command: async (c, i) => implRunCommand(rootPath, c.role ?? 'coder', crypto.randomUUID(), String(i.command ?? ''), i.args as string[] | undefined, c.onOutput),
 
         design_create_artifact: async (_, i) => implDesignCreateArtifact(i),
         design_add_version: async (_, i) => implDesignAddVersion(i),
@@ -384,15 +372,16 @@ function createAgentTool(def: BuiltinToolDef): AgentTool {
           const content = await impl(ctx, input)
           return { data: content }
         }
+        emitTelemetry({ type: "tool_failure", timestamp: Date.now(), error: `Unknown tool: ${def.name}`, metadata: { toolName: def.name, role: ctx.role, input: JSON.stringify(input).slice(0, 200) } })
         return { data: null, error: `Unknown tool: ${def.name}`, isError: true }
       } catch (err) {
-        return { data: null, error: err instanceof Error ? err.message : String(err), isError: true }
+        const errMsg = normalizeError(err, `Tool ${def.name} failed`)
+        emitTelemetry({ type: "tool_failure", timestamp: Date.now(), error: errMsg, metadata: { toolName: def.name, role: ctx.role, input: JSON.stringify(input).slice(0, 200) } })
+        return { data: null, error: errMsg, isError: true }
       }
     },
     permissions: async () => ({ behavior: 'allow' as const }),
-    isReadOnly: () => ['grep_files', 'glob_files', 'read_file', 'browser_screenshot',
-      'browser_get_title', 'browser_get_text', 'browser_execute_js',
-      'design_generate_preview'].includes(def.name),
+    isReadOnly: () => ['grep_files', 'glob_files', 'read_file', 'design_generate_preview'].includes(def.name),
     isConcurrencySafe: () => ['grep_files', 'glob_files', 'read_file'].includes(def.name),
   })
 }

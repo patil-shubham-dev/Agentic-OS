@@ -1,85 +1,120 @@
-import { memo, useState } from "react"
+import { memo, useRef, useLayoutEffect, useEffect } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import rehypeHighlight from "rehype-highlight"
-import { Copy, Check, ChevronDown, ChevronRight } from "lucide-react"
-import { cn } from "@/lib/utils"
-
-function CodeBlock({ className, children, ...props }: React.HTMLAttributes<HTMLElement> & { inline?: boolean }) {
-  const match = /language-(\w+)/.exec(className ?? "")
-  const code = String(children ?? "").replace(/\n$/, "")
-  const [copied, setCopied] = useState(false)
-  const [collapsed, setCollapsed] = useState(false)
-
-  if (!match) {
-    return <code className="code-inline" {...props}>{children}</code>
-  }
-
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(code)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-
-  const lineCount = code.split("\n").length
-
-  return (
-    <div className="code-block-premium group">
-      <div className="code-block-header">
-        <div className="flex items-center gap-2">
-          <button onClick={() => setCollapsed(!collapsed)} className="text-foreground/20 hover:text-foreground/50 transition-colors">
-            {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-          </button>
-          <span className="code-block-lang">{match[1]}</span>
-          <span className="text-[9px] text-foreground/20 font-mono">{lineCount} lines</span>
-        </div>
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-          <button onClick={handleCopy} className={cn(
-            "flex items-center gap-1 rounded-md px-1.5 py-1 text-[9px] transition-all",
-            copied ? "text-emerald-400/60 bg-emerald-500/10" : "text-foreground/30 hover:text-foreground/60 hover:bg-white/[0.04]",
-          )}>
-            {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-            <span>{copied ? "Copied" : "Copy"}</span>
-          </button>
-        </div>
-      </div>
-      {!collapsed && (
-        <div className="code-block-content">
-          <pre className="m-0"><code className={className}>{code}</code></pre>
-        </div>
-      )}
-    </div>
-  )
-}
+import { CopyButton } from "@/components/ui/CopyButton"
+import type { Components } from "react-markdown"
 
 interface ResponseStreamProps {
   text: string
   isStreaming: boolean
 }
 
+const codeComponents: Components = {
+  code({ className, children, ...props }) {
+    const isBlock = className?.includes("hljs") || className?.includes("language-")
+    const codeText = String(children).replace(/\n$/, "")
+    if (isBlock) {
+      return (
+        <div className="relative group">
+          <div className="absolute top-1 right-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+            <CopyButton text={codeText} className="px-1 py-0.5 rounded bg-black/60 border border-white/[0.06]" />
+          </div>
+          <code className={className} {...props}>{children}</code>
+        </div>
+      )
+    }
+    return <code className={className} {...props}>{children}</code>
+  },
+  pre({ children }) {
+    return <pre className="relative group">{children}</pre>
+  },
+}
+
+/**
+ * Lightweight streaming text node.
+ * During active streaming: renders plain pre/code (no markdown) — O(1) per token.
+ * On stream completion: does ONE full ReactMarkdown render.
+ */
 export const ResponseStream = memo(function ResponseStream({ text, isStreaming }: ResponseStreamProps) {
+  const preRef = useRef<HTMLPreElement>(null)
+  const appendedLenRef = useRef(0)
+  const textRef = useRef(text)
+
+  // Track latest text value without causing re-render
+  textRef.current = text
+
+  // Append-only DOM update during streaming — skips React reconciliation for text content.
+  // Also guards against React StrictMode double-fire and element reset.
+  useEffect(() => {
+    if (!isStreaming) return
+    const pre = preRef.current
+    if (!pre) return
+    let codeEl = pre.querySelector("code")
+
+    // First mount: create code element if missing
+    if (!codeEl) {
+      codeEl = document.createElement("code")
+      pre.append(codeEl)
+    }
+
+    // Detect if React reset the element (e.g., reconciliation cleared children)
+    const currentDomLen = codeEl.textContent?.length ?? 0
+    if (currentDomLen < appendedLenRef.current) {
+      // React reset — replay full text
+      codeEl.textContent = ""
+      codeEl.append(document.createTextNode(textRef.current))
+      appendedLenRef.current = textRef.current.length
+      return
+    }
+
+    // Normal delta append
+    const newText = text.slice(appendedLenRef.current)
+    if (newText) {
+      codeEl.append(document.createTextNode(newText))
+      appendedLenRef.current = text.length
+    }
+  })
+
+  // Reset tracking when streaming stops
+  useEffect(() => {
+    if (!isStreaming) {
+      appendedLenRef.current = 0
+    }
+  }, [isStreaming])
+
   if (!text && !isStreaming) return null
 
+  if (isStreaming) {
+    return (
+      <div className="prose-claude streaming-text">
+        <pre
+          ref={preRef}
+          className="streaming-pre"
+          style={{
+            margin: 0,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            fontFamily: "inherit",
+            fontSize: "inherit",
+            lineHeight: "inherit",
+          }}
+        />
+        <span className="streaming-cursor" />
+      </div>
+    )
+  }
+
+  // Completed — single ReactMarkdown render with full formatting
   return (
     <div className="prose-claude animate-fade-in">
-      {text ? (
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeHighlight]}
-          components={{
-            code({ className, children, ...props }) {
-              const inline = !className
-              if (inline) {
-                return <code className="code-inline" {...props}>{children}</code>
-              }
-              return <CodeBlock className={className} {...props}>{children}</CodeBlock>
-            },
-          }}
-        >
-          {text}
-        </ReactMarkdown>
-      ) : null}
-      {isStreaming && <span className="streaming-cursor" />}
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
+        components={codeComponents}
+      >
+        {text}
+      </ReactMarkdown>
     </div>
   )
 })

@@ -3,20 +3,30 @@ import { motion, AnimatePresence } from "framer-motion"
 import Editor, { type OnMount, type OnChange } from "@monaco-editor/react"
 import type { editor } from "monaco-editor"
 import { useWorkspaceStore } from "@/stores/workspace-store"
+import { useDiagnosticsStore, type Diagnostic } from "@/stores/diagnostics-store"
 import type { OpenFile } from "@/types"
 import { cn } from "@/lib/utils"
+import { loadFileTree } from "@/lib/workspace"
 import { Badge, TooltipSimple as Tooltip } from "@agentic-os/ui"
 import { PremiumEmptyState, getCodeEmptyState } from "./premium-empty-state"
+import { DiagnosticsPanel } from "./diagnostics-panel"
+import { SymbolSearch, type SymbolItem } from "./symbol-search"
+import { DebugPanel } from "./debug-panel"
+import { debugService } from "@/lib/debug/debug-service"
+import { useDebugStore } from "@/stores/debug-store"
+import { gitStatus } from "@/lib/git"
+import type { GitStatus } from "@/lib/git"
 
-import { RenderScheduler } from "@/runtime/render-engine/render-scheduler"
 import { requestRefresh } from "@/runtime/runtime-coordinator"
 import { useHaptic } from "@/lib/haptics"
-import { useLiveEditorStream } from "@/hooks/use-live-editor-stream"
 import {
   WrapText, Minus, Plus, X, FileCode,
   Sparkles, Brain, Check, Save,
-  PanelRightClose, FileDown, Pencil,
+  PanelRightClose, FileDown, Pencil, AlertCircle, AlertTriangle, GitBranch,
+  Bug, FileSearch,
 } from "lucide-react"
+import { registerInlineCompletionProvider, unregisterInlineCompletionProvider, setupCompletionTracking, cleanupCompletionTracking } from "@/lib/completion/completion-provider"
+import { InlineEditOverlay } from "./inline-edit-overlay"
 
 const EXT_LANG_MAP: Record<string, string> = {
   ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
@@ -347,15 +357,53 @@ export function CodeWorkspace() {
   const [wordWrap, setWordWrap] = useState(false)
   const [fontSize, setFontSize] = useState(13)
   const [showMinimap, setShowMinimap] = useState(true)
+  const [showProblems, setShowProblems] = useState(false)
+  const [showDebugPanel, setShowDebugPanel] = useState(false)
+  const [symbolSearchOpen, setSymbolSearchOpen] = useState(false)
+  const [currentFileSymbols, setCurrentFileSymbols] = useState<SymbolItem[]>([])
   const [aiChanges, setAiChanges] = useState<AIChange[]>([])
   const [showAiOverlay, setShowAiOverlay] = useState(false)
   const [saveMethod, setSaveMethod] = useState<"tauri" | "download" | null>(null)
 
-  // ── Live editor stream: AI-generated code streams directly into open tabs ──
-  const { liveStreamActive, liveEditingFile, streamProgress, sessionTokens, sessionChars } = useLiveEditorStream()
+  const [gitInfo, setGitInfo] = useState<{ branch: string; changes: number } | null>(null)
+
+  // ── Inline AI Edit state ──
+  const [inlineEdit, setInlineEdit] = useState<{
+    active: boolean
+    selectedRange: { startLine: number; startCol: number; endLine: number; endCol: number } | null
+    selectedText: string
+    instruction: string
+    generatedPatch: string | null
+    editedCode: string | null
+    loading: boolean
+    streaming: boolean
+    tokenCount: number
+    error: string | null
+    viewMode: "edit" | "diff"
+  }>({
+    active: false,
+    selectedRange: null,
+    selectedText: "",
+    instruction: "",
+    generatedPatch: null,
+    editedCode: null,
+    loading: false,
+    streaming: false,
+    tokenCount: 0,
+    error: null,
+    viewMode: "edit",
+  })
+
+  const liveStreamActive = false
+  const liveEditingFile = null as string | null
+  const streamProgress = 0
+  const sessionTokens = 0
+  const sessionChars = 0
 
   const activeFile = openFiles.find((f) => f.path === activeFilePath)
   const isInAiContext = activeFile ? aiContextFiles.some((f) => f.path === activeFile.path) : false
+  const errorCount = useDiagnosticsStore((s) => s.diagnostics.filter((d) => d.severity === "error").length)
+  const warningCount = useDiagnosticsStore((s) => s.diagnostics.filter((d) => d.severity === "warning").length)
 
   // ── Workspace store cursor/selection sync ──
   const setCursorPosition = useWorkspaceStore((s) => s.setCursorPosition)
@@ -451,6 +499,15 @@ export function CodeWorkspace() {
       setUserActive(false)
     })
 
+    // ── Register inline completion provider (ghost text autocomplete) ──
+    registerInlineCompletionProvider(monaco, editor)
+
+    // ── Track completion accept/reject for metrics ──
+    setupCompletionTracking(editor)
+
+    // ── Enable inline suggestions in editor options ──
+    editor.updateOptions({ inlineSuggest: { enabled: true } })
+
     // Keyboard shortcuts
     editor.addAction({
       id: "save-file",
@@ -464,6 +521,127 @@ export function CodeWorkspace() {
       label: "Toggle Minimap",
       keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyM],
       run: () => { setShowMinimap((p) => !p) },
+    })
+
+    editor.addAction({
+      id: "toggle-problems",
+      label: "Toggle Problems Panel",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyPeriod],
+      run: () => { setShowProblems((p) => !p) },
+    })
+
+    // ── Inline AI Edit (Cmd+K) ──
+    editor.addAction({
+      id: "inline-ai-edit",
+      label: "Inline AI Edit",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK],
+      contextMenuGroupId: "1_modification",
+      run: (ed) => {
+        const selection = ed.getSelection()
+        if (!selection || selection.isEmpty()) return
+        const model = ed.getModel()
+        if (!model) return
+        const selected = model.getValueInRange(selection)
+        if (!selected.trim()) return
+
+        setInlineEdit({
+          active: true,
+          selectedRange: {
+            startLine: selection.startLineNumber,
+            startCol: selection.startColumn,
+            endLine: selection.endLineNumber,
+            endCol: selection.endColumn,
+          },
+          selectedText: selected,
+          instruction: "",
+          generatedPatch: null,
+          editedCode: null,
+          loading: false,
+          streaming: false,
+          tokenCount: 0,
+          error: null,
+          viewMode: "edit",
+        })
+      },
+    })
+
+    // ── Symbol search action (Ctrl+Shift+O) ──
+    editor.addAction({
+      id: "symbol-search",
+      label: "Go to Symbol",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyO],
+      run: () => {
+        const model = editor.getModel()
+        if (model) {
+          monaco.languages.provideDocumentSymbols(model).then((symbols: any) => {
+            if (symbols) {
+              const items: SymbolItem[] = symbols.map((s: any) => ({
+                name: s.name,
+                kind: s.kind,
+                detail: s.detail,
+                range: {
+                  startLineNumber: s.range.startLineNumber,
+                  startColumn: s.range.startColumn,
+                },
+                containerName: s.containerName,
+                tags: s.tags,
+              }))
+              setCurrentFileSymbols(items)
+              setSymbolSearchOpen(true)
+            }
+          })
+        }
+      },
+    })
+
+    // ── Debug panel toggle (Ctrl+Shift+D) ──
+    editor.addAction({
+      id: "toggle-debug-panel",
+      label: "Toggle Debug Panel",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyD],
+      run: () => { setShowDebugPanel((p) => !p) },
+    })
+
+    // ── Debug gutter: click to add/remove breakpoints ──
+    editor.onMouseDown((e) => {
+      if (
+        e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
+        e.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS
+      ) {
+        const line = e.target.position?.lineNumber
+        if (line) {
+          const model = editor.getModel()
+          if (model) {
+            const filePath = model.uri.path.replace("/workspace/", "")
+            debugService.toggleBreakpoint(line, filePath)
+          }
+        }
+      }
+    })
+
+    // ── Mount debug service ──
+    debugService.mount(editor, monaco)
+
+    // ── Sync Monaco markers (diagnostics) to diagnostics store ──
+    const m = monaco
+    m.editor.onDidChangeMarkers((resources: any[]) => {
+      for (const resource of resources) {
+        const markers = m.editor.getModelMarkers({ resource })
+        const diagnostics: Diagnostic[] = markers.map((marker: any) => ({
+          filePath: resource.path.replace("/workspace/", ""),
+          fileName: resource.path.split("/").pop() ?? "",
+          line: marker.startLineNumber,
+          column: marker.startColumn,
+          message: marker.message,
+          severity: marker.severity === monaco.MarkerSeverity.Error
+            ? "error"
+            : marker.severity === monaco.MarkerSeverity.Warning
+              ? "warning"
+              : "info",
+          code: typeof marker.code === "string" ? marker.code : marker.code?.toString(),
+        }))
+        useDiagnosticsStore.getState().addDiagnostics(diagnostics)
+      }
     })
   }, [])
 
@@ -513,6 +691,23 @@ export function CodeWorkspace() {
       minimap: { enabled: showMinimap },
     })
   }, [wordWrap, fontSize, showMinimap])
+
+  // ── Git status polling ──
+  useEffect(() => {
+    if (!rootPath) return
+    const rp = rootPath
+    async function poll() {
+      try {
+        const status = await gitStatus(rp)
+        setGitInfo({ branch: status.branch, changes: status.changes.length })
+      } catch {
+        setGitInfo(null)
+      }
+    }
+    poll()
+    const interval = setInterval(poll, 30000)
+    return () => clearInterval(interval)
+  }, [rootPath])
 
   // ── Save handler ──
   async function handleSave() {
@@ -574,6 +769,16 @@ export function CodeWorkspace() {
     }
   }
 
+  // ── Navigate to diagnostic location ──
+  const handleNavigateToDiagnostic = useCallback((filePath: string, line: number, column: number) => {
+    const ed = editorRef.current
+    if (ed) {
+      ed.setPosition({ lineNumber: line, column })
+      ed.revealPositionInCenter({ lineNumber: line, column })
+      ed.focus()
+    }
+  }, [])
+
   // ── Accept/reject AI changes ──
   function acceptAiChange(change: AIChange) {
     updateFileContent(change.filePath, change.newContent)
@@ -599,15 +804,19 @@ export function CodeWorkspace() {
   activeFileRef.current = activeFile
   const aiChangeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Clean up content-change debounce timer on unmount
+  // Clean up content-change debounce timer and completion provider on unmount
   useEffect(() => {
     return () => {
       if (contentRefreshRef.current) clearTimeout(contentRefreshRef.current)
+      const ed = editorRef.current
+      if (ed) {
+        unregisterInlineCompletionProvider(ed)
+        cleanupCompletionTracking(ed)
+      }
     }
   }, [])
 
   useEffect(() => {
-    const scheduler = RenderScheduler.getInstance()
     const unsub = useWorkspaceStore.subscribe((state) => {
       const currentFile = activeFileRef.current
       const lastFile = state.openFiles[state.openFiles.length - 1]
@@ -616,7 +825,7 @@ export function CodeWorkspace() {
           clearTimeout(aiChangeDebounceRef.current)
         }
         aiChangeDebounceRef.current = setTimeout(() => {
-          scheduler.schedule("ai-change-overlay", () => {
+          requestAnimationFrame(() => {
             setAiChanges((prev) => {
               if (prev.some((c) => c.filePath === lastFile.path)) return prev
               return [...prev, {
@@ -629,7 +838,7 @@ export function CodeWorkspace() {
             })
             setShowAiOverlay(true)
             pulse("medium")
-          }, "low")
+          })
         }, 300)
       }
     })
@@ -646,7 +855,28 @@ export function CodeWorkspace() {
   // ── Empty state ──
   if (!activeFile) {
     return (
-      <PremiumEmptyState config={getCodeEmptyState(openFiles.length > 0)} />
+      <PremiumEmptyState config={getCodeEmptyState(openFiles.length > 0, async () => {
+        try {
+          const { open } = await import("@tauri-apps/plugin-dialog")
+          const selected = await open({ directory: true, multiple: false })
+          if (selected) {
+            const { setRootPath, setFileTree, setLoading } = useWorkspaceStore.getState()
+            await setRootPath(String(selected))
+            setLoading(true)
+            const tree = await loadFileTree(String(selected))
+            setFileTree(tree)
+          }
+        } catch {
+          const path = prompt("Enter workspace folder path:")
+          if (path) {
+            const { setRootPath, setFileTree, setLoading } = useWorkspaceStore.getState()
+            await setRootPath(path)
+            setLoading(true)
+            const tree = await loadFileTree(path)
+            setFileTree(tree)
+          }
+        }
+      })} />
     )
   }
 
@@ -729,6 +959,52 @@ export function CodeWorkspace() {
               <Brain className="h-2.5 w-2.5 mr-0.5" /> AI Context
             </Badge>
           )}
+
+          {/* Git branch indicator */}
+          {gitInfo && (
+            <Tooltip content={`${gitInfo.changes} changed file(s) on ${gitInfo.branch}`}>
+              <span className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-white/40">
+                <GitBranch className="h-2.5 w-2.5" />
+                {gitInfo.branch}
+                {gitInfo.changes > 0 && (
+                  <span className="text-amber-400 font-medium">{gitInfo.changes}</span>
+                )}
+              </span>
+            </Tooltip>
+          )}
+
+          <span className="text-white/10 text-[8px]">|</span>
+
+          {/* Problems badge */}
+          <Tooltip content={`${errorCount} errors, ${warningCount} warnings — click to toggle problems panel`}>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => setShowProblems((p) => !p)}
+              className={cn(
+                "flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-all",
+                showProblems ? "bg-white/[0.06]" : "hover:bg-white/[0.03]",
+              )}
+            >
+              {errorCount > 0 && (
+                <span className="flex items-center gap-1 text-red-400">
+                  <AlertCircle className="h-2.5 w-2.5" />
+                  {errorCount}
+                </span>
+              )}
+              {warningCount > 0 && (
+                <span className="flex items-center gap-1 text-yellow-400">
+                  <AlertTriangle className="h-2.5 w-2.5" />
+                  {warningCount}
+                </span>
+              )}
+              {errorCount === 0 && warningCount === 0 && (
+                <span className="text-white/30">
+                  <Check className="h-2.5 w-2.5" />
+                </span>
+              )}
+            </motion.button>
+          </Tooltip>
         </div>
 
         <div className="flex items-center gap-1.5">
@@ -795,6 +1071,59 @@ export function CodeWorkspace() {
               className="rounded p-1 text-white/20 hover:text-white/40"
             >
               <Plus className="h-3 w-3" />
+            </motion.button>
+          </Tooltip>
+
+          <span className="text-white/10 text-[8px]">|</span>
+
+          {/* Symbol search */}
+          <Tooltip content="Go to Symbol (⌘⇧O)">
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => {
+                const ed = editorRef.current
+                const monaco = monacoRef.current
+                if (ed && monaco) {
+                  const model = ed.getModel()
+                  if (model) {
+                    monaco.languages.provideDocumentSymbols(model).then((symbols: any) => {
+                      if (symbols) {
+                        setCurrentFileSymbols(symbols.map((s: any) => ({
+                          name: s.name,
+                          kind: s.kind,
+                          detail: s.detail,
+                          range: {
+                            startLineNumber: s.range.startLineNumber,
+                            startColumn: s.range.startColumn,
+                          },
+                          containerName: s.containerName,
+                          tags: s.tags,
+                        })))
+                        setSymbolSearchOpen(true)
+                      }
+                    })
+                  }
+                }
+              }}
+              className="rounded p-1 text-white/25 hover:text-white/60 transition-colors"
+            >
+              <FileSearch className="h-3 w-3" />
+            </motion.button>
+          </Tooltip>
+
+          {/* Debug panel toggle */}
+          <Tooltip content="Debug (⌘⇧D)">
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => setShowDebugPanel((p) => !p)}
+              className={cn(
+                "rounded p-1 transition-colors",
+                showDebugPanel ? "text-blue-400 bg-blue-500/10" : "text-white/25 hover:text-white/60",
+              )}
+            >
+              <Bug className="h-3 w-3" />
             </motion.button>
           </Tooltip>
 
@@ -890,6 +1219,36 @@ export function CodeWorkspace() {
           )}
         </AnimatePresence>
 
+        {/* ── Inline AI Edit Overlay ── */}
+        <AnimatePresence>
+          {inlineEdit.active && (
+            <InlineEditOverlay
+              state={inlineEdit}
+              onStateChange={(partial) => setInlineEdit((prev) => ({ ...prev, ...partial }))}
+              onApplyEdit={(editedCode) => {
+                const ed = editorRef.current
+                if (!ed) return
+                const selection = ed.getSelection()
+                if (!selection) return
+                const range = new (monacoRef.current!.Range)(
+                  selection.startLineNumber,
+                  selection.startColumn,
+                  selection.endLineNumber,
+                  selection.endColumn,
+                )
+                ed.executeEdits("inline-ai-edit", [
+                  { range, text: editedCode, forceMoveMarkers: true },
+                ])
+                ed.focus()
+              }}
+              onClose={() => setInlineEdit((prev) => ({ ...prev, active: false }))}
+              filePath={activeFile?.path ?? ""}
+              language={language}
+              fullFileContent={activeFile?.content ?? ""}
+            />
+          )}
+        </AnimatePresence>
+
         {isInAiContext && !showAiOverlay && (
           <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
@@ -927,6 +1286,56 @@ export function CodeWorkspace() {
           )}
         </AnimatePresence>
       </div>
+
+      {/* Diagnostics panel at bottom */}
+      <AnimatePresence>
+        <DiagnosticsPanel
+          open={showProblems}
+          onClose={() => setShowProblems(false)}
+          onNavigateTo={handleNavigateToDiagnostic}
+        />
+      </AnimatePresence>
+
+      {/* Debug panel at bottom-right */}
+      <AnimatePresence>
+        {showDebugPanel && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 200, opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 400, damping: 30 }}
+            className="border-t border-white/[0.06] overflow-hidden shrink-0"
+          >
+            <div className="flex items-center justify-between px-2 py-1 bg-black/20 border-b border-white/[0.04]">
+              <span className="text-[9px] font-medium text-white/30 uppercase tracking-wider">Debug</span>
+              <button
+                onClick={() => setShowDebugPanel(false)}
+                className="rounded p-0.5 text-white/30 hover:text-white/60 transition-colors"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+            <div className="h-full">
+              <DebugPanel />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Symbol search overlay */}
+      <SymbolSearch
+        open={symbolSearchOpen}
+        onClose={() => setSymbolSearchOpen(false)}
+        onNavigate={(line, column) => {
+          const ed = editorRef.current
+          if (ed) {
+            ed.setPosition({ lineNumber: line, column })
+            ed.revealPositionInCenter({ lineNumber: line, column })
+            ed.focus()
+          }
+        }}
+        currentFileSymbols={currentFileSymbols}
+      />
     </div>
   )
 }

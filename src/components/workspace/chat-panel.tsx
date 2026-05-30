@@ -1,81 +1,128 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
-import { motion, AnimatePresence } from "framer-motion"
+import { useNavigate } from "react-router-dom"
 import { useAgentStore } from "@/stores/agent-store"
+import { useAppStore } from "@/stores/app-store"
 import { useWorkspaceStore } from "@/stores/workspace-store"
-import { useWorkspaceRuntime } from "@/runtime/workspace-runtime"
+import { useTimelineStore } from "./timeline/timeline-store"
 import { ExecutionSessionManager, type ExecutionSession } from "@/runtime/sessions/ExecutionSessionManager"
-import { EXECUTION_MODES } from "@/runtime/execution-mode"
-import { useRuntimeProjectionStore } from "@/stores/runtime-projections-store"
 import { cn } from "@/lib/utils"
 import { ConversationTimeline, Composer } from "./timeline/conversation"
 import { ContextBar } from "./timeline/context-bar"
 import { SessionBar } from "./timeline/SessionBar"
 import { ApprovalGate } from "./approval-gate"
 import {
-  Bot, ChevronDown, Cpu, Zap, Target, BookOpen, UserCheck, Shield,
-  AlertTriangle, Sparkles,
+  Bot, AlertTriangle, Settings2, Plus, CheckCircle2, ArrowRight,
 } from "lucide-react"
 
-const MODE_ICONS: Record<string, typeof Cpu> = {
-  autonomous: Cpu, fastest: Zap,
-  most_accurate: Target, research_heavy: BookOpen,
-  human_guided: UserCheck, safe_mode: Shield,
-}
-
-function buildModeConfig() {
-  const entries: Record<string, { icon: typeof Cpu; label: string; color: string; desc: string }> = {}
-  for (const [id, mode] of Object.entries(EXECUTION_MODES)) {
-    entries[id] = { icon: MODE_ICONS[id] ?? Cpu, label: mode.label, color: mode.color, desc: mode.description }
-  }
-  return entries
-}
-
-const MODE_CONFIG = buildModeConfig()
 const executionSessionManager = ExecutionSessionManager.getInstance()
+
+function SetupRequired() {
+  const navigate = useNavigate()
+  const providers = useAppStore((s) => s.providers)
+  const roleConfigs = useAppStore((s) => s.roleConfigs)
+
+  const checks = [
+    { label: "Add an AI Provider", done: providers.length > 0, action: () => navigate("/settings"), icon: Plus },
+    { label: "Set API Key", done: providers.some((p) => p.apiKey.length > 0), action: () => navigate("/settings"), icon: Settings2 },
+    { label: "Configure Manager Role", done: roleConfigs.some((r) => r.name.toLowerCase() === "manager" && r.providerId && r.model), action: () => navigate("/agents"), icon: Settings2 },
+  ]
+
+  const allDone = checks.every((c) => c.done)
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full p-6 text-center">
+      <div className="flex items-center justify-center h-14 w-14 rounded-2xl bg-gradient-to-br from-amber-500/15 to-orange-500/10 border border-amber-500/20 mb-4">
+        <AlertTriangle className="h-7 w-7 text-amber-400" />
+      </div>
+      <h2 className="text-base font-semibold text-white mb-1">Setup Required</h2>
+      <p className="text-xs text-white/40 max-w-sm mb-6">
+        Complete the steps below before sending messages to the agent workforce.
+      </p>
+
+      <div className="w-full max-w-xs space-y-2">
+        {checks.map((check) => (
+          <button
+            key={check.label}
+            onClick={check.action}
+            disabled={check.done}
+            className={cn(
+              "flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-all",
+              check.done
+                ? "border-green-500/15 bg-green-500/[0.03] cursor-default"
+                : "border-white/5 bg-white/[0.02] hover:border-white/15 hover:bg-white/[0.04] cursor-pointer",
+            )}
+          >
+            <div className={cn(
+              "flex items-center justify-center h-7 w-7 rounded-lg shrink-0",
+              check.done ? "bg-green-500/10" : "bg-white/[0.04]",
+            )}>
+              {check.done ? (
+                <CheckCircle2 className="h-3.5 w-3.5 text-green-400" />
+              ) : (
+                <check.icon className="h-3.5 w-3.5 text-white/40" />
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className={cn("text-xs font-medium", check.done ? "text-green-400" : "text-white/70")}>
+                {check.label}
+              </p>
+            </div>
+            {!check.done && <ArrowRight className="h-3.5 w-3.5 text-white/20 shrink-0" />}
+          </button>
+        ))}
+      </div>
+
+      {allDone && (
+        <div className="mt-4 flex items-center gap-2 text-xs text-green-400">
+          <CheckCircle2 className="h-4 w-4" />
+          All checks passed — you can start chatting!
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function ChatPanel() {
   const activeRole = useAgentStore((s) => s.activeRole)
   const isProcessing = useAgentStore((s) => s.isProcessing)
   const addMessage = useAgentStore((s) => s.addMessage)
-  const executionMode = useAgentStore((s) => s.executionMode)
-  const setExecutionMode = useAgentStore((s) => s.setExecutionMode)
-  const streamState = useAgentStore((s) => s.streamState)
-  const runtimeStatus = useWorkspaceRuntime((s) => s.status)
-  const runtimeReady = useWorkspaceRuntime((s) => s.isReady)
-  const memoryPressure = useWorkspaceRuntime((s) => s.memoryPressure)
-  const tokenUsage = useWorkspaceRuntime((s) => s.tokenUsage)
-  const wiredAgents = useWorkspaceRuntime((s) => s.wiredAgents)
   const rootPath = useWorkspaceStore((s) => s.rootPath)
   const workspaceName = rootPath ? rootPath.split(/[/\\]/).pop() || rootPath : null
 
+  const providers = useAppStore((s) => s.providers)
+  const roleConfigs = useAppStore((s) => s.roleConfigs)
+
   const [input, setInput] = useState("")
   const inputRef = useRef<HTMLTextAreaElement>(null)
-  const [modeSelectorOpen, setModeSelectorOpen] = useState(false)
   const [currentSession, setCurrentSession] = useState<ExecutionSession | null>(null)
-
-  useEffect(() => {
-    useRuntimeProjectionStore.getState().initialize()
-    return () => {
-      useRuntimeProjectionStore.getState().destroy()
-    }
-  }, [])
+  const [isCancelling, setIsCancelling] = useState(false)
 
   useEffect(() => {
     inputRef.current?.focus()
   }, [activeRole])
 
-  const modelName = useMemo(() => {
-    const wired = wiredAgents.find((a) => a.runtimeRole === activeRole)
-    return wired?.model
-  }, [wiredAgents, activeRole])
+  const canSend = useMemo(() => {
+    const hasProvider = providers.length > 0
+    const hasApiKey = providers.some((p) => p.apiKey.length > 0)
+    const hasManager = roleConfigs.some((r) => r.name.toLowerCase() === "manager" && r.providerId && r.model)
+    return hasProvider && hasApiKey && hasManager
+  }, [providers, roleConfigs])
 
   const sendMessage = useCallback(async () => {
-    if (!input.trim() || isProcessing) return
+    if (!input.trim() || useAgentStore.getState().isProcessing || !canSend) return
 
     const userInput = input.trim()
     const ts = Date.now()
 
+    const correlationId = useTimelineStore.getState().generateId()
     addMessage(activeRole, { role: "user", content: userInput, timestamp: ts })
+    useTimelineStore.getState().addEvent({
+      type: "user-message",
+      id: correlationId,
+      correlationId,
+      content: userInput,
+      timestamp: ts,
+    })
     setInput("")
     useAgentStore.getState().setProcessing(true)
 
@@ -83,6 +130,7 @@ export function ChatPanel() {
       const session = await executionSessionManager.start({
         input: userInput,
         activeRole,
+        correlationId,
       })
       setCurrentSession(session)
     } catch (err) {
@@ -96,135 +144,36 @@ export function ChatPanel() {
     } finally {
       useAgentStore.getState().setProcessing(false)
     }
-  }, [input, activeRole, isProcessing, addMessage])
+  }, [input, activeRole, addMessage, canSend])
+
+  const cancelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleCancel = useCallback(() => {
+    if (cancelTimerRef.current) clearTimeout(cancelTimerRef.current)
+    setIsCancelling(true)
+
     if (currentSession) {
       executionSessionManager.cancel(currentSession.id)
+    } else {
+      ExecutionSessionManager.cancelCurrent()
     }
-    useAgentStore.getState().setProcessing(false)
+
+    // Keep cancelling state visible for at least 800ms so users perceive it
+    cancelTimerRef.current = setTimeout(() => {
+      useAgentStore.getState().setProcessing(false)
+      setIsCancelling(false)
+    }, 800)
   }, [currentSession])
 
   return (
     <div className="flex h-full flex-col bg-gradient-to-b from-[#0a0a0b] to-[#09090a]">
-      {/* Minimal header with status */}
+      {/* Minimal header */}
       <div className="relative border-b border-white/[0.05]">
-        <div className="flex items-center justify-between px-3 py-2">
-          <div className="flex items-center gap-2">
-            <div className="relative shrink-0">
-              <motion.div
-                animate={{
-                  scale: isProcessing ? [1, 1.05, 1] : 1,
-                }}
-                transition={{ duration: 1.5, repeat: isProcessing ? Infinity : 0, ease: "easeInOut" }}
-                className={cn(
-                  "flex items-center justify-center h-6 w-6 rounded-lg shrink-0 transition-all duration-300",
-                  isProcessing
-                    ? "bg-gradient-to-br from-blue-500/20 to-purple-500/20"
-                    : "bg-blue-500/8",
-                )}
-              >
-                <Bot className={cn(
-                  "h-3 w-3 transition-all duration-300",
-                  isProcessing ? "text-blue-400" : "text-blue-400/50",
-                )} />
-              </motion.div>
-              {isProcessing && (
-                <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5">
-                  <span className="absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75 animate-ping" />
-                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-blue-500" />
-                </span>
-              )}
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className={cn(
-                  "text-[11px] font-semibold transition-all duration-300",
-                  isProcessing ? "text-white/80" : "text-white/65",
-                )}>
-                  Assistant
-                </span>
-                <span className="text-[8px] text-white/15 font-mono bg-white/[0.02] rounded px-1 py-0.5 border border-white/[0.03]">
-                  {activeRole}
-                </span>
-              </div>
-              {isProcessing && (
-                <span className="flex items-center gap-1 text-[9px] text-blue-400/50 mt-0.5">
-                  <span className="thinking-dots">
-                    <span />
-                    <span />
-                    <span />
-                  </span>
-                  {streamState === "streaming" ? "Streaming" : "Processing"}
-                </span>
-              )}
-            </div>
-
-            {memoryPressure > 75 && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className={cn(
-                  "flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded-lg border shrink-0",
-                  memoryPressure > 90
-                    ? "border-red-500/15 bg-red-500/[0.04] text-red-400/60"
-                    : "border-amber-500/10 bg-amber-500/[0.03] text-amber-400/50",
-                )}
-              >
-                <AlertTriangle className="h-2 w-2" />
-                {memoryPressure}%
-              </motion.div>
-            )}
+        <div className="flex items-center gap-2 px-3 py-2">
+          <div className="flex items-center justify-center h-6 w-6 rounded-lg bg-blue-500/8">
+            <Bot className="h-3 w-3 text-blue-400/50" />
           </div>
-
-          {/* Mode selector */}
-          <div className="relative">
-            <button
-              onClick={() => setModeSelectorOpen(!modeSelectorOpen)}
-              className={cn(
-                "flex items-center gap-1 rounded-lg border px-2 py-1 text-[9px] font-medium transition-all",
-                "bg-white/[0.02] border-white/[0.05] text-white/40",
-                "hover:bg-white/[0.04] hover:text-white/60",
-              )}
-            >
-              <Zap className={cn("h-2.5 w-2.5", MODE_CONFIG[executionMode].color)} />
-              <span>{MODE_CONFIG[executionMode].label}</span>
-              <ChevronDown className="h-2 w-2 text-white/20" />
-            </button>
-            <AnimatePresence>
-              {modeSelectorOpen && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.94, y: -4 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.94, y: -4 }}
-                  transition={{ duration: 0.12, ease: "easeOut" }}
-                  className="absolute right-0 top-full mt-1 w-44 rounded-xl border border-white/[0.06] bg-[#0d0d0e]/98 backdrop-blur-2xl shadow-2xl p-1 z-50"
-                >
-                  {Object.entries(MODE_CONFIG).map(([key, config]) => {
-                    const Icon = config.icon
-                    return (
-                      <button
-                        key={key}
-                        onClick={() => { setExecutionMode(key as any); setModeSelectorOpen(false) }}
-                        className={cn(
-                          "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[10px] transition-all",
-                          executionMode === key
-                            ? "bg-blue-500/10 text-blue-400 border border-blue-500/8"
-                            : "text-white/35 hover:bg-white/[0.03] hover:text-white/60 border border-transparent",
-                        )}
-                      >
-                        <Icon className={cn("h-3 w-3", config.color)} />
-                        <span className="font-medium">{config.label}</span>
-                        {executionMode === key && (
-                          <span className="ml-auto h-1.5 w-1.5 rounded-full bg-blue-500" />
-                        )}
-                      </button>
-                    )
-                  })}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+          <span className="text-[11px] font-semibold text-white/65">Chat</span>
         </div>
       </div>
 
@@ -232,20 +181,17 @@ export function ChatPanel() {
 
       {/* Conversation area - takes remaining space */}
       <div className="flex-1 overflow-hidden relative">
-        <ConversationTimeline onSendMessage={sendMessage} />
+        {canSend ? (
+          <ConversationTimeline onSendMessage={sendMessage} />
+        ) : (
+          <SetupRequired />
+        )}
       </div>
 
       {/* Context bar */}
       <ContextBar
         workspaceName={workspaceName}
         activeRole={activeRole}
-        executionMode={executionMode}
-        modelName={modelName}
-        isProcessing={isProcessing}
-        isReady={runtimeReady}
-        memoryPressure={memoryPressure}
-        tokenUsage={tokenUsage}
-        onModeClick={() => setModeSelectorOpen(!modeSelectorOpen)}
       />
 
       {/* Approval Gate */}
@@ -261,10 +207,8 @@ export function ChatPanel() {
           onSend={sendMessage}
           onCancel={handleCancel}
           isProcessing={isProcessing}
+          isCancelling={isCancelling}
           inputRef={inputRef}
-          modeLabel={MODE_CONFIG[executionMode].label}
-          modeColor={MODE_CONFIG[executionMode].color}
-          isReady={runtimeReady}
         />
       </div>
     </div>

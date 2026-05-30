@@ -1,4 +1,5 @@
-import { useState, useCallback, useImperativeHandle, forwardRef, useRef, useEffect, type MouseEvent, type KeyboardEvent, type DragEvent } from "react"
+import { useState, useCallback, useMemo, useImperativeHandle, forwardRef, useRef, useEffect, type MouseEvent, type KeyboardEvent, type DragEvent } from "react"
+import { useVirtualizer } from "@tanstack/react-virtual"
 import { useWorkspaceStore } from "@/stores/workspace-store"
 import { readFile, sanitizeFilename, loadFileTree } from "@/lib/workspace"
 import type { FileEntry } from "@/types"
@@ -555,6 +556,24 @@ function EmptyState({ onOpenWorkspace }: { onOpenWorkspace?: () => void }) {
   )
 }
 
+// ── Flat Tree for Virtualization ──
+
+interface FlatNode {
+  entry: FileEntry
+  depth: number
+}
+
+function flattenTree(entries: FileEntry[], expandedPaths: Set<string>, depth = 0): FlatNode[] {
+  const result: FlatNode[] = []
+  for (const entry of entries) {
+    result.push({ entry, depth })
+    if (entry.is_dir && expandedPaths.has(entry.path) && entry.children.length > 0) {
+      result.push(...flattenTree(entry.children, expandedPaths, depth + 1))
+    }
+  }
+  return result
+}
+
 // ── Props & Component ──
 
 export interface FileTreeProps {
@@ -805,11 +824,20 @@ const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(function FileTree(
     setRenamingPath(null)
   }, [])
 
+  const flatTree = useMemo(() => flattenTree(fileTree, expandedPaths), [fileTree, expandedPaths])
+
+  const virtualizer = useVirtualizer({
+    count: flatTree.length,
+    getScrollElement: () => treeRef.current,
+    estimateSize: () => 28,
+    overscan: 10,
+  })
+
   if (!rootPath) return <EmptyState onOpenWorkspace={onOpenWorkspace} />
   if (isLoading) return <FileTreeSkeleton />
 
   return (
-    <div className="py-0.5" ref={treeRef}>
+    <div className="flex flex-col h-full min-h-0">
       {/* Root-level creation from toolbar */}
       {(creatingParent === rootPath || creatingParent === null) && creatingType && (
         <CreateInput
@@ -866,52 +894,78 @@ const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(function FileTree(
         </div>
       )}
 
-      {/* Tree */}
-      {fileTree.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-24 text-center px-4">
-          <p className="text-xs text-white/40">Workspace is empty</p>
-          <p className="text-[10px] text-white/20 mt-0.5">Add files to get started</p>
-        </div>
-      ) : (
-        <div
-          role="tree"
-          aria-label="File explorer"
-          onKeyDown={handleTreeKeyDown}
-        >
-          {fileTree.map((entry) => (
-            <TreeNode
-              key={entry.path}
-              entry={entry}
-              depth={0}
-              expandedPaths={expandedPaths}
-              onToggle={handleToggle}
-              selectedDir={selectedDir}
-              onSelectDir={handleSelectDir}
-              selectedPaths={selectedPaths}
-              onToggleSelect={handleToggleSelect}
-              creatingParent={creatingParent}
-              creatingType={creatingType}
-              createLocally={createLocally}
-              onCreateSubmit={handleCreateSubmit}
-              onCreateCancel={handleCreateCancel}
-              onDeleteEntry={handleDelete}
-              onRenameSubmit={handleRenameSubmit}
-              clipboard={clipboard}
-              onSetClipboard={setClipboard}
-              onPasteFiles={handlePasteFiles}
-              onDragStart={setDragSource}
-              dropTarget={dropTarget}
-              onDropTarget={setDropTarget}
-              renamingPath={renamingPath}
-              onStartRename={handleStartRename}
-              onCancelRename={handleCancelRename}
-              onCreateLocal={setCreateLocally}
-              focusedPath={focusedPath}
-              onFocusPath={setFocusedPath}
-            />
-          ))}
-        </div>
-      )}
+      {/* Virtualized Tree */}
+      <div
+        ref={treeRef}
+        className="flex-1 overflow-auto min-h-0"
+        style={{ contain: "layout paint style" }}
+      >
+        {flatTree.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-24 text-center px-4">
+            <p className="text-xs text-white/40">Workspace is empty</p>
+            <p className="text-[10px] text-white/20 mt-0.5">Add files to get started</p>
+          </div>
+        ) : (
+          <div
+            role="tree"
+            aria-label="File explorer"
+            onKeyDown={handleTreeKeyDown}
+            style={{
+              height: `${virtualizer.getTotalSize()}px`,
+              width: "100%",
+              position: "relative",
+            }}
+          >
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const node = flatTree[virtualRow.index]
+              return (
+                <div
+                  key={node.entry.path}
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                >
+                  <TreeNode
+                    entry={node.entry}
+                    depth={node.depth}
+                    expandedPaths={expandedPaths}
+                    onToggle={handleToggle}
+                    selectedDir={selectedDir}
+                    onSelectDir={handleSelectDir}
+                    selectedPaths={selectedPaths}
+                    onToggleSelect={handleToggleSelect}
+                    creatingParent={creatingParent}
+                    creatingType={creatingType}
+                    createLocally={createLocally}
+                    onCreateSubmit={handleCreateSubmit}
+                    onCreateCancel={handleCreateCancel}
+                    onDeleteEntry={handleDelete}
+                    onRenameSubmit={handleRenameSubmit}
+                    clipboard={clipboard}
+                    onSetClipboard={setClipboard}
+                    onPasteFiles={handlePasteFiles}
+                    onDragStart={setDragSource}
+                    dropTarget={dropTarget}
+                    onDropTarget={setDropTarget}
+                    renamingPath={renamingPath}
+                    onStartRename={handleStartRename}
+                    onCancelRename={handleCancelRename}
+                    onCreateLocal={setCreateLocally}
+                    focusedPath={focusedPath}
+                    onFocusPath={setFocusedPath}
+                  />
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
     </div>
   )
 })

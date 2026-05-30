@@ -58,12 +58,12 @@ export function MobileGatewayPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Mobile Gateway</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Remote mobile supervision — coming in Phase 2
+            Remotely supervise agents from any mobile device
           </p>
         </div>
         <div className="flex items-center gap-2 rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">
           <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />
-          Phase 2
+          Coming soon
         </div>
       </div>
 
@@ -76,17 +76,12 @@ export function MobileGatewayPage() {
           <div className="flex-1">
             <h3 className="text-lg font-semibold">Mobile Gateway — Not Yet Available</h3>
             <p className="text-sm text-muted-foreground mt-1">
-              This feature will enable remote supervision of your agentic-os agents from any mobile device.
-              Stay tuned for Phase 2 development.
+              This feature will enable remote supervision of your agents from any mobile device.
             </p>
             <div className="flex items-center gap-4 mt-3">
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
-                In development
-              </div>
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <span className="inline-block h-2 w-2 rounded-full bg-muted-foreground" />
-                Planned for Q2 2026
+                Preview
               </div>
             </div>
           </div>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react"
+import { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import { createPortal } from "react-dom"
 import { useNavigate } from "react-router-dom"
 import { motion } from "framer-motion"
@@ -7,17 +7,20 @@ import { useAgentStore, type ExecutionMode } from "@/stores/agent-store"
 import { useWorkspaceRuntime } from "@/runtime/workspace-runtime"
 
 import { pickWorkspaceFolder, loadFileTree, startWatching, onFileChange, createFile, createFolder, deleteEntry, renameEntry, sanitizeFilename, readFile } from "@/lib/workspace"
+import type { FileEntry } from "@/types"
+import { workspaceIndex } from "@/lib/search-index"
 import { FileTree, type FileTreeHandle } from "@/components/workspace/file-tree"
 import { CodeWorkspace } from "@/components/workspace/code-workspace"
 import { ChatPanel } from "@/components/workspace/chat-panel"
 import { BrowserWorkspace } from "@/components/workspace/browser/browser-workspace"
 import { DesignWorkspace } from "@/components/workspace/design-workspace"
 import { SnapshotBrowser } from "@/components/workspace/snapshot-browser"
-import { ExecutionExplorer } from "@/components/runtime/ExecutionExplorer"
-import { RuntimeStatusBar } from "@/components/runtime/RuntimeStatusBar"
+import { TerminalWorkspace } from "@/components/workspace/terminal-workspace"
+import { GlobalSearch } from "@/components/workspace/global-search"
+import { CommandPalette } from "@/components/workspace/command-palette"
 import { ExecutionDock } from "@/components/runtime/ExecutionDock"
 import { ErrorBoundary } from "@/components/runtime/ErrorBoundary"
-import { RuntimeProjectionBridge } from "@/runtime/sessions/RuntimeProjectionBridge"
+
 import { Button, TooltipSimple as Tooltip } from "@agentic-os/ui"
 import { cn } from "@/lib/utils"
 import { useToastStore } from "@/stores/toast-store"
@@ -30,7 +33,7 @@ import {
   Cpu, Zap, Target, BookOpen, UserCheck, Shield,
   Brain, Activity, CheckCircle2, XCircle, AlertTriangle,
   Palette,
-  GripVertical, History,
+  GripVertical, History, Search, Terminal,
 } from "lucide-react"
 
 
@@ -49,6 +52,7 @@ const WORKSPACE_PANEL_OPTIONS: { id: WorkspacePanel; label: string; icon: typeof
   { id: "browser", label: "Browser", icon: Globe },
   { id: "design", label: "Design", icon: Palette },
   { id: "history", label: "History", icon: History },
+  { id: "terminal", label: "Terminal", icon: Terminal },
 ]
 
 const PANEL_STORAGE_KEY_PREFIX = "aos-panel-"
@@ -69,14 +73,7 @@ function persistPanelState(key: string, value: unknown): void {
   } catch { /* quota exceeded — ignore */ }
 }
 
-const ORCHESTRATION_LABELS: Record<string, { label: string; color: string }> = {
-  idle: { label: "Idle", color: "text-white/30" },
-  analyzing: { label: "Analyzing", color: "text-blue-400" },
-  planning: { label: "Planning", color: "text-amber-400" },
-  executing: { label: "Executing", color: "text-green-400" },
-  reviewing: { label: "Reviewing", color: "text-purple-400" },
-  error: { label: "Error", color: "text-red-400" },
-}
+
 
 function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
   return (
@@ -95,19 +92,70 @@ function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => v
   )
 }
 
+async function updateImportsOnMove(rootPath: string, oldPath: string, newPath: string): Promise<{ updated: number; files: string[] }> {
+  const affectedFiles: string[] = []
+  let updatedCount = 0
+  try {
+    const { invoke } = await import("@tauri-apps/api/core")
+    const tree = await invoke<FileEntry[]>("list_directory", { path: rootPath })
+    const allFiles: string[] = []
+    function flatten(entries: FileEntry[], base: string) {
+      for (const e of entries) {
+        const p = base ? `${base}/${e.name}` : e.name
+        if (e.is_dir) flatten(e.children, p)
+        else if (!e.name.endsWith(".map")) allFiles.push(p)
+      }
+    }
+    flatten(tree, "")
+    const oldBasename = oldPath.replace(/\\/g, "/").split("/").pop() || ""
+    const oldImportPaths = [
+      oldPath.replace(/\\/g, "/"),
+      oldPath.replace(/\\/g, "/").replace(/\.[^.]+$/, ""),
+      `./${oldPath.replace(/\\/g, "/").replace(/\.[^.]+$/, "")}`,
+    ]
+    const newBasename = newPath.replace(/\\/g, "/").split("/").pop() || ""
+    const newRelBase = newPath.replace(/\\/g, "/").replace(/\.[^.]+$/, "")
+    const newRelative = `./${newRelBase}`
+
+    for (const relPath of allFiles) {
+      if (relPath === oldPath.replace(/\\/g, "/")) continue
+      try {
+        const fullPath = `${rootPath}/${relPath}`
+        const content = await invoke<string>("read_text_file", { path: fullPath })
+        let modified = content
+        for (const oldImport of oldImportPaths) {
+          const escaped = oldImport.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+          const regex = new RegExp(escaped, "g")
+          if (regex.test(modified)) {
+            modified = modified.replace(regex, newRelative)
+          }
+        }
+        if (modified !== content) {
+          await invoke("write_text_file", { path: fullPath, content: modified })
+          affectedFiles.push(relPath)
+          updatedCount++
+        }
+      } catch {
+        // Skip files that can't be read
+      }
+    }
+  } catch {
+    // Tauri not available
+  }
+  return { updated: updatedCount, files: affectedFiles }
+}
+
 export function CodeCanvasPage() {
   useLeakTracker("CodeCanvasPage")
   const rootPath = useWorkspaceStore((s) => s.rootPath)
   const setRootPath = useWorkspaceStore((s) => s.setRootPath)
+  const fileTree = useWorkspaceStore((s) => s.fileTree)
   const setFileTree = useWorkspaceStore((s) => s.setFileTree)
   const setLoading = useWorkspaceStore((s) => s.setLoading)
   const handleFileChange = useWorkspaceStore((s) => s.handleFileChange)
 
   const executionMode = useAgentStore((s) => s.executionMode)
   const setExecutionMode = useAgentStore((s) => s.setExecutionMode)
-  const isManagerProcessing = useAgentStore((s) => s.isManagerProcessing)
-  const orchestrationState = useWorkspaceStore((s) => s.orchestrationState)
-
   const runtimeStatus = useWorkspaceRuntime((s) => s.status)
   const runtimeHealth = useWorkspaceRuntime((s) => s.health)
   const runtimeMessage = useWorkspaceRuntime((s) => s.statusMessage)
@@ -122,6 +170,8 @@ export function CodeCanvasPage() {
   const refreshRuntime = useWorkspaceRuntime((s) => s.refresh)
   const initializeRuntime = useWorkspaceRuntime((s) => s.initialize)
   const navigate = useNavigate()
+  const persistWorkspaceState = useWorkspaceStore((s) => s.persistWorkspaceState)
+  const restoreWorkspaceState = useWorkspaceStore((s) => s.restoreWorkspaceState)
 
   const unlistenRef = useRef<(() => void) | null>(null)
 
@@ -133,6 +183,8 @@ export function CodeCanvasPage() {
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(() => loadPanelState("workspacePanelWidth", 420))
   const [showModeSelector, setShowModeSelector] = useState(false)
   const [explorerCreating, setExplorerCreating] = useState<{ type: "file" | "folder"; parent: string | null } | null>(null)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
 
   const [isRefreshing, setIsRefreshing] = useState(false)
   const fileTreeRef = useRef<FileTreeHandle>(null)
@@ -144,8 +196,27 @@ export function CodeCanvasPage() {
 
   const panelCtrlRef = useRef<WorkspacePanelController | null>(null)
 
-  const orchestrationMeta = ORCHESTRATION_LABELS[orchestrationState] || ORCHESTRATION_LABELS.idle
   const activeMode = EXECUTION_MODES.find((m) => m.id === executionMode) || EXECUTION_MODES[0]
+
+  const commandPaletteContext = useMemo(() => ({
+    navigate,
+    toggleExplorer: () => setExplorerOpen((p) => !p),
+    toggleTerminal: () => setWorkspacePanelOpen((p) => {
+      const next = !p
+      panelCtrlRef.current?.syncOpenState(next)
+      return next
+    }),
+    toggleSearch: () => setSearchOpen((p) => !p),
+    closeTab: () => {
+      const state = useWorkspaceStore.getState()
+      if (state.activeFilePath) state.closeFile(state.activeFilePath)
+    },
+    refreshTree,
+    switchPanel: (panel: string) => {
+      setWorkspacePanel(panel as WorkspacePanel)
+      setWorkspacePanelOpen(true)
+    },
+  }), [navigate, refreshTree])
 
   useEffect(() => {
     if (runtimeStatus === "uninitialized" && rootPath) {
@@ -153,11 +224,34 @@ export function CodeCanvasPage() {
     }
   }, [runtimeStatus, rootPath, initializeRuntime])
 
+  // ── Search index — rebuild when file tree changes ──
   useEffect(() => {
-    const bridge = RuntimeProjectionBridge.getInstance()
-    bridge.initialize()
-    return () => bridge.destroy()
-  }, [])
+    const rp = useWorkspaceStore.getState().rootPath
+    if (fileTree.length > 0 && rp) {
+      workspaceIndex.initialize(fileTree, rp)
+    }
+  }, [fileTree])
+
+  // ── State persistence — restore on mount, persist on changes ──
+  useEffect(() => {
+    if (rootPath) {
+      localStorage.setItem('agentic-workspace-root', rootPath)
+      restoreWorkspaceState()
+    }
+  }, [rootPath, restoreWorkspaceState])
+
+  const prevFilesRef = useRef<string | null>(null)
+  const prevCursorRef = useRef<string | null>(null)
+  useEffect(() => {
+    const { openFiles, activeFilePath, cursorLine, cursorColumn } = useWorkspaceStore.getState()
+    const filesKey = JSON.stringify(openFiles.map(f => f.path)) + '|' + activeFilePath
+    const cursorKey = `${cursorLine}:${cursorColumn}`
+    if (filesKey !== prevFilesRef.current || cursorKey !== prevCursorRef.current) {
+      prevFilesRef.current = filesKey
+      prevCursorRef.current = cursorKey
+      persistWorkspaceState()
+    }
+  })
 
   // ── Workspace operations ──
   async function openWorkspace() {
@@ -194,6 +288,23 @@ export function CodeCanvasPage() {
   async function handleNewFile() {
     setExplorerCreating({ type: "file", parent: null })
   }
+
+  const handleSearchOpenFile = useCallback((path: string, line?: number) => {
+    const rootPath = useWorkspaceStore.getState().rootPath
+    const fetchAndOpen = async () => {
+      try {
+        const fullPath = rootPath ? rootPath + "\\" + path.replace(/\//g, "\\") : path
+        const { readFile } = await import("@/lib/workspace")
+        const content = await readFile(fullPath)
+        const name = path.split("/").pop() || path
+        useWorkspaceStore.getState().openFile({ path, name, content, isDirty: false })
+      } catch (err) {
+        // File may already be open — just navigate
+        useWorkspaceStore.getState().setActiveFile(path)
+      }
+    }
+    fetchAndOpen()
+  }, [])
 
   async function handleNewFolder() {
     setExplorerCreating({ type: "folder", parent: null })
@@ -357,6 +468,10 @@ export function CodeCanvasPage() {
         e.preventDefault()
         panelCtrlRef.current?.handleManualTabClick("design")
       }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "t") {
+        e.preventDefault()
+        panelCtrlRef.current?.handleManualTabClick("terminal")
+      }
       if ((e.metaKey || e.ctrlKey) && e.key === "n" && !e.shiftKey && rootPath) {
         e.preventDefault()
         handleNewFile()
@@ -373,10 +488,15 @@ export function CodeCanvasPage() {
           state.closeFile(state.activeFilePath)
         }
       }
-      // ⌘P — quick open (focus file tree)
-      if ((e.metaKey || e.ctrlKey) && e.key === "p") {
+      // ⌘P — command palette
+      if ((e.metaKey || e.ctrlKey) && e.key === "p" && !e.shiftKey) {
         e.preventDefault()
-        document.querySelector<HTMLButtonElement>('[data-explorer-tree]')?.focus()
+        setCommandPaletteOpen((p) => !p)
+      }
+      // ⌘⇧P — command palette (same handler)
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "p") {
+        e.preventDefault()
+        setCommandPaletteOpen((p) => !p)
       }
       // ⌘S — save (global fallback)
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
@@ -386,6 +506,11 @@ export function CodeCanvasPage() {
       if (e.key === "F5") {
         e.preventDefault()
         refreshTree()
+      }
+      // ⌘⇧F — global search
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "f") {
+        e.preventDefault()
+        setSearchOpen((p) => !p)
       }
     }
     window.addEventListener("keydown", handleKey)
@@ -495,6 +620,8 @@ export function CodeCanvasPage() {
         return <ErrorBoundary name="DesignWorkspace"><DesignWorkspace /></ErrorBoundary>
       case "history":
         return <ErrorBoundary name="SnapshotBrowser"><SnapshotBrowser /></ErrorBoundary>
+      case "terminal":
+        return <ErrorBoundary name="TerminalWorkspace"><TerminalWorkspace /></ErrorBoundary>
     }
   }
 
@@ -617,6 +744,18 @@ export function CodeCanvasPage() {
                   {isRefreshing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
                 </button>
               </Tooltip>
+              <Tooltip content="Search across files (⌘⇧F)">
+                <button
+                  onClick={() => setSearchOpen((p) => !p)}
+                  disabled={!rootPath}
+                  className={cn(
+                    "rounded p-0.5 transition-all",
+                    rootPath ? "text-white/25 hover:text-white/60 hover:bg-white/[0.06]" : "text-white/10 cursor-not-allowed",
+                  )}
+                >
+                  <Search className="h-3 w-3" />
+                </button>
+              </Tooltip>
               <Tooltip content="Collapse all">
                 <button
                   onClick={() => fileTreeRef.current?.collapseAll()}
@@ -644,6 +783,17 @@ export function CodeCanvasPage() {
               onDeleteEntry={handleDeleteEntry}
               onRenameSubmit={async (oldPath, newPath, _newName) => {
                 try {
+                  const isMove = oldPath.replace(/[/\\][^/\\]+$/, "") !== newPath.replace(/[/\\][^/\\]+$/, "")
+                  let proceed = true
+                  if (isMove && rootPath) {
+                    const result = await updateImportsOnMove(rootPath, oldPath, newPath)
+                    if (result.updated > 0) {
+                      proceed = window.confirm(
+                        `Moving "${_newName}" will update ${result.updated} import(s) in:\n${result.files.slice(0, 5).join("\n")}${result.files.length > 5 ? `\n...and ${result.files.length - 5} more` : ""}\n\nContinue?`,
+                      )
+                    }
+                  }
+                  if (!proceed) return
                   await renameEntry(oldPath, newPath)
                   useToastStore.getState().addToast(`Renamed to ${_newName}`, "success", 2000)
                   await refreshTree()
@@ -655,8 +805,6 @@ export function CodeCanvasPage() {
             />
           </div>
 
-          {/* Execution Explorer */}
-          <ExecutionExplorer className="border-t border-white/8" />
         </div>
 
         {explorerOpen && <ResizeHandle onMouseDown={handleExplorerResize} />}
@@ -676,12 +824,6 @@ export function CodeCanvasPage() {
               </button>
               <span className="text-[10px] font-medium text-white/30">Assistant</span>
 
-              {isManagerProcessing && (
-                <span className="flex items-center gap-1 text-[10px] text-amber-400">
-                  <Brain className="h-2.5 w-2.5 animate-pulse" />
-                  Processing
-                </span>
-              )}
             </div>
 
             <div className="flex items-center gap-2">
@@ -772,19 +914,6 @@ export function CodeCanvasPage() {
                 )}
               </div>
 
-              {/* Orchestration state */}
-              <div className="flex items-center gap-1.5 rounded-lg bg-white/[0.03] px-2 py-1">
-                <span className={cn(
-                  "inline-block h-1.5 w-1.5 rounded-full transition-colors duration-500",
-                  orchestrationState === "executing" ? "bg-green-500 animate-pulse" :
-                  orchestrationState === "analyzing" ? "bg-blue-500 animate-pulse" :
-                  orchestrationState === "error" ? "bg-red-500" : "bg-white/20"
-                )} />
-                <span className={cn("text-[10px] font-medium", orchestrationMeta.color)}>
-                  {orchestrationMeta.label}
-                </span>
-              </div>
-
               {/* Toggle docking area */}
               <button
                 onClick={() => {
@@ -865,17 +994,24 @@ export function CodeCanvasPage() {
 
       </div>
 
+      {/* Global Search — overlay above everything */}
+      <GlobalSearch
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onOpenFile={handleSearchOpenFile}
+      />
+
+      {/* Command Palette — overlay above everything */}
+      <CommandPalette
+        open={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        context={commandPaletteContext}
+      />
+
       {/* Execution Dock — always visible, survives navigation */}
       <ExecutionDock />
 
-      {/* Runtime Status Bar */}
-      <div className="flex items-stretch border-t border-white/[0.02]">
-        <RuntimeStatusBar
-          className="flex-1"
-          providerName={totalProviders > 0 ? `${totalProviders} providers` : undefined}
-        />
 
-      </div>
     </div>
   )
 }

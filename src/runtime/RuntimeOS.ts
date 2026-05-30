@@ -17,17 +17,6 @@ import { SkillRegistry } from './skills/SkillRegistry'
 import { SkillLoader } from './skills/SkillLoader'
 import { SkillExecutor } from './skills/SkillExecutor'
 
-import { TaskRuntime } from './tasks/TaskRuntime'
-import { TaskScheduler } from './tasks/TaskScheduler'
-import { TaskCancellation } from './tasks/TaskCancellation'
-
-import { CoordinatorRuntime } from './coordinator/CoordinatorRuntime'
-import { TaskDelegator } from './coordinator/TaskDelegator'
-import { SharedTaskGraph } from './coordinator/SharedTaskGraph'
-
-import { PluginRegistry } from './plugins/PluginRegistry'
-import { PluginLifecycle } from './plugins/PluginLifecycle'
-import { PluginLoader } from './plugins/PluginLoader'
 import { registerBuiltinTools } from '@/lib/agents/agent-tools'
 import { RuntimeCleanupManager } from "./RuntimeCleanupManager"
 
@@ -52,18 +41,6 @@ export class RuntimeOS {
   readonly skillLoader: SkillLoader
   readonly skillExecutor: SkillExecutor
 
-  readonly taskRuntime: TaskRuntime
-  readonly taskScheduler: TaskScheduler
-  readonly taskCancellation: TaskCancellation
-
-  readonly coordinator: CoordinatorRuntime
-  readonly taskDelegator: TaskDelegator
-  readonly sharedTaskGraph: SharedTaskGraph
-
-  readonly pluginRegistry: PluginRegistry
-  readonly pluginLifecycle: PluginLifecycle
-  readonly pluginLoader: PluginLoader
-
   private unsubCleanup: (() => void) | null = null
 
   private constructor() {
@@ -85,18 +62,6 @@ export class RuntimeOS {
     this.skillRegistry = new SkillRegistry()
     this.skillLoader = new SkillLoader(this.skillRegistry)
     this.skillExecutor = new SkillExecutor(this.skillRegistry)
-
-    this.taskRuntime = new TaskRuntime()
-    this.taskScheduler = new TaskScheduler(this.taskRuntime)
-    this.taskCancellation = new TaskCancellation(this.taskRuntime)
-
-    this.coordinator = new CoordinatorRuntime(this.taskRuntime, this.toolExecutionPipeline, this.permissionEngine)
-    this.taskDelegator = new TaskDelegator(this.coordinator, this.taskRuntime)
-    this.sharedTaskGraph = new SharedTaskGraph(this.taskRuntime)
-
-    this.pluginRegistry = new PluginRegistry()
-    this.pluginLifecycle = new PluginLifecycle(this.pluginRegistry)
-    this.pluginLoader = new PluginLoader(this.pluginRegistry, this.pluginLifecycle)
 
     // Register with cleanup manager
     const cm = RuntimeCleanupManager.getInstance()
@@ -139,7 +104,6 @@ export class RuntimeOS {
     }
 
     await this.loadBuiltinPlugins()
-    this.registerCoordinatorWorkers()
   }
 
   private async loadBuiltinPlugins(): Promise<void> {
@@ -148,24 +112,9 @@ export class RuntimeOS {
     // Plugins can be registered at any time via pluginRegistry.register().
   }
 
-  private registerCoordinatorWorkers(): void {
-    const roles = ['coder', 'design', 'vision', 'research', 'qa', 'browser', 'runtime']
-    for (const role of roles) {
-      this.coordinator.registerWorker(role, {
-        role,
-        allowedTools: [],
-        isolatedMemory: false,
-        executionMode: role === 'research' || role === 'vision' ? 'readonly' : 'default',
-      })
-    }
-  }
-
   async shutdown(): Promise<void> {
-    this.taskScheduler.stop()
     this.mcpServerManager.stopHealthChecks()
     await this.mcpRegistry.disconnectAll()
-    this.taskCancellation.cancelAll('Runtime shutdown')
-    this.taskRuntime.clear()
     this.toolConcurrencyPolicy.clear()
   }
 
@@ -173,9 +122,6 @@ export class RuntimeOS {
     tools: { builtin: number; mcp: number; plugin: number; total: number }
     mcp: { servers: number; connected: number }
     skills: Record<string, number>
-    tasks: { total: number; running: number; pending: number }
-    plugins: { total: number; enabled: number }
-    coordinator: { workers: number }
   } {
     const toolSizes = this.toolRegistry.size()
     const mcpClients = this.mcpRegistry.getAll()
@@ -198,18 +144,6 @@ export class RuntimeOS {
         user: skillSizes.user,
         plugin: skillSizes.plugin,
         mcp: skillSizes.mcp,
-      },
-      tasks: {
-        total: this.taskRuntime.getAll().length,
-        running: this.taskRuntime.getRunning().length,
-        pending: this.taskRuntime.getPending().length,
-      },
-      plugins: {
-        total: this.pluginRegistry.size(),
-        enabled: this.pluginRegistry.getEnabled().length,
-      },
-      coordinator: {
-        workers: this.coordinator.getAllWorkers().length,
       },
     }
   }

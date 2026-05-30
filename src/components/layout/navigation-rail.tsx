@@ -29,7 +29,6 @@ const TOP_NAV_ITEMS: NavItem[] = [
   { id: "control-center", label: "Dashboard", icon: <LayoutDashboard className="h-5 w-5" />, route: "/" },
   { id: "code-canvas", label: "Workspace", icon: <Code2 className="h-5 w-5" />, route: "/code-canvas" },
   { id: "agents", label: "Agents", icon: <Users className="h-5 w-5" />, route: "/agents" },
-  { id: "mobile-gateway", label: "Mobile Gateway", icon: <Smartphone className="h-5 w-5" />, route: "/mobile-gateway" },
 ]
 
 const BOTTOM_NAV_ITEMS: NavItem[] = [
@@ -217,7 +216,6 @@ export function NavigationRail() {
                 className="flex-1 min-w-0"
               >
                 <p className="text-[11px] font-medium text-white/70 truncate">Developer</p>
-                <p className="text-[9px] text-white/30 truncate">Ready</p>
               </motion.div>
             )}
           </AnimatePresence>

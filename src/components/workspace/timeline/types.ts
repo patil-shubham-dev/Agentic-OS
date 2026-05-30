@@ -15,6 +15,7 @@ export type ExecutionStatus = "pending" | "running" | "complete" | "error"
 export interface UserMessageEvent {
   type: "user-message"
   id: string
+  correlationId?: string
   content: string
   timestamp: number
 }
@@ -125,6 +126,7 @@ export interface ToolCallRecord {
   name: string
   args: string
   result?: string
+  progress?: string
   status: "pending" | "running" | "complete" | "error"
   durationMs?: number
 }

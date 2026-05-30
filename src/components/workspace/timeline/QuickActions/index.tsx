@@ -97,7 +97,6 @@ interface QuickActionsProps {
   className?: string
   /** Recent files or context to personalize suggestions */
   recentFiles?: string[]
-  agentCount?: number
 }
 
 export const QuickActions = memo(function QuickActions({
@@ -105,7 +104,6 @@ export const QuickActions = memo(function QuickActions({
   workspaceName,
   className,
   recentFiles,
-  agentCount,
 }: QuickActionsProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -160,11 +158,6 @@ export const QuickActions = memo(function QuickActions({
         className="text-sm font-semibold text-foreground/70 mb-1 flex items-center gap-2"
       >
         What would you like to do?
-        {agentCount !== undefined && agentCount > 0 && (
-          <span className="text-[9px] text-foreground/25 bg-foreground/[0.04] px-1.5 py-0.5 rounded-full font-normal">
-            {agentCount} agents
-          </span>
-        )}
       </motion.h3>
 
       {/* Subtitle */}

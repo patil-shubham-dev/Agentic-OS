@@ -209,7 +209,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
           transport: { type: "stdio", command: config.command, args: config.args },
           enabled: config.enabled,
         })
-      } catch {}
+      } catch (err) {
+        console.warn("[app-store] Failed to add MCP server to RuntimeOS:", err)
+      }
       return { mcpServers: servers }
     }),
   removeMcpServer: (id) =>
@@ -219,7 +221,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
         try {
           const runtime = RuntimeOS.getInstance()
           runtime.mcpServerManager.removeServer(server.name)
-        } catch {}
+        } catch (err) {
+          console.warn("[app-store] Failed to remove MCP server from RuntimeOS:", err)
+        }
       }
       return { mcpServers: store.mcpServers.filter((m) => m.id !== id) }
     }),

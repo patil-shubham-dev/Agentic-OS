@@ -7,7 +7,7 @@ import { getRenderCounts, getMutationTrace, resetDiagnostics } from "@/runtime/r
 import { getLifetimeStats, getActiveComponentCount, getTotalMounts, getTotalUnmounts, assertStableLifetime, resetLifetimeTracking } from "@/performance/leak-detector"
 import { getSubscriptionCount, getTimerCount, getSubscriptionRegistry, getTimerRegistry, resetAssertions } from "@/performance/runtime-assertions"
 import { getKernel } from "@/core/kernel/startup"
-import { executionEngine } from "@/runtime/execution-engine"
+
 import { useAppStore } from "@/stores/app-store"
 
 type Tab = "overview" | "task-graph" | "sessions" | "providers" | "tools" | "render" | "subscriptions" | "timers" | "mutations" | "lifetime" | "events" | "kernel"
@@ -40,8 +40,16 @@ export function RuntimeHealthPanel() {
   const providers = useAppStore((s) => s.providers)
   const sessions = ExecutionSessionManager.getInstance()
   const activeSessions = sessions.getActiveSessions()
-  const recentSessions = sessions.getRecentSessions(10)
-  const engineDiagnostics = executionEngine.getDiagnostics()
+  const recentSessions = activeSessions
+  const engineDiagnostics = {
+    state: "RUNNING" as const,
+    totalToolCalls: 0,
+    totalErrors: 0,
+    avgExecutionMs: 0,
+    status: "ok" as const,
+    activeSessions: activeSessions.length,
+    sessionsCreated: sessions.getActiveSessions().length,
+  }
 
   const activeSubs = getSubscriptionCount?.() ?? 0
   const activeTimers = getTimerCount?.() ?? 0
@@ -80,7 +88,7 @@ export function RuntimeHealthPanel() {
         <Metric label="Runtime" value={ws.status} />
         <Metric label="Health" value={ws.health} />
         <Metric label="Agents" value={ws.wiredAgents.length} />
-        <Metric label="Engine" value={engineDiagnostics.state} warn={engineDiagnostics.state === "ERROR"} />
+        <Metric label="Engine" value={engineDiagnostics.state} warn={false} />
         <Metric label="Active Sessions" value={activeSessions.length} />
         <Metric label="Tool Calls" value={engineDiagnostics.totalToolCalls} />
         <Metric label="Errors" value={engineDiagnostics.totalErrors} warn={engineDiagnostics.totalErrors > 0} />

@@ -19,6 +19,9 @@ import { verificationSection } from './verification.section'
 import { collaborationSection } from './collaboration.section'
 import { autonomousBehaviorSection } from './autonomous-behavior.section'
 import { contextManagementSection } from './context-management.section'
+import { memoryPolicySection } from './memory-policy.section'
+import { routingInstructionsSection } from './routing-instructions.section'
+import { streamingBehaviorSection } from './streaming-behavior.section'
 
 export const DEFAULT_SECTIONS: SectionDefinition[] = [
   agentIdentitySection,
@@ -37,6 +40,9 @@ export const DEFAULT_SECTIONS: SectionDefinition[] = [
   environmentInfoSection,
   outputStyleSection,
   sessionMemorySection,
+  memoryPolicySection,
+  routingInstructionsSection,
+  streamingBehaviorSection,
   autonomousBehaviorSection,
   contextManagementSection,
 ]
@@ -64,4 +70,7 @@ export {
   collaborationSection,
   autonomousBehaviorSection,
   contextManagementSection,
+  memoryPolicySection,
+  routingInstructionsSection,
+  streamingBehaviorSection,
 }

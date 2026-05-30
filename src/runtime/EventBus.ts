@@ -1,14 +1,6 @@
 import type { RuntimeEvent, EventHandler } from "./RuntimeTypes"
-import {
-  type TraceableEvent,
-  type TraceableEventBase,
-  type TraceMiddleware,
-  type EventPriority,
-  generateTraceId,
-  generateSpanId,
-} from "./telemetry/TraceTypes"
-import { TracePipeline } from "./telemetry/TracePipeline"
-import { TraceStore } from "./telemetry/TraceStore"
+
+type EventPriority = "critical" | "high" | "normal" | "low"
 
 const LOG_PREFIX = "[EventBus]"
 const MAX_LISTENERS_PER_TYPE = 50
@@ -34,9 +26,6 @@ export interface EventBusMetrics {
   handlerCount: number
   bufferedSubscriberCount: number
   emitDepth: number
-  pipelineQueueLength: number
-  totalProcessed: number
-  avgProcessingTimeMs: number
 }
 
 // ── Backward-compatible BufferedSubscriber ──
@@ -69,15 +58,11 @@ export class EventBus {
   private persistenceEnabled = false
   private replayMode = false
   private replayEvents: RuntimeEvent[] = []
-  private tracePipeline: TracePipeline
-  private traceStore: TraceStore
   private priorityQueues = new Map<EventPriority, RuntimeEvent[]>()
   private totalDropped = 0
   private readonly maxQueueSize = 5_000
 
   private constructor() {
-    this.tracePipeline = TracePipeline.getInstance()
-    this.traceStore = TraceStore.getInstance()
   }
 
   static getInstance(): EventBus {
@@ -167,9 +152,6 @@ export class EventBus {
       }
     }
 
-    // Route to V2 trace pipeline (always)
-    this.emitToTracePipeline(processed)
-
     // Route to buffered subscribers
     const buffered = this.bufferedSubscribers.get(processed.type)
     if (buffered) {
@@ -232,7 +214,14 @@ export class EventBus {
           console.error(`${LOG_PREFIX} Buffered handler error for "${type}":`, err)
         }
       }
-      subscriber.rafId = requestAnimationFrame(() => this.scheduleFlush(type, subscriber))
+      // Only reschedule if the buffer has data or the subscriber still exists and has pending events
+      subscriber.rafId = this.bufferedSubscribers.has(type)
+        ? requestAnimationFrame(() => {
+            if (this.bufferedSubscribers.get(type)?.buffer.length) {
+              this.scheduleFlush(type, subscriber)
+            }
+          })
+        : null
     }
     subscriber.rafId = requestAnimationFrame(flush)
   }
@@ -389,34 +378,6 @@ export class EventBus {
     }
   }
 
-  // ── Trace Pipeline Integration ──
-
-  private emitToTracePipeline(event: RuntimeEvent): void {
-    const traceEvent: TraceableEvent = {
-      type: event.type,
-      traceId: (event as any).metadata?.executionId ?? generateTraceId(),
-      spanId: generateSpanId(),
-      parentSpanId: (event as any).metadata?.parentExecutionId ?? null,
-      timestamp: (event as any).metadata?.timestamp ?? performance.now(),
-      priority: "normal",
-      runtimePhase: this.mapEventToPhase(event.type),
-      source: (event as any).metadata?.source ?? "system",
-      payload: event,
-      metadata: {},
-    }
-    this.tracePipeline.emit(traceEvent)
-  }
-
-  private mapEventToPhase(type: string): string {
-    if (type.includes("stream") || type.includes("chunk") || type.includes("delta")) return "streaming"
-    if (type.includes("tool")) return "tool_execution"
-    if (type.includes("agent") || type.includes("routing")) return "routing"
-    if (type.includes("file")) return "context_assembly"
-    if (type.includes("error") || type.includes("fail")) return "failed"
-    if (type.includes("complete") || type.includes("summary")) return "completed"
-    return "internal"
-  }
-
   // ── Persistence ──
 
   setPersistenceAdapter(adapter: EventPersistenceAdapter): void {
@@ -475,25 +436,13 @@ export class EventBus {
   // ── V2 Metrics ──
 
   getV2Metrics(): EventBusMetrics {
-    const pipelineMetrics = this.tracePipeline.getMetrics()
     return {
       totalEmitted: this.eventCount,
       totalDropped: this.totalDropped,
       handlerCount: this.getListenerCount(),
       bufferedSubscriberCount: this.bufferedSubscribers.size,
       emitDepth: this.emitDepth,
-      pipelineQueueLength: pipelineMetrics.queueLength,
-      totalProcessed: pipelineMetrics.totalProcessed,
-      avgProcessingTimeMs: pipelineMetrics.avgProcessingTimeMs,
     }
-  }
-
-  getTracePipeline(): TracePipeline {
-    return this.tracePipeline
-  }
-
-  getTraceStore(): TraceStore {
-    return this.traceStore
   }
 
   // ── Cancellation ──

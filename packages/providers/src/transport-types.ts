@@ -90,7 +90,7 @@ export const DEFAULT_TRANSPORT_CONFIG: TransportConfig = {
   baseRetryDelayMs: 1_000,
   maxRetryDelayMs: 30_000,
   retryJitter: 0.3,
-  streamTimeoutMs: 15_000,
+  streamTimeoutMs: 60_000,
   streamHeadTimeoutMs: 30_000,
   streamIdleTimeoutMs: 60_000,
   maxStreamDurationMs: 300_000,

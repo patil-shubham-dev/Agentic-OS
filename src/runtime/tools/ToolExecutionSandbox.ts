@@ -3,9 +3,9 @@ import { useWorkspaceStore } from "@/stores/workspace-store"
 import { useAgentStore } from "@/stores/agent-store"
 import { requestCommandApproval } from "@/runtime/approval-gate"
 import { requiresApproval, type ExecutionModeId } from "@/runtime/execution-mode"
-import { executionEngine } from "@/runtime/execution-engine"
 import { TerminalRuntime } from "@/runtime/terminal/TerminalRuntime"
 import { EventBus } from "@/runtime/EventBus"
+import { emitTelemetry } from "@/lib/telemetry"
 
 /** Build a human-readable summary of a tool call for the approval gate */
 function buildApprovalSummary(toolName: string, args: Record<string, unknown>): string {
@@ -64,6 +64,7 @@ export interface SandboxedToolCall {
 export interface ToolSandboxContext {
   role: string
   stepId?: string
+  onOutput?: (line: string) => void
 }
 
 export interface ToolSandboxResult {
@@ -97,6 +98,7 @@ export class ToolExecutionSandbox {
 
   async assertAllowed(toolCall: SandboxedToolCall, context: ToolSandboxContext): Promise<void> {
     if (!this.hasPermission(context.role, toolCall.name)) {
+      emitTelemetry({ type: "tool_failure", timestamp: Date.now(), error: `Permission denied for ${toolCall.name}`, metadata: { role: context.role, toolName: toolCall.name } })
       throw new Error(`Role "${context.role}" is not allowed to use tool "${toolCall.name}"`)
     }
 
@@ -110,6 +112,7 @@ export class ToolExecutionSandbox {
         pattern && command.includes(pattern),
       )
       if (blocked) {
+        emitTelemetry({ type: "tool_failure", timestamp: Date.now(), error: `Command blocked by workspace runtime policy: ${command}`, metadata: { role: context.role, toolName, command: command.slice(0, 120) } })
         throw new Error(`Command blocked by workspace runtime policy: ${command}`)
       }
     }
@@ -127,13 +130,10 @@ export class ToolExecutionSandbox {
         args,
       })
 
-      // Transition execution engine to WAITING_APPROVAL
-      executionEngine.requireApproval(context.role)
-
       if (approved) {
-        executionEngine.grantApproval(context.role)
+        // approved
       } else {
-        executionEngine.denyApproval(context.role)
+        emitTelemetry({ type: "tool_failure", timestamp: Date.now(), error: `Operation rejected by user: ${buildApprovalSummary(toolName, args)}`, metadata: { role: context.role, toolName, operationType } })
         throw new Error(`Operation rejected by user: ${buildApprovalSummary(toolName, args)}`)
       }
       return
@@ -151,11 +151,10 @@ export class ToolExecutionSandbox {
           toolName,
           args,
         })
-        executionEngine.requireApproval(context.role)
         if (approved) {
-          executionEngine.grantApproval(context.role)
+          // approved
         } else {
-          executionEngine.denyApproval(context.role)
+          emitTelemetry({ type: "tool_failure", timestamp: Date.now(), error: `Command rejected by user: ${command}`, metadata: { role: context.role, toolName, command: command.slice(0, 120) } })
           throw new Error(`Command rejected by user: ${command}`)
         }
       }
@@ -167,6 +166,7 @@ export class ToolExecutionSandbox {
     const cwd = useWorkspaceStore.getState().rootPath
     const lines: string[] = []
     const startedAt = performance.now()
+    const { onOutput } = context
 
     for await (const event of this.terminalRuntime.runStream(command, cwd, {
       role: context.role,
@@ -174,6 +174,7 @@ export class ToolExecutionSandbox {
     })) {
       if (event.type === "OUTPUT_LINE" && event.line) {
         lines.push(event.line)
+        onOutput?.(event.line)
       }
     }
 

@@ -167,12 +167,9 @@ export async function readFile(filePath: string): Promise<string> {
 }
 
 export async function createFile(absolutePath: string, content = ""): Promise<void> {
-  const t0 = performance.now()
-  console.log(`[Explorer] create file`, { path: absolutePath })
   try {
     const { writeTextFile } = await import("@tauri-apps/plugin-fs")
     await writeTextFile(absolutePath, content)
-    console.log(`[Explorer] create file OK (${(performance.now() - t0).toFixed(0)}ms)`)
     return
   } catch (err: unknown) {
     // Try web fallback
@@ -192,16 +189,12 @@ export async function createFile(absolutePath: string, content = ""): Promise<vo
   const writable = await handle.createWritable()
   await writable.write(content)
   await writable.close()
-  console.log(`[Explorer] create file OK (web, ${(performance.now() - t0).toFixed(0)}ms)`)
 }
 
 export async function createFolder(absolutePath: string): Promise<void> {
-  const t0 = performance.now()
-  console.log(`[Explorer] create folder`, { path: absolutePath })
   try {
     const { mkdir } = await import("@tauri-apps/plugin-fs")
     await mkdir(absolutePath)
-    console.log(`[Explorer] create folder OK (${(performance.now() - t0).toFixed(0)}ms)`)
     return
   } catch (err: unknown) {
     if (await hasTauri()) {
@@ -217,16 +210,12 @@ export async function createFolder(absolutePath: string): Promise<void> {
   const parentDir = await getWebDirHandle(segs.join("\\"))
   if (!parentDir) throw new Error("Parent directory not found")
   await parentDir.getDirectoryHandle(folderName, { create: true })
-  console.log(`[Explorer] create folder OK (web, ${(performance.now() - t0).toFixed(0)}ms)`)
 }
 
 export async function deleteEntry(absolutePath: string): Promise<void> {
-  const t0 = performance.now()
-  console.log(`[Explorer] delete entry`, { path: absolutePath })
   try {
     const { remove } = await import("@tauri-apps/plugin-fs")
     await remove(absolutePath, { recursive: true })
-    console.log(`[Explorer] delete entry OK (${(performance.now() - t0).toFixed(0)}ms)`)
     return
   } catch (err: unknown) {
     if (await hasTauri()) {
@@ -242,18 +231,14 @@ export async function deleteEntry(absolutePath: string): Promise<void> {
   const parentDir = await getWebDirHandle(segs.join("\\"))
   if (!parentDir) throw new Error("Parent directory not found")
   await parentDir.removeEntry(entryName, { recursive: true })
-  console.log(`[Explorer] delete entry OK (web, ${(performance.now() - t0).toFixed(0)}ms)`)
 }
 
 export { sanitizeFilename }
 
 export async function renameEntry(oldPath: string, newPath: string): Promise<void> {
-  const t0 = performance.now()
-  console.log(`[Explorer] rename`, { from: oldPath, to: newPath })
   try {
     const { rename } = await import("@tauri-apps/plugin-fs")
     await rename(oldPath, newPath)
-    console.log(`[Explorer] rename OK (${(performance.now() - t0).toFixed(0)}ms)`)
     return
   } catch (err: unknown) {
     if (await hasTauri()) {
@@ -266,7 +251,6 @@ export async function renameEntry(oldPath: string, newPath: string): Promise<voi
   const content = await readFile(oldPath)
   await createFile(newPath, content)
   await deleteEntry(oldPath)
-  console.log(`[Explorer] rename OK (web, ${(performance.now() - t0).toFixed(0)}ms)`)
 }
 
 export async function startWatching(rootPath: string): Promise<void> {

@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils"
 import {
   Send, Square, Slash, AtSign, Code2, Palette,
   Globe, Bug, Search, RefreshCw, FileText,
-  Terminal, Zap, Paperclip,
+  Terminal, Paperclip, Loader2,
 } from "lucide-react"
 
 const SLASH_COMMANDS = [
@@ -33,11 +33,9 @@ interface ComposerProps {
   onSend: () => void
   onCancel: () => void
   isProcessing: boolean
+  isCancelling?: boolean
   inputRef?: React.RefObject<HTMLTextAreaElement | null>
   placeholder?: string
-  modeLabel?: string
-  modeColor?: string
-  isReady?: boolean
 }
 
 export function Composer({
@@ -46,11 +44,9 @@ export function Composer({
   onSend,
   onCancel,
   isProcessing,
+  isCancelling,
   inputRef: externalRef,
   placeholder = "Ask anything...",
-  modeLabel,
-  modeColor = "text-blue-400",
-  isReady,
 }: ComposerProps) {
   const internalRef = useRef<HTMLTextAreaElement>(null)
   const textareaRef = externalRef || internalRef
@@ -239,27 +235,12 @@ export function Composer({
         </div>
 
         <div className="relative px-3.5 pt-2.5 pb-1.5">
-          {/* Mode indicator - only when empty */}
-          {modeLabel && !isProcessing && input.length === 0 && (
-            <div className="flex items-center gap-1.5 mb-1">
-              <span className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 bg-white/[0.02] border border-white/[0.04]">
-                <Zap className={cn("h-2 w-2", modeColor)} />
-                <span className={cn("text-[8px] font-medium", modeColor)}>{modeLabel}</span>
-              </span>
-              {isReady !== undefined && (
-                <span className={cn("inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[7px]", isReady ? "text-green-400/50 bg-green-500/5" : "text-amber-400/50 bg-amber-500/5")}>
-                  <span className={cn("h-0.5 w-0.5 rounded-full", isReady ? "bg-green-500" : "bg-amber-500 animate-pulse")} />
-                  {isReady ? "Ready" : "Standby"}
-                </span>
-              )}
-            </div>
-          )}
+
 
           {/* Processing indicator - subtle inline, no blocking overlay */}
           {isProcessing && (
-            <div className="absolute top-2.5 right-3.5 flex items-center gap-1.5">
+            <div className="absolute top-2.5 right-3.5">
               <div className="thinking-dots"><span /><span /><span /></div>
-              <span className="text-[9px] text-blue-400/40 font-medium">Processing</span>
             </div>
           )}
 
@@ -305,6 +286,9 @@ export function Composer({
                 <Paperclip className="h-3 w-3" />
               </button>
             )}
+            {isCancelling && (
+              <span className="text-[9px] text-red-400/60 font-medium animate-pulse mr-1">Cancelling...</span>
+            )}
             {input.length > 0 && (
               <span className="text-[8px] text-white/8 font-mono">{input.length}</span>
             )}
@@ -316,24 +300,26 @@ export function Composer({
             )}
             <AnimatePresence mode="wait">
               <motion.button
-                key={isProcessing ? "cancel" : "send"}
+                key={isCancelling ? "cancelling" : isProcessing ? "cancel" : "send"}
                 initial={{ scale: 0.85, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.85, opacity: 0 }}
                 transition={{ duration: 0.1 }}
-                onClick={isProcessing ? onCancel : onSend}
-                disabled={!isProcessing && !input.trim()}
-                aria-label={isProcessing ? "Cancel" : "Send"}
+                onClick={isProcessing || isCancelling ? onCancel : onSend}
+                disabled={!isProcessing && !isCancelling && !input.trim()}
+                aria-label={isCancelling ? "Cancelling" : isProcessing ? "Cancel" : "Send"}
                 className={cn(
                   "flex items-center justify-center h-7 w-7 rounded-xl transition-all duration-200",
-                  isProcessing
-                    ? "bg-red-500/10 text-red-400/70 hover:bg-red-500/20 border border-red-500/12"
+                  isProcessing || isCancelling
+                    ? "bg-red-500/10 text-red-400/70 hover:bg-red-500/20 border border-red-500/12 cursor-wait"
                     : input.trim()
                       ? "bg-blue-600/70 text-white shadow-sm shadow-blue-600/10 hover:bg-blue-500"
                       : "bg-white/[0.02] text-white/12 border border-white/[0.03]",
                 )}
               >
-                {isProcessing ? (
+                {isCancelling ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : isProcessing ? (
                   <Square className="h-3 w-3" />
                 ) : (
                   <Send className={cn("h-3 w-3 transition-opacity", input.trim() ? "opacity-100" : "opacity-40")} />

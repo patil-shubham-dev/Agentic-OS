@@ -13,56 +13,98 @@ import type {
   ExecutionErrorEvent,
   ExecutionStatus,
 } from "./types"
-import type { ToolCallRecord, FileEditRecord, TerminalRecord } from "./step-card"
+import type { ToolCallRecord, FileEditRecord, TerminalRecord, FileOpRecord } from "./step-card"
 
 const MAX_EVENTS = 500
 
 /**
- * Timeline state is VOLATILE UI state that does NOT survive restarts.
- * Old sessions are archived to SessionHistoryStore on shutdown.
- * We intentionally never persist timeline to localStorage so users
- * always see a fresh Cursor/Claude-Code-style conversation on launch.
+ * Timeline state is persisted to localStorage so conversations survive restarts.
+ * On launch, the app restores the last chat session automatically.
+ * Explicit "New Chat" clears all persisted state.
  */
 function clearStorage(): void {
   try {
     localStorage.removeItem("agentic-timeline-state")
-  } catch {}
+  } catch (err) {
+    console.warn("[timeline-store] Failed to clear storage:", err)
+  }
 }
+
+export type StreamState = "not_started" | "streaming" | "completed" | "failed" | "fallback" | "cancelled"
 
 export interface AgentSession {
   stepId: string
   roleId: string
   roleName: string
+  correlationId?: string
   status: "running" | "complete" | "error"
+  streamState: StreamState
   streamingText: string
   toolCalls: ToolCallRecord[]
   fileEdits: FileEditRecord[]
+  fileOps: FileOpRecord[]
   terminalOutputs: TerminalRecord[]
   modelName?: string
   providerName?: string
   startedAt?: number
+  completedAt?: number
+  error?: string
+  tokenAppended: number  // monotonic counter for dedup guard
+  currentPhase?: string
+  phaseHistory?: PhaseEntry[]
+}
+
+export interface PhaseEntry {
+  label: string
+  timestamp: number
+}
+
+interface StreamingMetrics {
+  tokensReceived: number
+  tokensPerSecond: number
+  lastTokenTimestamp: number
+  firstTokenLatency: number
+  totalLatency: number
 }
 
 interface TimelineState {
   events: TimelineEvent[]
   agentSessions: Map<string, AgentSession>
+  /** Live streaming text — updated per-token, decoupled from structural agentSessions */
+  streamingTexts: Map<string, string>
   sessionOrder: string[]  // tracks insertion order of agent sessions for turn correlation
   sessionCreatedAtEventCount: number[]  // events.length at session creation time
   collapsedSections: Set<string>
+  streamingMetrics: StreamingMetrics
 
   addEvent: (event: TimelineEvent) => void
   updateEvent: (id: string, updates: Partial<TimelineEvent>) => void
   clear: () => void
+  restoreState: (state: {
+    events: TimelineEvent[]
+    agentSessions: Map<string, AgentSession>
+    streamingTexts: Map<string, string>
+    sessionOrder: string[]
+    sessionCreatedAtEventCount: number[]
+    collapsedSections: Set<string>
+  }) => void
 
   getEventsByType: <T extends TimelineEvent>(type: T["type"]) => T[]
   getLatestByType: <T extends TimelineEvent>(type: T["type"]) => T | undefined
 
-  addAgentSession: (session: AgentSession) => void
+  addAgentSession: (session: AgentSession, correlationId?: string) => void
   updateAgentSession: (stepId: string, updates: Partial<AgentSession>) => void
+  setStreamState: (stepId: string, state: StreamState) => void
   appendAgentStreamText: (stepId: string, text: string) => void
+  /** Fast path: append to streamingTexts only — does NOT touch agentSessions */
+  appendStreamingText: (stepId: string, text: string) => void
+  /** On stream completion: move text from streamingTexts into agentSession, remove from streamingTexts */
+  commitStreamingText: (stepId: string) => void
+  setPhase: (stepId: string, phase: string) => void
   addToolCallToAgent: (stepId: string, toolCall: ToolCallRecord) => void
   updateToolCall: (stepId: string, toolId: string, updates: Partial<ToolCallRecord>) => void
   addFileEditToAgent: (stepId: string, fileEdit: FileEditRecord) => void
+  addFileOpToAgent: (stepId: string, fileOp: FileOpRecord) => void
   addTerminalToAgent: (stepId: string, terminal: TerminalRecord) => void
 
   toggleCollapse: (id: string) => void
@@ -87,17 +129,23 @@ function generateId(): string {
 
 
 /**
- * NOTE: Timeline state is VOLATILE UI state — it does NOT survive app restarts.
- * Old sessions are archived to SessionHistoryStore on shutdown/close.
- * We intentionally start with empty state on every app launch so the user
- * sees a fresh Cursor/Claude-Code-style conversation.
+ * NOTE: Timeline state IS persisted to localStorage and survives app restarts.
+ * Conversations are restored on launch. Use `clear()` for a fresh start.
  */
 export const useTimelineStore = create<TimelineState>((set, get) => ({
   events: [],
   agentSessions: new Map(),
+  streamingTexts: new Map(),
   sessionOrder: [],
   sessionCreatedAtEventCount: [],
   collapsedSections: new Set(),
+  streamingMetrics: {
+    tokensReceived: 0,
+    tokensPerSecond: 0,
+    lastTokenTimestamp: 0,
+    firstTokenLatency: 0,
+    totalLatency: 0,
+  },
 
   addEvent: (event) => {
     set((s) => ({
@@ -114,8 +162,28 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
   },
 
   clear: () => {
-    set({ events: [], agentSessions: new Map(), sessionOrder: [], sessionCreatedAtEventCount: [], collapsedSections: new Set() })
+    set({
+      events: [],
+      agentSessions: new Map(),
+      streamingTexts: new Map(),
+      sessionOrder: [],
+      sessionCreatedAtEventCount: [],
+      collapsedSections: new Set(),
+      streamingMetrics: { tokensReceived: 0, tokensPerSecond: 0, lastTokenTimestamp: 0, firstTokenLatency: 0, totalLatency: 0 },
+    })
     clearStorage()
+  },
+
+  restoreState: (state) => {
+    set({
+      events: state.events,
+      agentSessions: state.agentSessions,
+      streamingTexts: state.streamingTexts,
+      sessionOrder: state.sessionOrder,
+      sessionCreatedAtEventCount: state.sessionCreatedAtEventCount,
+      collapsedSections: state.collapsedSections,
+      streamingMetrics: { tokensReceived: 0, tokensPerSecond: 0, lastTokenTimestamp: 0, firstTokenLatency: 0, totalLatency: 0 },
+    })
   },
 
   getEventsByType: (type) =>
@@ -124,10 +192,28 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
   getLatestByType: (type) =>
     get().events.filter((e) => e.type === type).pop() as any,
 
-  addAgentSession: (session) => {
+  setPhase: (stepId, phase) => {
     set((s) => {
       const next = new Map(s.agentSessions)
-      next.set(session.stepId, session)
+      const existing = next.get(stepId)
+      if (existing) {
+        next.set(stepId, {
+          ...existing,
+          currentPhase: phase,
+          phaseHistory: [...(existing.phaseHistory ?? []), { label: phase, timestamp: Date.now() }],
+        })
+      }
+      return { agentSessions: next }
+    })
+  },
+
+  addAgentSession: (session, correlationId) => {
+    set((s) => {
+      const next = new Map(s.agentSessions)
+      const sessionWithCorrelation = correlationId
+        ? { ...session, correlationId, phaseHistory: session.phaseHistory ?? [] }
+        : { ...session, phaseHistory: session.phaseHistory ?? [] }
+      next.set(session.stepId, sessionWithCorrelation)
       return {
         agentSessions: next,
         sessionOrder: [...s.sessionOrder, session.stepId],
@@ -147,14 +233,73 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
     })
   },
 
+  setStreamState: (stepId, state) => {
+    set((s) => {
+      const next = new Map(s.agentSessions)
+      const existing = next.get(stepId)
+      if (existing) {
+        next.set(stepId, { ...existing, streamState: state })
+      }
+      return { agentSessions: next }
+    })
+  },
+
   appendAgentStreamText: (stepId, text) => {
     set((s) => {
       const next = new Map(s.agentSessions)
       const existing = next.get(stepId)
       if (existing) {
         next.set(stepId, { ...existing, streamingText: existing.streamingText + text })
+      } else {
+        console.warn(`[TimelineStore] appendAgentStreamText: unknown stepId "${stepId}" — tokens dropped`)
       }
       return { agentSessions: next }
+    })
+  },
+
+  appendStreamingText: (stepId, text) => {
+    set((s) => {
+      if (!text) return s
+      const next = new Map(s.streamingTexts)
+      const existing = next.get(stepId) ?? ""
+      // Dedup guard: if text is already fully contained at the end, skip
+      if (existing.endsWith(text)) return s
+      next.set(stepId, existing + text)
+      const now = performance.now()
+      const metrics = { ...s.streamingMetrics }
+      const windowTokens = metrics.tokensReceived
+      // Initialize window start on first token
+      if (windowTokens === 0) {
+        metrics.totalLatency = now
+      }
+      metrics.tokensReceived++
+      if (metrics.tokensReceived === 1) {
+        metrics.firstTokenLatency = now - metrics.totalLatency
+      }
+      metrics.lastTokenTimestamp = now
+      if (now - metrics.totalLatency >= 1000) {
+        metrics.tokensPerSecond = windowTokens + 1
+        metrics.totalLatency = now
+        metrics.tokensReceived = 0
+      }
+      return { streamingTexts: next, streamingMetrics: metrics }
+    })
+  },
+
+  commitStreamingText: (stepId) => {
+    set((s) => {
+      const liveText = s.streamingTexts.get(stepId)
+      if (liveText === undefined) return s
+      const nextStreaming = new Map(s.streamingTexts)
+      nextStreaming.delete(stepId)
+      const nextSessions = new Map(s.agentSessions)
+      const session = nextSessions.get(stepId)
+      if (!session) {
+        console.warn(`[TimelineStore] commitStreamingText: no session for stepId "${stepId}" — ${liveText.length} chars dropped`)
+        return { streamingTexts: nextStreaming, agentSessions: nextSessions }
+      }
+      nextSessions.set(stepId, { ...session, streamingText: liveText, streamState: "completed", completedAt: Date.now() })
+      return { streamingTexts: nextStreaming, agentSessions: nextSessions }
     })
   },
 
@@ -196,6 +341,20 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
         next.set(stepId, {
           ...existing,
           fileEdits: [...existing.fileEdits, fileEdit],
+        })
+      }
+      return { agentSessions: next }
+    })
+  },
+
+  addFileOpToAgent: (stepId, fileOp) => {
+    set((s) => {
+      const next = new Map(s.agentSessions)
+      const existing = next.get(stepId)
+      if (existing) {
+        next.set(stepId, {
+          ...existing,
+          fileOps: [...existing.fileOps, fileOp],
         })
       }
       return { agentSessions: next }

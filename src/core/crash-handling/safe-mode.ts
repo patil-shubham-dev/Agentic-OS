@@ -43,13 +43,17 @@ export function detectSafeMode(): SafeModeState {
       enabled = true
       reason = reason ?? 'manually enabled'
     }
-  } catch {}
+  } catch (err) {
+    console.warn("[SafeMode] Failed to read safe mode key:", err)
+  }
 
   if (enabled) {
     try {
       sessionStorage.setItem(SAFE_MODE_KEY, 'true')
       sessionStorage.setItem(SAFE_MODE_TIMESTAMP_KEY, String(Date.now()))
-    } catch {}
+    } catch (err) {
+      console.warn("[SafeMode] Failed to persist safe mode state:", err)
+    }
   }
 
   return {
@@ -71,7 +75,9 @@ export function enableSafeMode(reason: string): void {
   try {
     sessionStorage.setItem(SAFE_MODE_KEY, 'true')
     sessionStorage.setItem(SAFE_MODE_TIMESTAMP_KEY, String(Date.now()))
-  } catch {}
+  } catch (err) {
+    console.warn("[SafeMode] Failed to persist safe mode state:", err)
+  }
   console.warn(`[SafeMode] Enabled: ${reason}`)
 }
 
@@ -79,7 +85,9 @@ export function disableSafeMode(): void {
   try {
     sessionStorage.removeItem(SAFE_MODE_KEY)
     sessionStorage.removeItem(SAFE_MODE_TIMESTAMP_KEY)
-  } catch {}
+  } catch (err) {
+    console.warn("[SafeMode] Failed to clear safe mode keys:", err)
+  }
   clearCrashLog()
   console.log('[SafeMode] Disabled — crash log cleared')
 }
@@ -100,7 +108,8 @@ export function isInSafeMode(): boolean {
       }
     }
     return true
-  } catch {
+  } catch (err) {
+    console.warn("[SafeMode] Failed to read safe mode session:", err)
     return false
   }
 }

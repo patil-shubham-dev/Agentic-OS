@@ -1,5 +1,10 @@
 use serde::{Deserialize, Serialize};
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
+use std::process::{Child, ChildStdin, Command, Stdio};
+
+use std::sync::Mutex;
+use std::collections::HashMap;
 use tauri::{
     menu::{MenuBuilder, SubmenuBuilder},
     tray::TrayIconBuilder,
@@ -237,6 +242,473 @@ fn list_directory(path: String) -> Result<Vec<FileEntry>, String> {
     read_dir_recursive(root, root)
 }
 
+// ── Git Backend ──────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct GitStatusOutput {
+    branch: String,
+    changes: Vec<GitChange>,
+    ahead: i32,
+    behind: i32,
+}
+
+#[derive(Serialize)]
+struct GitChange {
+    path: String,
+    status: String,
+}
+
+#[derive(Serialize)]
+struct GitCommitOutput {
+    hash: String,
+    message: String,
+    author: String,
+    timestamp: String,
+}
+
+fn run_git(working_dir: &str, args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(working_dir)
+        .output()
+        .map_err(|e| format!("Failed to execute git: {}", e))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(stderr.trim().to_string())
+    }
+}
+
+#[tauri::command]
+fn git_status(working_dir: String) -> Result<GitStatusOutput, String> {
+    let out = run_git(&working_dir, &["status", "--porcelain", "-b"])?;
+    let mut lines = out.lines().filter(|l| !l.is_empty());
+
+    let branch_line = lines.next().unwrap_or("");
+    let branch = if branch_line.starts_with("## ") {
+        let rest = &branch_line[3..];
+        rest.split("...").next().unwrap_or(rest).to_string()
+    } else {
+        "unknown".to_string()
+    };
+
+    let mut ahead = 0i32;
+    let mut behind = 0i32;
+    if let Some(bracket) = branch_line.split('[').nth(1) {
+        let bracket = bracket.trim_end_matches(']');
+        for part in bracket.split(',') {
+            let part = part.trim();
+            if let Some(n) = part.strip_prefix("ahead ") {
+                ahead = n.trim().parse().unwrap_or(0);
+            } else if let Some(n) = part.strip_prefix("behind ") {
+                behind = n.trim().parse().unwrap_or(0);
+            }
+        }
+    }
+
+    let mut changes = Vec::new();
+    for line in lines {
+        if line.len() < 3 { continue; }
+        changes.push(GitChange {
+            path: line[3..].to_string(),
+            status: line[..2].to_string(),
+        });
+    }
+
+    Ok(GitStatusOutput { branch, changes, ahead, behind })
+}
+
+#[tauri::command]
+fn git_log(working_dir: String, max_count: Option<i32>) -> Result<Vec<GitCommitOutput>, String> {
+    let count = max_count.unwrap_or(20);
+    let out = run_git(&working_dir, &[
+        "log",
+        &format!("--max-count={}", count),
+        "--format=%H|%an|%aI|%s",
+    ])?;
+
+    Ok(out.lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let parts: Vec<&str> = l.splitn(4, '|').collect();
+            GitCommitOutput {
+                hash: parts.get(0).unwrap_or(&"").to_string(),
+                author: parts.get(1).unwrap_or(&"").to_string(),
+                timestamp: parts.get(2).unwrap_or(&"").to_string(),
+                message: parts.get(3).unwrap_or(&"").to_string(),
+            }
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn git_diff(working_dir: String, file: String) -> Result<String, String> {
+    run_git(&working_dir, &["diff", "--", &file])
+}
+
+#[tauri::command]
+fn git_commit(working_dir: String, message: String) -> Result<String, String> {
+    run_git(&working_dir, &["commit", "-m", &message])
+}
+
+#[tauri::command]
+fn git_restore(working_dir: String, file: String) -> Result<String, String> {
+    run_git(&working_dir, &["restore", &file])
+}
+
+#[tauri::command]
+fn git_init(working_dir: String) -> Result<String, String> {
+    run_git(&working_dir, &["init"])
+}
+
+#[tauri::command]
+fn git_push(working_dir: String, remote: Option<String>, branch: Option<String>) -> Result<String, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("push").current_dir(&working_dir);
+    if let Some(r) = remote { cmd.arg(r); }
+    if let Some(b) = branch { cmd.arg(b); }
+    let output = cmd.output().map_err(|e| format!("Failed to execute git: {}", e))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+#[tauri::command]
+fn git_pull(working_dir: String, remote: Option<String>, branch: Option<String>) -> Result<String, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("pull").current_dir(&working_dir);
+    if let Some(r) = remote { cmd.arg(r); }
+    if let Some(b) = branch { cmd.arg(b); }
+    let output = cmd.output().map_err(|e| format!("Failed to execute git: {}", e))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+#[tauri::command]
+fn git_branch_list(working_dir: String) -> Result<Vec<String>, String> {
+    let out = run_git(&working_dir, &["branch"])?;
+    Ok(out.lines().filter(|l| !l.is_empty()).map(|l| l.to_string()).collect())
+}
+
+#[tauri::command]
+fn git_checkout(working_dir: String, branch: String) -> Result<String, String> {
+    run_git(&working_dir, &["checkout", &branch])
+}
+
+#[tauri::command]
+fn git_add(working_dir: String, file: String) -> Result<String, String> {
+    run_git(&working_dir, &["add", &file])
+}
+
+// ── Command Execution Backend ────────────────────────────────────
+
+struct CommandStreamState {
+    processes: Mutex<HashMap<String, u32>>,  // stream_id → pid
+}
+
+#[tauri::command]
+fn kill_command(stream_id: String, state: tauri::State<'_, CommandStreamState>) -> Result<(), String> {
+    let mut processes = state.processes.lock().unwrap();
+    if let Some(pid) = processes.remove(&stream_id) {
+        let result = if cfg!(windows) {
+            std::process::Command::new("taskkill")
+                .args(&["/PID", &pid.to_string(), "/F"])
+                .output()
+        } else {
+            std::process::Command::new("kill")
+                .args(&["-TERM", &pid.to_string()])
+                .output()
+        };
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("Failed to kill process {}: {}", pid, e)),
+        }
+    } else {
+        Err(format!("No running process for stream '{}'", stream_id))
+    }
+}
+
+#[tauri::command]
+fn run_command(working_dir: String, command: String, _args: Vec<String>) -> Result<String, String> {
+    let output = if cfg!(windows) {
+        std::process::Command::new("cmd")
+            .args(["/C", &command])
+            .current_dir(&working_dir)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+    } else {
+        std::process::Command::new("sh")
+            .args(["-c", &command])
+            .current_dir(&working_dir)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+    }
+    .map_err(|e| format!("Failed to execute command: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if output.status.success() {
+        Ok(stdout)
+    } else {
+        let combined = if stderr.is_empty() { stdout } else { stderr };
+        Err(combined.trim().to_string())
+    }
+}
+
+#[tauri::command]
+fn run_command_stream(
+    app: tauri::AppHandle,
+    command: String,
+    cwd: String,
+    stream_id: String,
+    state: tauri::State<'_, CommandStreamState>,
+) -> Result<i32, String> {
+    let effective_cwd = if cwd.is_empty() { "." } else { &cwd };
+
+    let mut child = if cfg!(windows) {
+        std::process::Command::new("cmd")
+            .args(["/C", &command])
+            .current_dir(effective_cwd)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .stdin(std::process::Stdio::null())
+            .spawn()
+    } else {
+        std::process::Command::new("sh")
+            .args(["-c", &command])
+            .current_dir(effective_cwd)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .stdin(std::process::Stdio::null())
+            .spawn()
+    }
+    .map_err(|e| format!("Failed to spawn command: {}", e))?;
+
+    let pid = child.id();
+    state.processes.lock().unwrap().insert(stream_id.clone(), pid);
+
+    let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+    let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
+
+    let app1 = app.clone();
+    let sid1 = stream_id.clone();
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            match line {
+                Ok(text) => {
+                    let _ = app1.emit(&format!("terminal-output:{}", sid1), &text);
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let app2 = app.clone();
+    let sid2 = stream_id.clone();
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines() {
+            match line {
+                Ok(text) => {
+                    let _ = app2.emit(&format!("terminal-output:{}", sid2), &text);
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let exit_status = child.wait().map_err(|e| format!("Failed to wait for process: {}", e))?;
+    let exit_code = exit_status.code().unwrap_or(-1);
+
+    state.processes.lock().unwrap().remove(&stream_id);
+    let _ = app.emit(&format!("terminal-complete:{}", stream_id), exit_code);
+
+    Ok(exit_code)
+}
+
+// ── Debug Backend ────────────────────────────────────────────────
+
+struct DebugSession {
+    child: std::process::Child,
+    inspector_url: String,
+}
+
+struct DebugState {
+    sessions: Mutex<HashMap<String, DebugSession>>,
+    next_id: Mutex<u64>,
+}
+
+#[tauri::command]
+fn debug_launch(file_path: String, working_dir: String, state: tauri::State<'_, DebugState>) -> Result<String, String> {
+    let mut child = std::process::Command::new("node")
+        .args(["--inspect-brk", &file_path])
+        .current_dir(&working_dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn node: {}", e))?;
+
+    use std::io::{BufRead, BufReader};
+    let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
+    let reader = BufReader::new(stderr);
+
+    let inspector_url = reader
+        .lines()
+        .filter_map(|l| l.ok())
+        .find(|l| l.contains("ws://") || l.contains("http://"))
+        .ok_or("Could not find inspector URL in output")?;
+
+    let url = inspector_url
+        .split_whitespace()
+        .find(|s| s.starts_with("ws://"))
+        .or_else(|| inspector_url.split_whitespace().find(|s| s.starts_with("http://")))
+        .ok_or("Could not parse inspector URL")?;
+
+    let mut next_id = state.next_id.lock().unwrap();
+    *next_id += 1;
+    let session_id = format!("session-{}", next_id);
+
+    state.sessions.lock().unwrap().insert(session_id.clone(), DebugSession {
+        child,
+        inspector_url: url.to_string(),
+    });
+
+    Ok(format!("{}\n{}", url, session_id))
+}
+
+#[tauri::command]
+fn debug_stop(session_id: String, state: tauri::State<'_, DebugState>) -> Result<(), String> {
+    let mut sessions = state.sessions.lock().unwrap();
+    if let Some(mut session) = sessions.remove(&session_id) {
+        let _ = session.child.kill();
+        let _ = session.child.wait();
+        Ok(())
+    } else {
+        Err("Session not found".to_string())
+    }
+}
+
+// ── PTY Backend ──────────────────────────────────────────────────
+
+struct PtySessionData {
+    child: Child,
+    stdin: ChildStdin,
+}
+
+struct PtyState {
+    sessions: Mutex<HashMap<String, PtySessionData>>,
+    next_id: Mutex<u64>,
+}
+
+#[tauri::command]
+fn pty_spawn(
+    app: tauri::AppHandle,
+    shell: String,
+    cwd: String,
+    state: tauri::State<'_, PtyState>,
+) -> Result<String, String> {
+    let mut child = Command::new(&shell)
+        .args(if shell.contains("bash") { &["-i"] as &[&str] } else { &[] as &[&str] })
+        .current_dir(if cwd.is_empty() { "." } else { &cwd })
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn shell '{}': {}", shell, e))?;
+
+    let stdin = child.stdin.take().ok_or("Failed to open stdin")?;
+    let stdout = child.stdout.take().ok_or("Failed to open stdout")?;
+    let stderr = child.stderr.take().ok_or("Failed to open stderr")?;
+
+    let mut next_id = state.next_id.lock().unwrap();
+    *next_id += 1;
+    let session_id = format!("pty-{}", next_id);
+
+    let app_clone = app.clone();
+    let sid = session_id.clone();
+
+    // Background thread: reads stdout and emits pty-output events
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            match line {
+                Ok(text) => {
+                    let _ = app_clone.emit("pty-output", serde_json::json!({
+                        "sessionId": sid,
+                        "data": text,
+                    }));
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = app_clone.emit("pty-exit", serde_json::json!({ "sessionId": sid }));
+    });
+
+    // Background thread: reads stderr and emits pty-output events
+    let app_clone2 = app.clone();
+    let sid2 = session_id.clone();
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines() {
+            match line {
+                Ok(text) => {
+                    let _ = app_clone2.emit("pty-output", serde_json::json!({
+                        "sessionId": sid2,
+                        "data": text,
+                    }));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    state.sessions.lock().unwrap().insert(session_id.clone(), PtySessionData { child, stdin });
+
+    Ok(session_id)
+}
+
+#[tauri::command]
+fn pty_write(session_id: String, data: String, state: tauri::State<'_, PtyState>) -> Result<(), String> {
+    let mut sessions = state.sessions.lock().unwrap();
+    let session = sessions.get_mut(&session_id).ok_or("Session not found")?;
+    session.stdin.write_all(data.as_bytes()).map_err(|e| format!("Write error: {}", e))?;
+    session.stdin.flush().map_err(|e| format!("Flush error: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn pty_resize(session_id: String, cols: u16, rows: u16, state: tauri::State<'_, PtyState>) -> Result<(), String> {
+    let sessions = state.sessions.lock().unwrap();
+    let _session = sessions.get(&session_id).ok_or("Session not found")?;
+    // No-op for pipe-based PTY; real PTY (portable-pty) will resize the console buffer
+    let _ = (cols, rows);
+    Ok(())
+}
+
+#[tauri::command]
+fn pty_kill(session_id: String, state: tauri::State<'_, PtyState>) -> Result<(), String> {
+    let mut sessions = state.sessions.lock().unwrap();
+    if let Some(mut session) = sessions.remove(&session_id) {
+        let _ = session.stdin.flush();
+        let _ = session.child.kill();
+        let _ = session.child.wait();
+        Ok(())
+    } else {
+        Err("Session not found".to_string())
+    }
+}
+
 pub fn run() {
     // Capture the folder path from command line args (context menu "Open with AgenticOS")
     let initial_path: Option<String> = std::env::args().nth(1);
@@ -251,6 +723,17 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(DebugState {
+            sessions: Mutex::new(HashMap::new()),
+            next_id: Mutex::new(0),
+        })
+        .manage(PtyState {
+            sessions: Mutex::new(HashMap::new()),
+            next_id: Mutex::new(0),
+        })
+        .manage(CommandStreamState {
+            processes: Mutex::new(HashMap::new()),
+        })
         .setup(move |app| {
             // Emit the initial path to the webview if provided (from context menu)
             if let Some(path) = initial_path {
@@ -424,7 +907,27 @@ pub fn run() {
             register_context_menu,
             unregister_context_menu,
             is_context_menu_registered,
-            list_directory
+            list_directory,
+            run_command,
+            run_command_stream,
+            kill_command,
+            git_status,
+            git_log,
+            git_diff,
+            git_commit,
+            git_restore,
+            git_init,
+            git_push,
+            git_pull,
+            git_branch_list,
+            git_checkout,
+            git_add,
+            debug_launch,
+            debug_stop,
+            pty_spawn,
+            pty_write,
+            pty_resize,
+            pty_kill,
         ])
         .run(tauri::generate_context!())
         .expect("error while running AgenticOS");

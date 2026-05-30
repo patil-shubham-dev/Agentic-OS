@@ -29,7 +29,9 @@ export class StorageService implements KernelService {
     try {
       persistSettings()
       persistLedger()
-    } catch {}
+    } catch (err) {
+      console.error("[StorageService] Failed to persist during stop:", err)
+    }
     this._status = "uninitialized"
   }
 

@@ -1,10 +1,10 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useWorkspaceStore } from "@/stores/workspace-store"
 import * as git from "@/lib/git"
 import type { GitStatus, GitCommit } from "@/lib/git"
 import { Button, Input } from "@agentic-os/ui"
 import { cn } from "@/lib/utils"
-import { GitBranch, GitCommit as GitCommitIcon, RotateCcw, History, Plus, Sparkles, Wand2, Check } from "lucide-react"
+import { GitBranch, GitCommit as GitCommitIcon, RotateCcw, History, Plus, Check, Upload, Download, ArrowLeftRight, FileCode, List } from "lucide-react"
 
 const AI_COMMIT_TEMPLATES = [
   "feat: add ",
@@ -61,6 +61,10 @@ export function GitPanel() {
   const [loading, setLoading] = useState(false)
   const [isRepo, setIsRepo] = useState(true)
   const [message, setMessage] = useState("")
+  const [diffFile, setDiffFile] = useState<string | null>(null)
+  const [diffContent, setDiffContent] = useState<string>("")
+  const [branches, setBranches] = useState<string[]>([])
+  const [showBranchList, setShowBranchList] = useState(false)
   async function refresh() {
     if (!rootPath) return
     setLoading(true)
@@ -77,6 +81,10 @@ export function GitPanel() {
     try {
       const c = await git.gitLog(rootPath, 10)
       setCommits(c)
+    } catch (_) {}
+    try {
+      const b = await git.gitBranchList(rootPath)
+      setBranches(b)
     } catch (_) {}
     setLoading(false)
   }
@@ -133,6 +141,51 @@ export function GitPanel() {
     }
   }
 
+  async function handlePush() {
+    if (!rootPath) return
+    try {
+      const result = await git.gitPush(rootPath)
+      setMessage(result)
+      refresh()
+    } catch (e) {
+      setMessage(String(e))
+    }
+  }
+
+  async function handlePull() {
+    if (!rootPath) return
+    try {
+      const result = await git.gitPull(rootPath)
+      setMessage(result)
+      refresh()
+    } catch (e) {
+      setMessage(String(e))
+    }
+  }
+
+  async function handleCheckout(branch: string) {
+    if (!rootPath) return
+    try {
+      await git.gitCheckout(rootPath, branch)
+      setMessage(`Switched to ${branch}`)
+      setShowBranchList(false)
+      refresh()
+    } catch (e) {
+      setMessage(String(e))
+    }
+  }
+
+  async function handleViewDiff(file: string) {
+    if (!rootPath) return
+    try {
+      const diff = await git.gitDiff(rootPath, file)
+      setDiffFile(file === diffFile ? null : file)
+      setDiffContent(diff)
+    } catch (e) {
+      setMessage(String(e))
+    }
+  }
+
   function applyTemplate(tpl: string) {
     const name = status?.changes[0]?.path.split("/").pop() || "file"
     setCommitMsg(tpl + name)
@@ -173,7 +226,33 @@ export function GitPanel() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <GitBranch className="h-4 w-4" />
-          <span className="text-xs font-medium">{status?.branch ?? "—"}</span>
+          <div className="relative">
+            <button
+              onClick={() => setShowBranchList(!showBranchList)}
+              className="text-xs font-medium hover:text-blue-400 transition-colors flex items-center gap-1"
+            >
+              {status?.branch ?? "—"}
+              <ArrowLeftRight className="h-2.5 w-2.5 text-white/30" />
+            </button>
+            {showBranchList && branches.length > 0 && (
+              <div className="absolute top-full left-0 mt-1 w-40 rounded-lg border border-white/[0.08] bg-[#0d0d0e] shadow-2xl z-50 py-1 max-h-40 overflow-y-auto">
+                {branches.map((b) => (
+                  <button
+                    key={b}
+                    onClick={() => handleCheckout(b)}
+                    className={cn(
+                      "w-full text-left px-2 py-1 text-[10px] transition-colors",
+                      b === status?.branch
+                        ? "text-blue-400 bg-blue-500/10"
+                        : "text-white/60 hover:text-white hover:bg-white/[0.04]",
+                    )}
+                  >
+                    {b}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {status && (status.ahead > 0 || status.behind > 0) && (
@@ -182,6 +261,12 @@ export function GitPanel() {
               {status.behind > 0 && `↓${status.behind}`}
             </span>
           )}
+          <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={handlePush} disabled={loading} title="Push">
+            <Upload className="h-3 w-3" />
+          </Button>
+          <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={handlePull} disabled={loading} title="Pull">
+            <Download className="h-3 w-3" />
+          </Button>
           <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={refresh} disabled={loading}>
             <RotateCcw className="h-3 w-3" />
           </Button>
@@ -201,24 +286,60 @@ export function GitPanel() {
             </button>
           </div>
           {status.changes.map((c, i) => (
-            <div key={i} className="flex items-center gap-2 rounded px-2 py-1 text-[11px] hover:bg-accent/50 group">
-              <span className={cn("font-mono w-5 shrink-0", statusColor[c.status] || "text-muted-foreground")}>
-                {c.status}
-              </span>
-              <span className="truncate flex-1">{c.path}</span>
-              <button
-                onClick={() => handleRestore(c.path)}
-                className="hidden group-hover:inline text-[10px] text-muted-foreground hover:text-foreground"
-              >
-                Restore
-              </button>
+            <div key={i}>
+              <div className="flex items-center gap-2 rounded px-2 py-1 text-[11px] hover:bg-accent/50 group">
+                <span className={cn("font-mono w-5 shrink-0", statusColor[c.status] || "text-muted-foreground")}>
+                  {c.status}
+                </span>
+                <span className="truncate flex-1">{c.path}</span>
+                <button
+                  onClick={() => handleViewDiff(c.path)}
+                  className="hidden group-hover:inline text-[10px] text-blue-400/60 hover:text-blue-400 transition-colors mr-1"
+                >
+                  Diff
+                </button>
+                <button
+                  onClick={() => handleRestore(c.path)}
+                  className="hidden group-hover:inline text-[10px] text-muted-foreground hover:text-foreground"
+                >
+                  Restore
+                </button>
+              </div>
+              {diffFile === c.path && diffContent && (
+                <div className="border border-white/[0.06] rounded mx-1 mb-1 overflow-hidden">
+                  <pre className="text-[10px] font-mono leading-relaxed max-h-40 overflow-y-auto p-1">
+                    {diffContent.split("\n").slice(0, 50).map((line, li) => {
+                      const isAdd = line.startsWith("+")
+                      const isDel = line.startsWith("-")
+                      return (
+                        <div
+                          key={li}
+                          className={cn(
+                            "px-1",
+                            isAdd && "bg-green-500/10 text-green-400",
+                            isDel && "bg-red-500/10 text-red-400",
+                            !isAdd && !isDel && "text-white/40",
+                          )}
+                        >
+                          {line || " "}
+                        </div>
+                      )
+                    })}
+                    {diffContent.split("\n").length > 50 && (
+                      <div className="text-[9px] text-white/20 text-center py-1 border-t border-white/[0.04]">
+                        ... truncated (showing first 50 lines)
+                      </div>
+                    )}
+                  </pre>
+                </div>
+              )}
             </div>
           ))}
 
-          {/* AI Summary */}
+          {/* Change Summary */}
           <div className="rounded border border-blue-500/20 bg-blue-500/5 p-2">
             <div className="flex items-center gap-1 text-[9px] text-blue-400 font-medium mb-1">
-              <Sparkles className="h-2.5 w-2.5" /> AI Summary
+              <List className="h-2.5 w-2.5" /> Summary
             </div>
             <ul className="space-y-0.5">
               {changeSummaries.map((s, i) => (
@@ -250,7 +371,7 @@ export function GitPanel() {
           </Button>
         </div>
 
-        {/* AI suggestions */}
+        {/* Quick templates */}
         {status && status.changes.length > 0 && (
           <div className="flex flex-wrap gap-1">
             {AI_COMMIT_TEMPLATES.map((tpl) => (
@@ -264,9 +385,9 @@ export function GitPanel() {
             ))}
             <button
               onClick={() => setCommitMsg(generateCommitMessage(status.changes))}
-              className="rounded border border-purple-500/10 bg-purple-500/5 px-1.5 py-0.5 text-[9px] text-purple-400/70 hover:text-purple-400 hover:bg-purple-500/10 transition-colors flex items-center gap-0.5"
+              className="rounded border border-blue-500/10 bg-blue-500/5 px-1.5 py-0.5 text-[9px] text-blue-400/70 hover:text-blue-400 hover:bg-blue-500/10 transition-colors flex items-center gap-0.5"
             >
-              <Wand2 className="h-2.5 w-2.5" /> Auto
+              <List className="h-2.5 w-2.5" /> Suggest
             </button>
           </div>
         )}

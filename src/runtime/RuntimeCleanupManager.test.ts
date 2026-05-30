@@ -4,9 +4,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 
 const mockCancelPendingRefresh = vi.fn()
 const mockEventBusDestroy = vi.fn()
-const mockStreamMultiplexerDestroy = vi.fn()
-const mockSessionManagerDestroyAll = vi.fn()
-const mockCancelAll = vi.fn()
 
 vi.mock("./runtime-coordinator", () => ({
   cancelPendingRefresh: mockCancelPendingRefresh,
@@ -20,34 +17,9 @@ vi.mock("./EventBus", () => ({
   },
 }))
 
-vi.mock("./StreamMultiplexer", () => ({
-  StreamMultiplexer: {
-    getInstance: vi.fn(() => ({
-      destroy: mockStreamMultiplexerDestroy,
-    })),
-  },
-}))
-
-vi.mock("./RuntimeOS", () => ({
-  RuntimeOS: {
-    getInstance: vi.fn(() => ({
-      taskCancellation: { cancelAll: mockCancelAll },
-    })),
-  },
-}))
-
-vi.mock("./sessions/SessionManager", () => ({
-  SessionManager: {
-    getInstance: vi.fn(() => ({
-      destroyAll: mockSessionManagerDestroyAll,
-    })),
-  },
-}))
-
 describe("RuntimeCleanupManager", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockCancelAll.mockReturnValue([])
   })
 
   afterEach(async () => {
@@ -189,13 +161,9 @@ describe("RuntimeCleanupManager", () => {
       expect(report).toHaveProperty("errors")
       expect(report).toHaveProperty("phases")
 
-      // All 7 phases should be present
       const phaseNames = report.phases.map((p) => p.phase)
       expect(phaseNames).toContain("initiating")
       expect(phaseNames).toContain("aborting-operations")
-      expect(phaseNames).toContain("cancelling-tasks")
-      expect(phaseNames).toContain("cleaning-sessions")
-      expect(phaseNames).toContain("disposing-streams")
       expect(phaseNames).toContain("destroying-eventbus")
     })
 
@@ -287,9 +255,6 @@ describe("RuntimeCleanupManager", () => {
 
       await mgr.shutdown()
 
-      expect(mockCancelAll).toHaveBeenCalledWith("Runtime shutdown")
-      expect(mockSessionManagerDestroyAll).toHaveBeenCalled()
-      expect(mockStreamMultiplexerDestroy).toHaveBeenCalled()
       expect(mockEventBusDestroy).toHaveBeenCalled()
       expect(mockCancelPendingRefresh).toHaveBeenCalled()
     })
@@ -304,12 +269,9 @@ describe("RuntimeCleanupManager", () => {
       mgr.register({ type: "subprocess", id: "p-1", kill: vi.fn() })
       mgr.register({ type: "subscription", id: "s-1", unsub: vi.fn() })
 
-      // cancelAll returns mock array length
-      mockCancelAll.mockReturnValue([1, 2])
-
       const report = await mgr.shutdown()
-      // 1 abort-controller + 2 cancelAll + 1 clean-sessions + 1 dispose-streams + 1 timer + 1 subprocess + 1 subscription = 8
-      expect(report.resourcesCleaned).toBe(8)
+      // 1 abort-controller + 1 timer + 1 subprocess + 1 subscription = 4
+      expect(report.resourcesCleaned).toBe(4)
     })
   })
 
@@ -354,9 +316,6 @@ describe("RuntimeCleanupManager", () => {
       await mgr.shutdown()
       await mgr.shutdown()
 
-      expect(mockCancelAll).toHaveBeenCalledTimes(1)
-      expect(mockSessionManagerDestroyAll).toHaveBeenCalledTimes(1)
-      expect(mockStreamMultiplexerDestroy).toHaveBeenCalledTimes(1)
       expect(mockEventBusDestroy).toHaveBeenCalledTimes(1)
     })
 

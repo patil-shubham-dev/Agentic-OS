@@ -6,7 +6,8 @@ const MAX_ENTRIES = 100
 function readLog(): CrashEntry[] {
   try {
     return JSON.parse(localStorage.getItem(CRASH_LOG_KEY) || '[]')
-  } catch {
+  } catch (err) {
+    console.warn("[CrashLogger] Failed to read crash log:", err)
     return []
   }
 }
@@ -17,10 +18,12 @@ function writeLog(entries: CrashEntry[]): void {
       entries = entries.slice(entries.length - MAX_ENTRIES)
     }
     localStorage.setItem(CRASH_LOG_KEY, JSON.stringify(entries))
-  } catch {
+  } catch (err) {
+    console.warn("[CrashLogger] Failed to write crash log, trying smaller batch:", err)
     try {
       localStorage.setItem(CRASH_LOG_KEY, JSON.stringify(entries.slice(-20)))
-    } catch {
+    } catch (err2) {
+      console.warn("[CrashLogger] Failed to write even reduced crash log, clearing:", err2)
       localStorage.removeItem(CRASH_LOG_KEY)
     }
   }
@@ -48,12 +51,16 @@ export async function captureRuntimeSnapshot(): Promise<RuntimeSnapshot> {
     for (const owner of timerReg.keys()) {
       snapshot.timers.push(owner)
     }
-  } catch {}
+  } catch (err) {
+    console.warn("[CrashLogger] Failed to capture subscription/timer snapshot:", err)
+  }
 
   try {
     const { getMutationTrace } = await import('@/runtime/runtime-diagnostics')
     snapshot.mutationTrace = (getMutationTrace?.() ?? []).slice(-20)
-  } catch {}
+  } catch (err) {
+    console.warn("[CrashLogger] Failed to capture mutation trace:", err)
+  }
 
   try {
     const { EventBus } = await import('@/runtime/EventBus')
@@ -62,7 +69,9 @@ export async function captureRuntimeSnapshot(): Promise<RuntimeSnapshot> {
       listenerCount: bus.getListenerCount(),
       types: bus.getListenerTypes(),
     }
-  } catch {}
+  } catch (err) {
+    console.warn("[CrashLogger] Failed to capture EventBus snapshot:", err)
+  }
 
   try {
     const { useWorkspaceRuntime } = await import('@/runtime/workspace-runtime')
@@ -71,7 +80,9 @@ export async function captureRuntimeSnapshot(): Promise<RuntimeSnapshot> {
       workspaceRuntime: state.status,
       workspaceRuntimeHealth: state.health,
     }
-  } catch {}
+  } catch (err) {
+    console.warn("[CrashLogger] Failed to capture store status:", err)
+  }
 
   try {
     const perf = (performance as any)

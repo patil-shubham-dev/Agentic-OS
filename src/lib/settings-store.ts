@@ -1,4 +1,5 @@
 import { useAppStore } from "@/stores/app-store"
+import { useToastStore } from "@/stores/toast-store"
 import { loadConfig, saveConfig, type ConfigData } from "./persistence"
 import type { GatewayProvider, AgentRoleConfig, RoleMapping, LedgerEntry } from "@/types"
 
@@ -67,6 +68,7 @@ export async function persistSettings() {
     }
   } catch (err) {
     console.error("[SettingsStore] Failed to persist settings:", err)
+    useToastStore.getState().addToast("Failed to save settings. Some configuration may be lost on reload.", "error", 5000)
     try {
       const data = serialize()
       localStorage.setItem("settings.json", data)
@@ -95,5 +97,6 @@ export async function loadSettings() {
     }
   } catch (err) {
     console.error("[SettingsStore] Failed to load settings:", err)
+    useToastStore.getState().addToast("Failed to load settings. Default configuration will be used.", "error", 5000)
   }
 }

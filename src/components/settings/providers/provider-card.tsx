@@ -14,6 +14,7 @@ import {
 import { safeValidateProvider } from "@agentic-os/providers"
 import { useAppStore } from "@/stores/app-store"
 import { PROVIDER_HEALTH_META, type ProviderHealthState } from "@agentic-os/providers"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@agentic-os/ui"
 import { getHealthInfo, getProviderDiagnostics } from "@agentic-os/providers"
 
 export function maskApiKey(key: string): string {
@@ -92,6 +93,7 @@ export function ProviderCard({
   const [menuOpen, setMenuOpen] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<ValidationResult | null>(null)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const mountedRef = useRef(true)
 
   const updateProvider = useAppStore((s) => s.updateProvider)
@@ -137,7 +139,26 @@ export function ProviderCard({
   }
 
   return (
-    <motion.div
+    <>
+      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <DialogContent className="bg-[#0a0a14] border border-white/10 text-white">
+          <DialogHeader>
+            <DialogTitle>Delete Provider</DialogTitle>
+            <DialogDescription className="text-white/40">
+              Are you sure you want to remove <span className="text-white/70 font-medium">{provider.name}</span>? This action cannot be undone. All models and configurations for this provider will be removed.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <button onClick={() => setShowDeleteConfirm(false)} className="px-4 py-2 rounded-xl border border-white/10 text-xs text-white/50 hover:text-white hover:bg-white/5 transition-all">
+              Cancel
+            </button>
+            <button onClick={() => { onDelete(); setShowDeleteConfirm(false) }} className="px-4 py-2 rounded-xl bg-red-500/80 hover:bg-red-500 text-xs text-white font-medium transition-all">
+              Delete Provider
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <motion.div
       layout
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
@@ -286,7 +307,7 @@ export function ProviderCard({
                       </button>
                     )}
                     <div className="my-1 border-t border-white/5" />
-                    <button onClick={() => { onDelete(); setMenuOpen(false) }}
+                    <button onClick={() => { setShowDeleteConfirm(true); setMenuOpen(false) }}
                       className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 transition-all">
                       <Trash2 className="h-3.5 w-3.5" /> Remove Provider
                     </button>
@@ -506,7 +527,7 @@ export function ProviderCard({
                   Edit
                 </button>
                 <button
-                  onClick={(e) => { e.stopPropagation(); onDelete() }}
+                  onClick={(e) => { e.stopPropagation(); setShowDeleteConfirm(true) }}
                   className="flex-1 min-w-[80px] h-8 text-[10px] rounded-xl border border-red-500/20 text-red-400/60 hover:text-red-400 hover:bg-red-500/5 transition-all flex items-center justify-center gap-1.5"
                 >
                   <Trash2 className="h-3 w-3" />
@@ -518,5 +539,6 @@ export function ProviderCard({
         )}
       </AnimatePresence>
     </motion.div>
+    </>
   )
 }

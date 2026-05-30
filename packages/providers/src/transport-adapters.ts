@@ -283,6 +283,7 @@ export class AnthropicTransportAdapter implements TransportAdapter {
       max_tokens: req.maxTokens ?? 8192,
     }
     if (req.stream !== undefined) body.stream = req.stream
+    if (req.temperature !== undefined) body.temperature = req.temperature
     if (systemMessages.length > 0) {
       body.system = systemMessages.map((m) => m.content).join("\n")
     }
@@ -347,6 +348,97 @@ export class AnthropicTransportAdapter implements TransportAdapter {
   }
 }
 
+export class GeminiTransportAdapter implements TransportAdapter {
+  name = "gemini"
+  protected config: TransportAdapterConfig
+
+  constructor(config: TransportAdapterConfig) {
+    this.config = config
+  }
+
+  buildChatUrl(): string {
+    const base = normalizeBaseUrl(this.config.baseUrl)
+    return `${base}/models/${encodeURIComponent(this.config.providerName)}:generateContent`
+  }
+
+  buildModelsUrl(): string {
+    const base = normalizeBaseUrl(this.config.baseUrl)
+    return `${base}/models`
+  }
+
+  buildHeaders(): Record<string, string> {
+    return {
+      "Content-Type": "application/json",
+      "x-goog-api-key": this.config.apiKey,
+    }
+  }
+
+  buildCompletionBody(req: CompletionRequest): Record<string, unknown> {
+    const contents = req.messages
+      .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "model")
+      .map((m) => ({
+        role: m.role === "assistant" ? "model" : m.role,
+        parts: [{ text: m.content ?? "" }],
+      }))
+    return {
+      contents,
+      generationConfig: {
+        maxOutputTokens: req.maxTokens ?? 8192,
+        temperature: req.temperature,
+        topP: req.topP,
+      },
+    }
+  }
+
+  parseCompletionResponse(bodyText: string): CompletionResponse {
+    const data = JSON.parse(bodyText)
+    const candidates = data.candidates
+    const content = candidates?.[0]?.content?.parts?.map((p: any) => p.text).join("") ?? ""
+    const finishReason = candidates?.[0]?.finishReason ?? null
+    return {
+      content,
+      finishReason: this.normalizeFinishReason(finishReason),
+      usage: data.usageMetadata ? {
+        promptTokens: data.usageMetadata.promptTokenCount ?? 0,
+        completionTokens: data.usageMetadata.candidatesTokenCount ?? 0,
+        totalTokens: data.usageMetadata.totalTokenCount ?? 0,
+      } : undefined,
+    }
+  }
+
+  parseModelsResponse(bodyText: string): ModelsResponse {
+    const data = JSON.parse(bodyText)
+    const raw = data.models || []
+    const models = Array.isArray(raw)
+      ? raw.map((m: any) => ({
+          id: String(m.name || m.model || "").replace(/^models\//, ""),
+          name: String(m.name || m.model || "").replace(/^models\//, ""),
+        }))
+      : []
+    return { models }
+  }
+
+  normalizeFinishReason(reason: string | null): string | null {
+    if (!reason) return null
+    const upper = reason.toUpperCase()
+    if (upper === "STOP") return "stop"
+    if (upper === "MAX_TOKENS") return "length"
+    if (upper === "SAFETY" || upper === "RECITATION") return "content_filter"
+    if (upper === "OTHER") return "stop"
+    return reason.toLowerCase()
+  }
+
+  async testEndpoint(url: string, method: string, body?: string, signal?: AbortSignal): Promise<EndpointResult> {
+    return endpointFetch(url, {
+      method,
+      headers: this.buildHeaders(),
+      body,
+      signal,
+      timeoutMs: 10_000,
+    })
+  }
+}
+
 export type AdapterType = "openai" | "anthropic" | "nvidia-nim" | "ollama" | "gemini"
 
 export function resolveAdapter(config: TransportAdapterConfig): TransportAdapter {
@@ -354,6 +446,9 @@ export function resolveAdapter(config: TransportAdapterConfig): TransportAdapter
 
   if (url.includes("anthropic.com") || config.runtime === "Anthropic") {
     return new AnthropicTransportAdapter(config)
+  }
+  if (url.includes("googleapis.com") || url.includes("generativelanguage") || config.runtime === "Google Gemini") {
+    return new GeminiTransportAdapter(config)
   }
   if (url.includes("nvidia.com") || config.runtime === "Nvidia NIM") {
     return new NvidiaNimAdapter(config)

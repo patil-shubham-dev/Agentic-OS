@@ -384,9 +384,12 @@ export async function streamingTransportFetch(
     callbacks.onError(new TransportError("STREAM_DURATION_EXCEEDED", `Stream exceeded max duration of ${maxDuration}ms`))
   }, maxDuration)
 
+  let readCount = 0
   try {
     while (true) {
-      if (abortCtrl.signal.aborted) break
+      if (abortCtrl.signal.aborted) {
+        break
+      }
 
       const idleTimeout = firstChunkReceived ? idleChunkTimeout : firstChunkTimeout
       const readPromise = reader.read()
@@ -407,10 +410,14 @@ export async function streamingTransportFetch(
         break
       }
 
-      if (abortCtrl.signal.aborted) break
+      if (abortCtrl.signal.aborted) {
+        break
+      }
 
       const { done, value } = result
-      if (done) break
+      if (done) {
+        break
+      }
 
       lastChunkTime = performance.now()
       metrics.totalChunks++
@@ -432,9 +439,7 @@ export async function streamingTransportFetch(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     if (abortCtrl.signal.aborted) {
-      if (!(err instanceof Error && err.message === "IDLE_TIMEOUT")) {
-        // already handled
-      }
+      // already handled
     } else if (metrics.totalTokens > 0) {
       const finished = parser.finish()
       if (finished.toolCalls.length > 0) {

@@ -128,17 +128,13 @@ function TraceItem({ entry }: { entry: TraceEntry }) {
               {entry.requestHeaders && Object.keys(entry.requestHeaders).length > 0 && (
                 <div className="flex items-start gap-2">
                   <span className="text-[9px] text-white/30 w-16 shrink-0">Headers</span>
-                  <pre className="text-[8px] text-white/30 font-mono flex-1 overflow-x-auto">
-                    {JSON.stringify(entry.requestHeaders, null, 2)}
-                  </pre>
+                  <span className="text-[9px] text-white/20 italic">(hidden for security)</span>
                 </div>
               )}
               {entry.responseBody && (
                 <div className="flex items-start gap-2">
                   <span className="text-[9px] text-white/30 w-16 shrink-0">Response</span>
-                  <pre className="text-[8px] text-white/30 font-mono flex-1 max-h-24 overflow-y-auto break-all">
-                    {entry.responseBody.slice(0, 500)}
-                  </pre>
+                  <span className="text-[9px] text-white/20 italic">(hidden for security)</span>
                 </div>
               )}
               {entry.chunkContent && (

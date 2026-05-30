@@ -21,10 +21,10 @@ import { useWorkspaceStore } from "@/stores/workspace-store"
 import type { ChatMessage, ChatResponse, ToolDef, ToolCall } from "@agentic-os/providers"
 import { directChatCompletion, streamChatCompletion } from "@agentic-os/providers"
 import { trace } from "@/lib/execution-trace"
-import { EventBus } from "@/runtime/render-engine/event-bus"
+import { EventBus } from "@/runtime/EventBus"
 import { ToolExecutionSandbox } from "@/runtime/tools/ToolExecutionSandbox"
 import { EXPLORE_AGENT_PROMPT, PLAN_AGENT_PROMPT, VERIFICATION_AGENT_PROMPT, DEFAULT_SUBAGENT_PROMPT } from "@/runtime/sub-agents/sub-agent-prompts"
-import type { SubAgentType } from "./sub-agent-manager"
+export type SubAgentType = "explore" | "plan" | "verify" | "general"
 import { implGrepFiles, implGlobFiles, implReadFile, implWriteFile, implEditFile, implRunCommand } from "@/lib/tool-executor"
 
 // ── Sub-agent tool restrictions ──

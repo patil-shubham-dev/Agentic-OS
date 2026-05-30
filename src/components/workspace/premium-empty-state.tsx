@@ -154,17 +154,17 @@ export function getCodeEmptyState(
     iconColor: "text-blue-400/60",
     iconBg: "bg-gradient-to-br from-blue-500/10 via-purple-500/10 to-indigo-500/10",
     iconBorder: "border-white/[0.06]",
-    title: hasOpenFiles ? "No file selected" : "Code Editor",
+    title: hasOpenFiles ? "No file selected" : "Get Started",
     description: hasOpenFiles
       ? "Select an open file tab or click a file in the explorer to start editing."
-      : "Open a workspace folder and click any file to begin editing with syntax highlighting, IntelliSense, and AI-powered suggestions.",
+      : "Open a project folder to start working. I'll help you read, edit, and navigate code with AI assistance.",
     features: hasOpenFiles ? undefined : [
       { label: "Syntax Highlighting", icon: FileCode },
-      { label: "Multi-tab Editing", icon: FileCode },
-      { label: "AI Context", icon: Sparkles },
+      { label: "AI Editing", icon: Sparkles },
+      { label: "File Navigation", icon: Search },
     ],
     actions: !hasOpenFiles && onOpenWorkspace ? [
-      { label: "Open Workspace", icon: Terminal, onClick: onOpenWorkspace, primary: true },
+      { label: "Open Project", icon: Terminal, onClick: onOpenWorkspace, primary: true },
     ] : undefined,
     hint: hasOpenFiles ? "⌘P to search files · ⌘S to save" : undefined,
   } satisfies EmptyStateConfig

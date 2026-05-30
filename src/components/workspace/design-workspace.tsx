@@ -397,7 +397,7 @@ export function DesignWorkspace() {
   const handleRegenerate = useCallback(async () => {
     if (!currentArtifact) return
     pulse("selection")
-    notify("Design regeneration requested — route through AI in Phase 6", "info", "selection")
+    notify("Design regeneration is not yet available", "info", "selection")
   }, [currentArtifact, notify, pulse])
 
   // ── Export ──

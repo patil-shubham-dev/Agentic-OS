@@ -12,6 +12,8 @@ export interface WiredAgent {
   providerId: string
   providerName: string
   model: string
+  temperature: number
+  fallbackModel?: string
   status: "idle" | "running" | "error"
 }
 
@@ -136,6 +138,8 @@ function computeGraphRaw(
       providerId: provider.id,
       providerName: provider.name,
       model: effectiveModel,
+      temperature: role.temperature,
+      fallbackModel: role.fallbackModel || undefined,
       status: "idle",
     })
     wiredRoles++

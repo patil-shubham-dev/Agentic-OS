@@ -1,15 +1,22 @@
-import { useRef, useEffect, useState, useMemo, useCallback } from "react"
+import { useRef, useEffect, useMemo, useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { ChevronDown } from "lucide-react"
+import { ChevronDown, Terminal } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useTimelineStore } from "../timeline-store"
-import { ConversationTurn } from "./conversation-turn"
-import { QuickActions } from "../QuickActions"
+import { AssistantResponse } from "./AssistantResponse"
+import { UserPill } from "./UserPill"
+import { TerminalPane } from "./TerminalPane"
 import type { UserMessageEvent } from "../types"
 import type { AgentSession } from "../timeline-store"
+import { QuickActions } from "../QuickActions"
 
 interface ConversationTimelineProps {
   onSendMessage?: (prompt: string) => void
+}
+
+interface ConversationTurn {
+  userEvent: UserMessageEvent | null
+  sessions: AgentSession[]
 }
 
 export function ConversationTimeline({ onSendMessage }: ConversationTimelineProps) {
@@ -18,8 +25,15 @@ export function ConversationTimeline({ onSendMessage }: ConversationTimelineProp
   const agentSessions = useTimelineStore((s) => s.agentSessions)
   const [showScrollButton, setShowScrollButton] = useState(false)
   const [isAtBottom, setIsAtBottom] = useState(true)
+  const [terminalPaneOpen, setTerminalPaneOpen] = useState(false)
 
-  // Auto-scroll during streaming - continuous, smooth
+  const latestSessionWithTerminals = useMemo(() => {
+    for (const [stepId, session] of agentSessions) {
+      if (session.terminalOutputs.length > 0) return { stepId, session }
+    }
+    return null
+  }, [agentSessions])
+
   useEffect(() => {
     const el = scrollRef.current
     if (!el || !isAtBottom) return
@@ -29,7 +43,6 @@ export function ConversationTimeline({ onSendMessage }: ConversationTimelineProp
     return () => cancelAnimationFrame(raf)
   })
 
-  // Track scroll position
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
@@ -45,52 +58,29 @@ export function ConversationTimeline({ onSendMessage }: ConversationTimelineProp
 
   const hasItems = events.length > 0 || agentSessions.size > 0
 
-  // Build conversation turns from events + agent sessions
-  const conversationTurns = useMemo(() => {
-    const turns: { userEvent: UserMessageEvent | null; sessionIds: string[] }[] = []
+  const conversationTurns: ConversationTurn[] = useMemo(() => {
+    const turns: ConversationTurn[] = []
+    const correlationMap = new Map<string, string[]>()
+    for (const [stepId, session] of agentSessions) {
+      if (session.correlationId) {
+        const arr = correlationMap.get(session.correlationId) ?? []
+        arr.push(stepId)
+        correlationMap.set(session.correlationId, arr)
+      }
+    }
 
-    // Create turns from events
     for (const event of events) {
       if (event.type === "user-message") {
-        turns.push({ userEvent: event as UserMessageEvent, sessionIds: [] })
-      }
-    }
-
-    // If no user events but have sessions, create implicit turns
-    if (turns.length === 0 && agentSessions.size > 0) {
-      for (const [id] of agentSessions) {
-        turns.push({ userEvent: null, sessionIds: [id] })
-      }
-      return turns
-    }
-
-    // Correlate sessions to turns
-    const allSessionIds = Array.from(agentSessions.keys())
-    let sessionIdx = 0
-    for (const turn of turns) {
-      if (sessionIdx < allSessionIds.length) {
-        turn.sessionIds.push(allSessionIds[sessionIdx])
-        sessionIdx++
+        const userEvent = event as UserMessageEvent
+        const correlationKey = userEvent.correlationId ?? userEvent.id
+        const sessionIds = correlationMap.get(correlationKey) ?? []
+        const sessions = sessionIds.map((sid) => agentSessions.get(sid)).filter(Boolean) as AgentSession[]
+        turns.push({ userEvent, sessions })
       }
     }
 
     return turns
   }, [events, agentSessions])
-
-  const handleQuickAction = useCallback((prompt: string) => {
-    if (onSendMessage) {
-      onSendMessage(prompt)
-    } else {
-      useTimelineStore.getState().addEvent({
-        type: "user-message",
-        id: `quick-${Date.now()}`,
-        content: prompt,
-        timestamp: Date.now(),
-      })
-    }
-  }, [onSendMessage])
-
-  const isStreaming = Array.from(agentSessions.values()).some((s) => s.status === "running")
 
   return (
     <div className="relative h-full">
@@ -104,42 +94,68 @@ export function ConversationTimeline({ onSendMessage }: ConversationTimelineProp
         aria-label="Conversation"
         aria-live="polite"
       >
-        <div className="max-w-[680px] mx-auto px-4">
+        <div className="mx-auto max-w-[min(100%,44rem)]">
           {!hasItems ? (
-            <QuickActions onActionClick={handleQuickAction} className="py-20" />
+            <QuickActions onActionClick={(prompt) => onSendMessage?.(prompt)} className="py-20" />
           ) : (
             <div className="py-3 space-y-3">
               {conversationTurns.map((turn, idx) => {
-                const sessions = turn.sessionIds
-                  .map((id) => agentSessions.get(id))
-                  .filter(Boolean) as AgentSession[]
-
+                const isLatestTurn = idx === conversationTurns.length - 1
                 return (
-                  <ConversationTurn
+                  <div
                     key={turn.userEvent?.id ?? `turn-${idx}`}
-                    userEvent={turn.userEvent}
-                    sessions={sessions}
-                    onFollowUpSelect={onSendMessage}
-                  />
+                    className="space-y-1.5"
+                  >
+                    {turn.userEvent && (
+                      <UserPill
+                        content={turn.userEvent.content}
+                        timestamp={turn.userEvent.timestamp}
+                      />
+                    )}
+                    {turn.sessions.map((session, sIdx) => (
+                      <AssistantResponse
+                        key={session.stepId}
+                        stepId={session.stepId}
+                        isLatest={sIdx === turn.sessions.length - 1 && isLatestTurn}
+                        onRetry={onSendMessage}
+                        originalInput={turn.userEvent?.content}
+                      />
+                    ))}
+                    {idx < conversationTurns.length - 1 && (
+                      <div className="h-px bg-white/[0.04] mx-2 my-2" />
+                    )}
+                  </div>
                 )
               })}
-            </div>
-          )}
-
-          {/* Inline streaming indicator - subtle, non-blocking */}
-          {isStreaming && (
-            <div className="flex items-center gap-1.5 pb-3 text-foreground/20">
-              <span className="relative inline-flex h-1.5 w-1.5">
-                <span className="absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75 animate-ping" />
-                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-blue-500" />
-              </span>
-              <span className="text-[8px] font-mono">Streaming response</span>
             </div>
           )}
         </div>
       </div>
 
-      {/* Scroll to bottom */}
+      {/* Terminal pane toggle */}
+      {latestSessionWithTerminals && (
+        <div className="border-t border-white/[0.04]">
+          <button
+            onClick={() => setTerminalPaneOpen((v) => !v)}
+            className="flex items-center gap-2 w-full px-3 py-1.5 text-[11px] text-white/30 hover:text-white/60 hover:bg-white/[0.02] transition-all"
+          >
+            <Terminal className="h-3 w-3" />
+            <span>Terminal</span>
+            <span className="text-[10px] text-white/20 font-mono">{latestSessionWithTerminals.session.terminalOutputs.length} commands</span>
+            <span className="ml-auto text-[10px] text-white/20">{terminalPaneOpen ? "Hide" : "Show"}</span>
+          </button>
+        </div>
+      )}
+
+      {/* Terminal pane */}
+      {latestSessionWithTerminals && (
+        <TerminalPane
+          stepId={latestSessionWithTerminals.stepId}
+          expanded={terminalPaneOpen}
+          onClose={() => setTerminalPaneOpen(false)}
+        />
+      )}
+
       <AnimatePresence>
         {showScrollButton && hasItems && (
           <motion.button

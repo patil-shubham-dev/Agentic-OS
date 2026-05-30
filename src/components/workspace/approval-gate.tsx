@@ -9,15 +9,18 @@ import {
 
 export const ApprovalGate = memo(function ApprovalGate() {
   const pending = useApprovalStore((s) => s.pending)
+  const expiredMessage = useApprovalStore((s) => s.expiredMessage)
   const approve = useApprovalStore((s) => s.approve)
   const reject = useApprovalStore((s) => s.reject)
   const alwaysAllow = useApprovalStore((s) => s.alwaysAllow)
   const setAlwaysAllow = useApprovalStore((s) => s.setAlwaysAllow)
+  const clearExpired = useApprovalStore((s) => s.clearExpired)
 
   const [countdown, setCountdown] = useState(60)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const needsApproval = pending !== null
+  const hasExpired = expiredMessage !== null
 
   // Countdown timer (60s timeout = auto-reject)
   useEffect(() => {
@@ -59,6 +62,32 @@ export const ApprovalGate = memo(function ApprovalGate() {
 
   const countdownPercent = (countdown / 60) * 100
   const isUrgent = countdown <= 15
+
+  // Show expired message after timeout
+  if (hasExpired) {
+    return (
+      <div className="rounded-xl border border-orange-500/25 bg-gradient-to-r from-orange-500/8 to-orange-500/3 shadow-lg overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-2.5">
+            <div className="flex items-center justify-center h-7 w-7 rounded-xl bg-orange-500/15 border border-orange-500/20">
+              <ShieldAlert className="h-3.5 w-3.5 text-orange-400" />
+            </div>
+            <div>
+              <p className="text-xs font-medium text-orange-300/80">Approval Request Expired</p>
+              <p className="text-[10px] text-orange-300/40 mt-0.5 max-w-sm truncate">{expiredMessage}</p>
+            </div>
+          </div>
+          <button
+            onClick={clearExpired}
+            className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-[9px] text-white/50 hover:text-white/70 transition-all"
+          >
+            <X className="h-2.5 w-2.5" />
+            Dismiss
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   if (!needsApproval) return null
 

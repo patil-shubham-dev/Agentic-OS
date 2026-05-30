@@ -2,12 +2,9 @@ import { Outlet } from "react-router-dom"
 import { NavigationRail } from "./navigation-rail"
 import { Toasts } from "@agentic-os/ui"
 import { useApprovalStore } from "../../runtime/approval-gate"
-import { useAgentStore } from "../../stores/agent-store"
-import { agentExecutionService } from "../../runtime/AgentExecutionService"
 
 function ApprovalToast() {
   const { pending, approve, reject } = useApprovalStore()
-  const isProcessing = useAgentStore(s => s.isProcessing)
 
   if (!pending) return null
 
@@ -94,64 +91,6 @@ function ApprovalToast() {
   )
 }
 
-function AgentActivityBadge() {
-  const isProcessing = useAgentStore(s => s.isProcessing)
-  const processingRole = useAgentStore(s => s.processingRole)
-
-  if (!isProcessing) return null
-
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        bottom: '24px',
-        right: '24px',
-        zIndex: 9998,
-        background: '#1a1a1f',
-        border: '1px solid #3b82f6',
-        borderRadius: '24px',
-        padding: '8px 14px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px',
-        boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
-        fontSize: '13px',
-        color: '#e2e8f0',
-        cursor: 'default',
-        userSelect: 'none',
-      }}
-    >
-      <span style={{
-        width: '8px',
-        height: '8px',
-        borderRadius: '50%',
-        background: '#3b82f6',
-        display: 'inline-block',
-        animation: 'pulse 1.5s infinite',
-      }} />
-      <span>
-        {processingRole
-          ? `${processingRole.charAt(0).toUpperCase() + processingRole.slice(1)} working...`
-          : 'Agent working...'}
-      </span>
-      <button
-        onClick={() => agentExecutionService.cancel()}
-        style={{
-          background: 'none',
-          border: '1px solid #555',
-          borderRadius: '12px',
-          color: '#888',
-          cursor: 'pointer',
-          fontSize: '11px',
-          padding: '2px 8px',
-        }}
-      >
-        Cancel
-      </button>
-    </div>
-  )
-}
-
 export function AppLayout() {
   return (
     <div className="flex h-screen w-screen overflow-hidden">
@@ -161,7 +100,6 @@ export function AppLayout() {
       </main>
       <Toasts />
       <ApprovalToast />
-      <AgentActivityBadge />
     </div>
   )
 }

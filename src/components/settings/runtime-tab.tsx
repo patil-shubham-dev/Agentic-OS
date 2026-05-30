@@ -1,23 +1,61 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
 import { Badge, Separator, Switch, Button, Input, Label } from "@agentic-os/ui"
 import { useAppStore } from "@/stores/app-store"
+import { RuntimeOS } from "@/runtime/RuntimeOS"
 import type { RuntimeConfig } from "@/types"
 import {
-  FolderOpen, Shield, Zap, AlertTriangle, Clock,
-  Activity, Lock, Unlock,
+  Shield, Clock, Activity, Server,
   Plus, X,
 } from "lucide-react"
 
 export function RuntimeTab() {
-  const [config, setConfig] = useState<RuntimeConfig>({
+  const providers = useAppStore((s) => s.providers)
+  const [runtimeStatus, setRuntimeStatus] = useState<{
+    tools: number
+    mcp: number
+    providers: number
+  }>({ tools: 0, mcp: 0, providers: 0 })
+
+  useEffect(() => {
+    try {
+      const os = RuntimeOS.getInstance()
+      const toolSize = os.toolRegistry.size()
+      setRuntimeStatus({
+        tools: toolSize.total,
+        mcp: toolSize.mcp,
+        providers: providers.length,
+      })
+    } catch {
+      setRuntimeStatus({ tools: 0, mcp: 0, providers: providers.length })
+    }
+  }, [providers.length])
+
+  const RUNTIME_CONFIG_KEY = "opencode-runtime-config"
+
+  const defaultConfig: RuntimeConfig = {
     sandboxEnabled: true,
     workspacePath: "./workspace",
     executionTimeout: 300,
     maxConcurrency: 3,
     autoApprovePatterns: ["*.test.ts", "*.spec.ts", "*.css", "*.md"],
     blockPatterns: ["rm -rf /", "sudo*", "chmod 777*"],
+  }
+
+  const [config, setConfig] = useState<RuntimeConfig>(() => {
+    try {
+      const raw = localStorage.getItem(RUNTIME_CONFIG_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw) as RuntimeConfig
+        return { ...defaultConfig, ...parsed }
+      }
+    } catch { /* ignore corrupt data */ }
+    return defaultConfig
   })
+
+  useEffect(() => {
+    localStorage.setItem(RUNTIME_CONFIG_KEY, JSON.stringify(config))
+  }, [config])
   const [newAuto, setNewAuto] = useState("")
   const [newBlock, setNewBlock] = useState("")
 
@@ -46,19 +84,16 @@ export function RuntimeTab() {
   return (
     <div className="space-y-8">
       <div className="space-y-1">
-        <div className="flex items-center gap-3">
-          <h2 className="text-xl font-bold text-white tracking-tight">Runtime Environment</h2>
-          <Badge variant="warning" size="sm" className="text-[9px]">Coming Soon</Badge>
-        </div>
-        <p className="text-sm text-white/40">Configure execution environment, sandbox settings, and workspace behavior</p>
+        <h2 className="text-xl font-bold text-white tracking-tight">Runtime Environment</h2>
+        <p className="text-sm text-white/40">Runtime status, sandbox settings, and execution configuration</p>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
         {[
+          { label: "Registered Tools", value: runtimeStatus.tools.toString(), icon: Activity, color: "text-blue-400" },
+          { label: "MCP Servers", value: runtimeStatus.mcp.toString(), icon: Server, color: "text-green-400" },
           { label: "Sandbox", value: config.sandboxEnabled ? "Active" : "Disabled", icon: Shield, color: config.sandboxEnabled ? "text-green-400" : "text-white/30" },
           { label: "Timeout", value: `${config.executionTimeout}s`, icon: Clock, color: "text-blue-400" },
-          { label: "Max Concurrent", value: config.maxConcurrency.toString(), icon: Activity, color: "text-purple-400" },
-          { label: "Auto-Approve", value: config.autoApprovePatterns.length.toString(), icon: Zap, color: "text-amber-400" },
         ].map((stat) => {
           const Icon = stat.icon
           return (
@@ -76,29 +111,13 @@ export function RuntimeTab() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Left */}
         <div className="space-y-6">
-          {/* Workspace */}
-          <div className="rounded-2xl border border-white/5 bg-gradient-to-br from-white/[0.03] to-white/[0.01] p-5 backdrop-blur-xl">
-            <h3 className="text-sm font-medium text-white/80 mb-4">Workspace</h3>
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <Label className="text-xs text-white/60">Workspace Path</Label>
-                <div className="flex gap-2">
-                  <Input value={config.workspacePath} onChange={(e) => setConfig({ ...config, workspacePath: e.target.value })} className="flex-1 h-10 border-white/10 bg-white/[0.03] text-white font-mono text-xs" />
-                  <Button variant="outline" size="sm" className="h-10 border-white/10 text-white/50 hover:text-white">
-                    <FolderOpen className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-
           {/* Sandbox */}
           <div className="rounded-2xl border border-white/5 bg-gradient-to-br from-white/[0.03] to-white/[0.01] p-5 backdrop-blur-xl">
             <h3 className="text-sm font-medium text-white/80 mb-4">Sandbox</h3>
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  {config.sandboxEnabled ? <Lock className="h-4 w-4 text-green-400" /> : <Unlock className="h-4 w-4 text-white/30" />}
+                  <Shield className={cn("h-4 w-4", config.sandboxEnabled ? "text-green-400" : "text-white/30")} />
                   <span className="text-xs text-white/60">Sandbox Isolation</span>
                 </div>
                 <Switch checked={config.sandboxEnabled} onCheckedChange={(v) => setConfig({ ...config, sandboxEnabled: v })} size="default" />
@@ -135,7 +154,7 @@ export function RuntimeTab() {
           {/* Auto-Approve */}
           <div className="rounded-2xl border border-white/5 bg-gradient-to-br from-white/[0.03] to-white/[0.01] p-5 backdrop-blur-xl">
             <h3 className="text-sm font-medium text-white/80 mb-4">
-              <Zap className="h-3.5 w-3.5 inline mr-1.5 text-amber-400" />
+              <span className="text-green-400">+</span>
               Auto-Approve Patterns
             </h3>
             <p className="text-[10px] text-white/30 mb-3">File patterns that agents can modify without approval</p>
@@ -156,7 +175,7 @@ export function RuntimeTab() {
           {/* Block Patterns */}
           <div className="rounded-2xl border border-white/5 bg-gradient-to-br from-white/[0.03] to-white/[0.01] p-5 backdrop-blur-xl">
             <h3 className="text-sm font-medium text-white/80 mb-4">
-              <AlertTriangle className="h-3.5 w-3.5 inline mr-1.5 text-red-400" />
+              <span className="text-red-400">!</span>
               Blocked Patterns
             </h3>
             <p className="text-[10px] text-white/30 mb-3">Commands and patterns that are never allowed</p>
